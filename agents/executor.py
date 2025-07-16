@@ -14,7 +14,7 @@ def _is_safe(code: str) -> bool:
     forbidden = ["import os", "import subprocess", "import socket", "open("]
     return not any(tok in code for tok in forbidden)
 
-def run_python(code: str, timeout: int = 5) -> ExecResult:
+def run_python(code: str, timeout: int = 15) -> ExecResult:
     if not _is_safe(code):
         return ExecResult(success=False, stdout="", stderr="Unsafe code detected")
     run_id = uuid.uuid4().hex
