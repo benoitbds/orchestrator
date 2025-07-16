@@ -19,3 +19,9 @@ class ExecResult(BaseModel):
     stdout: str
     stderr: str
     artifacts: List[str] = Field(default_factory=list, description="Paths of files produced")
+
+class RenderResult(BaseModel):
+    """Sortie du Writer : un HTML prêt à afficher + un résumé texte court."""
+    html: str
+    summary: str
+    artifacts: List[str] = Field(default_factory=list, description="Chemins de fichiers joints")
