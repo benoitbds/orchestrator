@@ -8,6 +8,11 @@ from pydantic import BaseModel, Field, ConfigDict
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 
+from agents.planner import make_plan
+from agents.executor import run_python
+from agents.writer import render_exec
+from agents.schemas import ExecResult, Plan
+
 load_dotenv()
 
 # ---------- Mini-mémoire SQLite ----------
@@ -20,9 +25,11 @@ class Memory:
         )
 
     def add(self, role: str, content: str):
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
             "INSERT INTO trace (ts, role, content) VALUES (?, ?, ?)",
-            (dt.datetime.utcnow().isoformat(), role, content),
+            (ts, role, content),
         )
         self.conn.commit()
 
@@ -37,7 +44,8 @@ class LoopState(BaseModel):
     objective: str
     mem_obj: Memory
     memory: List[Any] = Field(default_factory=list)
-    plan: Optional[List[str]] = None
+    plan: Optional[Plan] = None
+    exec_result: Optional[dict] = None
     result: Optional[str] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)  # <- clé
@@ -46,29 +54,20 @@ class LoopState(BaseModel):
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
 
 def planner(state: LoopState) -> dict:
-    prompt = (
-        "Tu es un planificateur très concis.\n"
-        f"Contexte récent: {state.memory}\n"
-        f"Objectif: {state.objective}\n"
-        "Propose un plan en 3-6 étapes, renvoie un JSON array d'étapes."
-    )
-    plan_raw = llm.invoke(prompt).content
-    try:
-        plan = json.loads(plan_raw)
-    except json.JSONDecodeError:
-        plan = [plan_raw]
+    plan = make_plan(state.objective)
     return {"plan": plan}
 
 def executor(state: LoopState) -> dict:
-    step = state.plan[0] if state.plan else state.objective
-    result = llm.invoke(
-        f"Exécute l'étape suivante : {step}\nRéponds en résumé."
-    ).content
-    return {"result": result}
+    #  ici on exécute juste un “print objective” pour démo
+    first_step = state.plan.steps[0]
+    code = f'print("{first_step.title}")'
+    exec_res = run_python(code)
+    return {"exec_result": exec_res.model_dump()}
 
 def writer(state: LoopState) -> dict:
-    state.mem_obj.add("assistant", state.result)
-    return {}
+    er = ExecResult(**state.exec_result)
+    render = render_exec(er, state.objective)
+    return {"result": render.summary, "render": render.model_dump()}
 
 # ---------- Build & compile graph ----------
 def build_graph():
