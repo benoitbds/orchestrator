@@ -11,7 +11,7 @@ from langgraph.graph import StateGraph, END
 from agents.planner import make_plan
 from agents.executor import run_python
 from agents.writer import render_exec
-from agents.schemas import ExecResult, Plan
+from agents.schemas import ExecResult, Plan, RenderResult
 
 load_dotenv()
 
@@ -46,6 +46,7 @@ class LoopState(BaseModel):
     memory: List[Any] = Field(default_factory=list)
     plan: Optional[Plan] = None
     exec_result: Optional[dict] = None
+    render: Optional[str] = None
     result: Optional[str] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)  # <- clé
@@ -67,7 +68,10 @@ def executor(state: LoopState) -> dict:
 def writer(state: LoopState) -> dict:
     er = ExecResult(**state.exec_result)
     render = render_exec(er, state.objective)
-    return {"result": render.summary, "render": render.model_dump()}
+    return {
+       "render": render.model_dump(),
+       "result": render.summary
+    }
 
 # ---------- Build & compile graph ----------
 def build_graph():
