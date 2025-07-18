@@ -1,0 +1,27 @@
+version: "3.9"
+services:
+  app:
+    build: .
+    container_name: orchestrator_api
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  reverse:
+    image: caddy:2
+    container_name: orchestrator_proxy
+    depends_on:
+      - app
+    ports:
+      - "9080:80"
+      - "9443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
