@@ -12,26 +12,29 @@ from agents.planner import make_plan
 from agents.executor import run_python
 from agents.writer import render_exec
 from agents.schemas import ExecResult, Plan, RenderResult
+import threading
 
 load_dotenv()
 
 # ---------- Mini-mémoire SQLite ----------
 class Memory:
     def __init__(self, db_path: str = "orchestrator.db"):
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.lock = threading.Lock()
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS trace "
             "(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, role TEXT, content TEXT)"
         )
 
     def add(self, role: str, content: str):
-        from datetime import datetime, timezone
-        ts = datetime.now(timezone.utc).isoformat()
-        self.conn.execute(
-            "INSERT INTO trace (ts, role, content) VALUES (?, ?, ?)",
-            (ts, role, content),
-        )
-        self.conn.commit()
+        with self.lock:
+            from datetime import datetime, timezone
+            ts = datetime.now(timezone.utc).isoformat()
+            self.conn.execute(
+                "INSERT INTO trace (ts, role, content) VALUES (?, ?, ?)",
+                (ts, role, content),
+            )
+            self.conn.commit()
 
     def fetch(self, limit: int = 10) -> List[tuple[str, str]]:
         cur = self.conn.execute(
@@ -56,6 +59,7 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
 
 def planner(state: LoopState) -> dict:
     plan = make_plan(state.objective)
+    state.mem_obj.add("agent-planner", json.dumps(plan.model_dump()))
     return {"plan": plan}
 
 def executor(state: LoopState) -> dict:
@@ -63,11 +67,15 @@ def executor(state: LoopState) -> dict:
     first_step = state.plan.steps[0]
     code = f'print("{first_step.title}")'
     exec_res = run_python(code)
+    snippet = (exec_res.stdout or exec_res.stderr)[:512]
+    state.mem_obj.add("agent-executor", snippet)
     return {"exec_result": exec_res.model_dump()}
 
 def writer(state: LoopState) -> dict:
     er = ExecResult(**state.exec_result)
     render = render_exec(er, state.objective)
+    state.mem_obj.add("agent-writer", render.summary)
+    state.mem_obj.add("assistant", render.summary)
     return {
        "render": render.model_dump(),
        "result": render.summary
