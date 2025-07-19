@@ -3,7 +3,7 @@ import types, pytest, asyncio
 
 
 # Provide a fake API key so OpenAI client initialization succeeds during import
-os.environ.setdefault("OPENAI_API_KEY", "sk-test")
+#os.environ.setdefault("OPENAI_API_KEY", "sk-test")
 
 @pytest.fixture(autouse=True)
 def patch_graph(monkeypatch):

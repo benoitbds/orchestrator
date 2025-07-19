@@ -4,6 +4,7 @@ import os
 import textwrap
 import uuid
 import signal
+import ast
 from pathlib import Path
 from .schemas import ExecResult
 
