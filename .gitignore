@@ -1,0 +1,27 @@
+# Python cache and virtual env
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.env
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+
+# Node modules and build artifacts
+node_modules/
+.pnpm/
+.yarn/
+.npm/
+.next/
+coverage/
+coverage.xml
+
+# Misc tools
+.DS_Store
+.idea/
+.vscode/
+
