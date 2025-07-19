@@ -1,7 +1,10 @@
 # agents/executor.py
-import subprocess, tempfile, shutil, os, textwrap, uuid, json, signal
+import subprocess
+import os
+import textwrap
+import uuid
+import signal
 from pathlib import Path
-from typing import List
 from .schemas import ExecResult
 
 SANDBOX_DIR = Path("/tmp/orchestrator_runs")  # nettoyé par cron éventuellement
@@ -9,10 +12,37 @@ SANDBOX_DIR.mkdir(exist_ok=True)
 
 WHITELIST = {"math", "json", "datetime", "re", "random"}  # modules autorisés
 
+FORBIDDEN_IMPORTS = {"os", "sys", "subprocess", "socket"}
+
+
 def _is_safe(code: str) -> bool:
-    """Empêche import os, sys, socket, etc. Ultra-basique pour MVP."""
-    forbidden = ["import os", "import subprocess", "import socket", "open("]
-    return not any(tok in code for tok in forbidden)
+    """Parse the code AST and reject dangerous imports."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return False
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] in FORBIDDEN_IMPORTS:
+                    return False
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module.split(".")[0] in FORBIDDEN_IMPORTS:
+                return False
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id == "__import__":
+                if node.args and isinstance(node.args[0], (ast.Str, ast.Constant)):
+                    mod_name = node.args[0].s if isinstance(node.args[0], ast.Str) else node.args[0].value
+                    if isinstance(mod_name, str) and mod_name.split(".")[0] in FORBIDDEN_IMPORTS:
+                        return False
+
+    # fallback simple check for open()
+    if "open(" in code:
+        return False
+
+    return True
 
 def run_python(code: str, timeout: int = 15) -> ExecResult:
     if not _is_safe(code):

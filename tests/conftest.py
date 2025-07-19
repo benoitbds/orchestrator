@@ -1,6 +1,7 @@
 import os
 import types, pytest, asyncio
 
+
 # Provide a fake API key so OpenAI client initialization succeeds during import
 os.environ.setdefault("OPENAI_API_KEY", "sk-test")
 

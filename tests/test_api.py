@@ -1,4 +1,4 @@
-import pytest, json
+import pytest
 from httpx import AsyncClient
 from api.main import app
 

@@ -1,10 +1,11 @@
 # agents/planner.py
 from dotenv import load_dotenv
-load_dotenv()
-
-from langchain_openai import ChatOpenAI
 from langchain.output_parsers import PydanticOutputParser
-from .schemas import Plan, PlanStep
+from langchain_openai import ChatOpenAI
+
+from .schemas import Plan
+
+load_dotenv()
 
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
