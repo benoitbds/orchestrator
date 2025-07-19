@@ -38,3 +38,10 @@ def patch_graph(monkeypatch):
 
     FakeGraph = types.SimpleNamespace(invoke=fake_invoke, astream=fake_astream)
     monkeypatch.setattr(cl, "graph", FakeGraph)
+
+    # Also patch the graph imported in the API module
+    import api.main as main
+    monkeypatch.setattr(main, "graph", FakeGraph)
+
+    import api.ws as ws
+    monkeypatch.setattr(ws, "graph", FakeGraph)
