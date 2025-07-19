@@ -11,3 +11,9 @@ def test_run_python_forbidden():
     res = run_python("import os\nprint(os.listdir())")
     assert not res.success
     assert "Unsafe" in res.stderr
+
+
+def test_run_python_forbidden_dynamic_import():
+    res = run_python("__import__('os').listdir()")
+    assert not res.success
+    assert "Unsafe" in res.stderr

@@ -2,6 +2,7 @@
 
 MVP agentique sur Raspberry Pi.
 
+
 ## Installation
 
 1. Installez [Poetry](https://python-poetry.org/) puis récupérez les dépendances :
@@ -48,4 +49,10 @@ L'ensemble de la suite de tests se lance avec :
 ```bash
 poetry run pytest
 ```
+
+=======
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
