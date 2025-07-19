@@ -1,4 +1,6 @@
-import types, pytest, asyncio
+import types
+import pytest
+import asyncio
 
 @pytest.fixture(autouse=True)
 def patch_graph(monkeypatch):
