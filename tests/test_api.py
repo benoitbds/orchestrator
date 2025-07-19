@@ -1,9 +1,10 @@
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import AsyncClient
 from httpx_ws import aconnect_ws
+from httpx_ws.transport import ASGIWebSocketTransport
 from api.main import app
 
-transport = ASGITransport(app=app)
+transport = ASGIWebSocketTransport(app=app)
 BASE_URL = "http://test"
 
 @pytest.mark.asyncio
@@ -24,7 +25,7 @@ async def test_chat_endpoint():
 @pytest.mark.asyncio
 async def test_ws_stream():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        async with aconnect_ws(f"{BASE_URL}/ws", ac) as ws:
+        async with aconnect_ws("http://test/stream", ac) as ws:
             await ws.send_json({"objective": "demo"})
             chunk = await ws.receive_json()
             # Le stub renvoie un chunk 'plan'
