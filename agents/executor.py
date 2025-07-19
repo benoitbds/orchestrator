@@ -1,7 +1,10 @@
 # agents/executor.py
-import subprocess, tempfile, shutil, os, textwrap, uuid, json, signal, ast
+import subprocess
+import os
+import textwrap
+import uuid
+import signal
 from pathlib import Path
-from typing import List
 from .schemas import ExecResult
 
 SANDBOX_DIR = Path("/tmp/orchestrator_runs")  # nettoyé par cron éventuellement
