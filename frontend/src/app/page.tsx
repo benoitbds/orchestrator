@@ -33,14 +33,20 @@ export default function Home() {
     <main className="flex flex-col gap-6 p-6 max-w-3xl mx-auto">
       <h1 className="text-2xl font-bold">Orchestrator Assistant</h1>
 
-      <div className="flex gap-2">
+      <form
+        onSubmit={e => {
+          e.preventDefault();
+          handleRun();
+        }}
+        className="flex gap-2"
+      >
         <Input
           placeholder="Votre objectif…"
           value={objective}
           onChange={e => setObjective(e.target.value)}
         />
-        <Button onClick={handleRun}>Lancer</Button>
-      </div>
+        <Button type="submit">Lancer</Button>
+      </form>
 
       <StreamViewer ref={viewerRef} />
 
