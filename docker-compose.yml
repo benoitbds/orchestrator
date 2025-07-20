@@ -1,7 +1,8 @@
-version: "3.9"
 services:
   app:
-    build: .
+    build:
+       context: .
+       dockerfile: Dockerfile
     volumes:
       - .:/app
     container_name: orchestrator_api
@@ -11,11 +12,17 @@ services:
       - "8000:8000"
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: ./frontend
+    container_name: orchestrator_front
+    depends_on:
+      - app
+
   reverse:
     image: caddy:2
     container_name: orchestrator_proxy
-    depends_on:
-      - app
+    depends_on: [app, frontend]
     ports:
       - "9080:80"
       - "9443:443"

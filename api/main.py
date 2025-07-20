@@ -5,10 +5,15 @@ from orchestrator.core_loop import graph, LoopState, Memory
 
 app = FastAPI()
 
+origins = [
+    "http://localhost:3000",
+    "http://localhost:9080",
+]
+
 # Autorise l’origine du front (dev localhost:3000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

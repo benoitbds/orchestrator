@@ -5,22 +5,15 @@ interface Item {
   summary: string;
 }
 
-export default function HistoryPanel({ history }: { history: Item[] }) {
+export default function HistoryPanel({ history }: { history: string[] }) {
   return (
-    <section className="space-y-2">
-      <h2 className="text-lg font-semibold">Historique</h2>
-
-      {history.length === 0 && (
-        <p className="text-sm text-muted-foreground">Aucune exécution.</p>
-      )}
-
-      {history.map((h, idx) => (
-        <Card key={idx}>
-          <CardContent className="p-3">
-            <p className="font-medium">{h.objective}</p>
-            <p className="text-sm text-muted-foreground">{h.summary}</p>
-          </CardContent>
-        </Card>
+    <section className="space-y-4">
+      {history.map((html, i) => (
+        <article
+          key={i}
+          className="prose p-3 rounded bg-slate-100"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
       ))}
     </section>
   );

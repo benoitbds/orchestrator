@@ -8,18 +8,18 @@ import HistoryPanel from "@/components/HistoryPanel";
 
 export default function Home() {
   const [objective, setObjective] = useState("");
-  const [history, setHistory]   = useState<any[]>([]);
+  const [history, setHistory] = useState<string[]>([]);
   const viewerRef = useRef<any>(null);
 
   const handleRun = async () => {
-    // POST /chat — on récupère le rendu final pour l’historique
-    const res = await fetch("http://localhost:9080/chat", {
+    // API relative : même origin => pas de CORS
+    const res = await fetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ objective }),
     }).then(r => r.json());
 
-    setHistory(h => [...h, { objective, summary: res.summary }]);
+    setHistory(h => [...h, res.html]);
 
     // WebSocket streaming
     const ws = connectWS(objective);

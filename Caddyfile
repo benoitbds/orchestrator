@@ -1,8 +1,15 @@
-{
-	# --------  bloc GLOBAL -----------
-	auto_https off      # ← désactive totalement ACME/TLS
-}
-
 :80 {
-	reverse_proxy app:8000
+    reverse_proxy /api/*    app:8000
+    reverse_proxy /stream   app:8000
+    reverse_proxy /chat     app:8000
+
+    reverse_proxy /_next/*  frontend:3000   # servira CSS/JS/polices
+    reverse_proxy /         frontend:3000   # tout le reste (HTML)
+
+    header {
+        Access-Control-Allow-Origin  *
+        Access-Control-Allow-Methods "GET,POST,OPTIONS"
+        Access-Control-Allow-Headers *
+        defer
+    }
 }

@@ -56,7 +56,7 @@ class LoopState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)  # <- clé
 
 # ---------- LangGraph nodes ----------
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+llm_step = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
 
 def planner(state: LoopState) -> dict:
     plan = make_plan(state.objective)
@@ -64,23 +64,36 @@ def planner(state: LoopState) -> dict:
     return {"plan": plan}
 
 def executor(state: LoopState) -> dict:
-    #  ici on exécute juste un “print objective” pour démo
-    first_step = state.plan.steps[0]
-    code = f'print("{first_step.title}")'
-    exec_res = run_python(code)
-    snippet = (exec_res.stdout or exec_res.stderr)[:512]
-    state.mem_obj.add("agent-executor", snippet)
+    outputs = []          # garde la sortie de chaque étape
+    for step in state.plan.steps:
+        prompt = (
+            f"Objectif : {state.objective}\n"
+            f"Historique :\n{''.join(outputs) if outputs else '—'}\n\n"
+            f"== Étape {step.id}: {step.title} ==\n{step.description}\n"
+            "Réalise cette étape et renvoie UNIQUEMENT le résultat brut."
+        )
+        rsp = llm_step.invoke(prompt).content.strip()
+        outputs.append(f"### {step.title}\n{rsp}\n")
+
+    exec_res = ExecResult(success=True, stdout="\n".join(outputs), stderr="")
+    state.mem_obj.add("agent-executor", outputs[-1][:256])
     return {"exec_result": exec_res.model_dump()}
 
 def writer(state: LoopState) -> dict:
     er = ExecResult(**state.exec_result)
-    render = render_exec(er, state.objective)
-    state.mem_obj.add("agent-writer", render.summary)
-    state.mem_obj.add("assistant", render.summary)
-    return {
-       "render": render.model_dump(),
-       "result": render.summary
-    }
+
+    # HTML complet + résumé = dernier bloc non-vide (=> le haïku final)
+    html = (
+        f"<h2>Résultat : {state.objective}</h2>\n"
+        f"<pre><code>{er.stdout.strip()}</code></pre>"
+    )
+    lines = [l.strip() for l in er.stdout.splitlines() if l.strip()]
+    summary = lines[-1] if lines else er.stdout.strip()
+
+    render = {"html": html, "summary": summary, "artifacts": []}
+    state.mem_obj.add("agent-writer", summary)
+    state.mem_obj.add("assistant", summary)
+    return {"render": render, "result": summary}
 
 # ---------- Build & compile graph ----------
 def build_graph():
@@ -102,7 +115,7 @@ def run(objective: str):
     mem = Memory()
     state = LoopState(objective=objective, mem_obj=mem, memory=mem.fetch())
     result = graph.invoke(state)
-    print("✅ Résultat :\n", result["result"])
+    print("✅ Résultat complet :\n", result["render"]["html"])
 
 if __name__ == "__main__":
     import typer
