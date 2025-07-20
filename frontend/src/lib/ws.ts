@@ -1,5 +1,9 @@
 export function connectWS(objective: string) {
-  const ws = new WebSocket("ws://localhost:9080/stream");
+  const wsUrl = (process.env.NEXT_PUBLIC_API_URL || "ws://localhost:8000").replace(
+    /^http/,
+    "ws"
+  );
+  const ws = new WebSocket(`${wsUrl}/stream`);
   ws.addEventListener("open", () => {
     ws.send(JSON.stringify({ objective }));
   });

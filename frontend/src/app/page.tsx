@@ -13,7 +13,8 @@ export default function Home() {
 
   const handleRun = async () => {
     // API relative : même origin => pas de CORS
-    const res = await fetch("/chat", {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    const res = await fetch(`${apiUrl}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ objective }),
