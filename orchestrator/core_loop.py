@@ -10,8 +10,6 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 
 from agents.planner import make_plan
-from agents.executor import run_python
-from agents.writer import render_exec
 from agents.schemas import ExecResult, Plan
 import threading
 
@@ -87,7 +85,7 @@ def writer(state: LoopState) -> dict:
         f"<h2>Résultat : {state.objective}</h2>\n"
         f"<pre><code>{er.stdout.strip()}</code></pre>"
     )
-    lines = [l.strip() for l in er.stdout.splitlines() if l.strip()]
+    lines = [line.strip() for line in er.stdout.splitlines() if line.strip()]
     summary = lines[-1] if lines else er.stdout.strip()
 
     render = {"html": html, "summary": summary, "artifacts": []}

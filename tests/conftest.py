@@ -1,5 +1,6 @@
-import os
-import types, pytest, asyncio
+import types
+import pytest
+import asyncio
 
 
 # Provide a fake API key so OpenAI client initialization succeeds during import
