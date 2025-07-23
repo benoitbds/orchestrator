@@ -9,12 +9,13 @@ router = APIRouter()
 async def stream_chat(ws: WebSocket):
     await ws.accept()
     try:
-        # 1) Attend le 1er message JSON : {"objective": "..."}
+        # 1) Attend le 1er message JSON : {"objective": "...", "project_id": 1}
         payload = await ws.receive_json()
         objective = payload.get("objective", "")
+        project_id = payload.get("project_id")
 
         # 2) Prépare l’état initial
-        state = LoopState(objective=objective, mem_obj=Memory())
+        state = LoopState(objective=objective, project_id=project_id, mem_obj=Memory())
 
         # 3) Stream LangGraph
         async for chunk in graph.astream(state):
