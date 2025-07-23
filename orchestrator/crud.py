@@ -91,7 +91,6 @@ def delete_project(project_id: int) -> bool:
     return cursor.rowcount > 0
 
 
-
 def create_item(item: BacklogItemCreate) -> BacklogItem:
     conn = get_db_connection()
     cursor = conn.cursor()

@@ -6,6 +6,7 @@ from orchestrator import crud
 from orchestrator.models import ProjectCreate, BacklogItemCreate
 
 app = FastAPI()
+crud.init_db()
 
 
 @app.on_event("startup")
@@ -38,6 +39,7 @@ async def chat(payload: dict):
     state = LoopState(objective=objective, mem_obj=Memory())
     final = graph.invoke(state)
     return final["render"]  # html + summary
+
 
 
 # ---- Project endpoints ----
