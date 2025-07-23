@@ -1,7 +1,13 @@
 # orchestrator/crud.py
 import sqlite3
+import json
 from typing import List, Optional
-from .models import Project, ProjectCreate, Item, ItemCreate, ItemUpdate
+from .models import (
+    Project,
+    ProjectCreate,
+    BacklogItem,
+    BacklogItemCreate,
+)
 
 DATABASE_URL = "orchestrator.db"
 
@@ -20,14 +26,15 @@ def init_db():
         ")"
     )
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS items ("
+        "CREATE TABLE IF NOT EXISTS backlog ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "project_id INTEGER NOT NULL,"
-        "title TEXT NOT NULL,"
-        "type TEXT NOT NULL,"
         "parent_id INTEGER,"
+        "title TEXT NOT NULL,"
+        "description TEXT,"
+        "type TEXT NOT NULL,"
         "FOREIGN KEY(project_id) REFERENCES projects(id),"
-        "FOREIGN KEY(parent_id) REFERENCES items(id)"
+        "FOREIGN KEY(parent_id) REFERENCES backlog(id)"
         ")"
     )
     conn.close()
@@ -84,78 +91,73 @@ def delete_project(project_id: int) -> bool:
     return cursor.rowcount > 0
 
 
-# -------------------- Items --------------------
-
-def create_item(item: ItemCreate) -> Item:
+def create_item(item: BacklogItemCreate) -> BacklogItem:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO items (project_id, title, type, parent_id) VALUES (?, ?, ?, ?)",
-        (item.project_id, item.title, item.type, item.parent_id),
+        "INSERT INTO backlog (project_id, parent_id, title, description, type) VALUES (?, ?, ?, ?, ?)",
+        (
+            item.project_id,
+            item.parent_id,
+            item.title,
+            item.description,
+            item.type,
+        ),
     )
     conn.commit()
     item_id = cursor.lastrowid
     conn.close()
-    return Item(id=item_id, **item.model_dump())
+    return BacklogItem(id=item_id, **item.model_dump())
 
 
-def get_item(item_id: int) -> Optional[Item]:
+def get_item(item_id: int) -> Optional[BacklogItem]:
     conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM items WHERE id = ?", (item_id,))
-    row = cur.fetchone()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM backlog WHERE id = ?", (item_id,))
+    row = cursor.fetchone()
     conn.close()
-    return Item(**dict(row)) if row else None
+    if row:
+        return BacklogItem(**dict(row))
+    return None
 
 
-def get_items(project_id: int, type: str | None = None, limit: int = 50, offset: int = 0) -> List[Item]:
+def get_items(project_id: int) -> List[BacklogItem]:
     conn = get_db_connection()
-    cur = conn.cursor()
-    if type:
-        cur.execute(
-            "SELECT * FROM items WHERE project_id = ? AND type = ? ORDER BY id LIMIT ? OFFSET ?",
-            (project_id, type, limit, offset),
-        )
-    else:
-        cur.execute(
-            "SELECT * FROM items WHERE project_id = ? ORDER BY id LIMIT ? OFFSET ?",
-            (project_id, limit, offset),
-        )
-    rows = cur.fetchall()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM backlog WHERE project_id = ? ORDER BY id",
+        (project_id,),
+    )
+    rows = cursor.fetchall()
     conn.close()
-    return [Item(**dict(r)) for r in rows]
+    return [BacklogItem(**dict(row)) for row in rows]
 
 
-def update_item(item_id: int, data: ItemUpdate) -> Optional[Item]:
-    fields = []
-    values = []
-    for field, value in data.model_dump(exclude_none=True).items():
-        fields.append(f"{field} = ?")
-        values.append(value)
-    if not fields:
-        return get_item(item_id)
-    values.append(item_id)
+def update_item(item_id: int, item: BacklogItemCreate) -> Optional[BacklogItem]:
     conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute(f"UPDATE items SET {', '.join(fields)} WHERE id = ?", values)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE backlog SET project_id = ?, parent_id = ?, title = ?, description = ?, type = ? WHERE id = ?",
+        (
+            item.project_id,
+            item.parent_id,
+            item.title,
+            item.description,
+            item.type,
+            item_id,
+        ),
+    )
     conn.commit()
     conn.close()
-    return get_item(item_id)
+    if cursor.rowcount > 0:
+        return BacklogItem(id=item_id, **item.model_dump())
+    return None
 
 
 def delete_item(item_id: int) -> bool:
     conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM items WHERE id = ?", (item_id,))
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM backlog WHERE id = ?", (item_id,))
     conn.commit()
     conn.close()
-    return cur.rowcount > 0
-
-
-def item_has_children(item_id: int) -> bool:
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT 1 FROM items WHERE parent_id = ? LIMIT 1", (item_id,))
-    has = cur.fetchone() is not None
-    conn.close()
-    return has
+    return cursor.rowcount > 0
