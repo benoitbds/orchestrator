@@ -1,5 +1,6 @@
 # orchestrator/crud.py
 import sqlite3
+import json
 from typing import List, Optional
 from .models import (
     Project,
@@ -90,6 +91,7 @@ def delete_project(project_id: int) -> bool:
     return cursor.rowcount > 0
 
 
+
 def create_item(item: BacklogItemCreate) -> BacklogItem:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -160,4 +162,3 @@ def delete_item(item_id: int) -> bool:
     conn.commit()
     conn.close()
     return cursor.rowcount > 0
-

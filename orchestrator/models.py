@@ -25,4 +25,3 @@ class BacklogItemCreate(BacklogItemBase):
 
 class BacklogItem(BacklogItemBase):
     id: int
-
