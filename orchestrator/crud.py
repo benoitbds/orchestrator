@@ -1,14 +1,12 @@
 # orchestrator/crud.py
 import sqlite3
-import os
 from typing import List, Optional
 from .models import Project, ProjectCreate
 
 DATABASE_URL = "orchestrator.db"
 
 def get_db_connection():
-    db_url = os.environ.get("ORCH_DB_URL", DATABASE_URL)
-    conn = sqlite3.connect(db_url)
+    conn = sqlite3.connect(DATABASE_URL)
     conn.row_factory = sqlite3.Row
     return conn
 

@@ -1,9 +1,9 @@
 import os
-import types, pytest, asyncio, tempfile
+import types, pytest, asyncio
 
 
 # Provide a fake API key so OpenAI client initialization succeeds during import
-os.environ.setdefault("OPENAI_API_KEY", "sk-test")
+#os.environ.setdefault("OPENAI_API_KEY", "sk-test")
 
 @pytest.fixture(autouse=True)
 def patch_graph(monkeypatch):
@@ -13,13 +13,6 @@ def patch_graph(monkeypatch):
     - astream(...) → yield un seul chunk {"plan": {...}}
     """
     import orchestrator.core_loop as cl
-
-    # Isolated DB for tests
-    tmp = tempfile.NamedTemporaryFile(delete=False)
-    os.environ["ORCH_DB_URL"] = tmp.name
-    tmp.close()
-    from orchestrator import crud
-    crud.init_db()
 
     async def fake_astream(state):
         yield {"plan": {"plan": {"objective": state.objective}}}

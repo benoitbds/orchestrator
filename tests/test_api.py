@@ -17,7 +17,7 @@ async def test_ping():
 @pytest.mark.asyncio
 async def test_chat_endpoint():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.post("/chat", json={"objective": "demo", "project_id": 1})
+        r = await ac.post("/chat", json={"objective": "demo"})
         body = r.json()
         assert r.status_code == 200
         assert "html" in body and "summary" in body
@@ -26,7 +26,7 @@ async def test_chat_endpoint():
 async def test_ws_stream():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         async with aconnect_ws("http://test/stream", ac) as ws:
-            await ws.send_json({"objective": "demo", "project_id": 1})
+            await ws.send_json({"objective": "demo"})
             chunk = await ws.receive_json()
             # Le stub renvoie un chunk 'plan'
             assert "plan" in chunk

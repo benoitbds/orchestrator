@@ -4,7 +4,7 @@ from agents.schemas import ExecResult
 def test_todo_e2e():
     state = cl.LoopState(
         objective="Construis une todo-app React",
-        mem_obj=cl.Memory(project_id=1)
+        mem_obj=cl.Memory()
     )
     out = cl.graph.invoke(state)
 
