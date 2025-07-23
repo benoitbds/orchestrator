@@ -11,24 +11,17 @@ class ProjectCreate(BaseModel):
     description: str | None = None
 
 
-# ----- Item models -----
-
-class ItemBase(BaseModel):
-    project_id: int
-    type: str
+class BacklogItemBase(BaseModel):
     title: str
     description: str | None = None
-    status: str
+    type: str
+    project_id: int
     parent_id: int | None = None
-    acceptance_criteria: dict | None = None
 
 
-class ItemCreate(ItemBase):
-    expected_result: str | None = None
+class BacklogItemCreate(BacklogItemBase):
+    pass
 
 
-class Item(ItemBase):
+class BacklogItem(BacklogItemBase):
     id: int
-    created_at: str
-    updated_at: str
-    expected_result: str | None = None
