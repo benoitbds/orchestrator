@@ -19,6 +19,7 @@ node_modules/
 .next/
 coverage/
 coverage.xml
+orchestrator.db
 
 # Misc tools
 .DS_Store

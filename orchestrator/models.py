@@ -9,3 +9,19 @@ class Project(BaseModel):
 class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
+
+
+class BacklogItemBase(BaseModel):
+    title: str
+    description: str | None = None
+    type: str
+    project_id: int
+    parent_id: int | None = None
+
+
+class BacklogItemCreate(BacklogItemBase):
+    pass
+
+
+class BacklogItem(BacklogItemBase):
+    id: int
