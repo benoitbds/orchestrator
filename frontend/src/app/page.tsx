@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StreamViewer from "@/components/StreamViewer";
 import HistoryPanel from "@/components/HistoryPanel";
+import BacklogPane from "@/components/BacklogPane";
+import { BacklogProvider } from "@/context/BacklogContext";
 
 export default function Home() {
   const [objective, setObjective] = useState("");
@@ -31,8 +33,9 @@ export default function Home() {
   };
 
   return (
-    <main className="flex flex-col gap-6 p-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold">Orchestrator Assistant</h1>
+    <BacklogProvider>
+      <main className="flex flex-col gap-6 p-6 max-w-3xl mx-auto">
+        <h1 className="text-2xl font-bold">Orchestrator Assistant</h1>
 
       <form
         onSubmit={e => {
@@ -51,7 +54,10 @@ export default function Home() {
 
       <StreamViewer ref={viewerRef} />
 
-      <HistoryPanel history={history} />
-    </main>
+        <BacklogPane />
+
+        <HistoryPanel history={history} />
+      </main>
+    </BacklogProvider>
   );
 }
