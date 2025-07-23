@@ -19,12 +19,14 @@ load_dotenv()
 
 # ---------- Mini-mémoire SQLite ----------
 class Memory:
-    def __init__(self, db_path: str = "orchestrator.db"):
+    def __init__(self, project_id: int, db_path: str = "orchestrator.db"):
+        self.project_id = project_id
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
         self.lock = threading.Lock()
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS trace "
-            "(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, role TEXT, content TEXT)"
+            "(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, role TEXT, content TEXT, project_id INTEGER)"
         )
 
     def add(self, role: str, content: str):
@@ -32,16 +34,27 @@ class Memory:
             from datetime import datetime, timezone
             ts = datetime.now(timezone.utc).isoformat()
             self.conn.execute(
-                "INSERT INTO trace (ts, role, content) VALUES (?, ?, ?)",
-                (ts, role, content),
+                "INSERT INTO trace (ts, role, content, project_id) VALUES (?, ?, ?, ?)",
+                (ts, role, content, self.project_id),
             )
             self.conn.commit()
 
     def fetch(self, limit: int = 10) -> List[tuple[str, str]]:
         cur = self.conn.execute(
-            "SELECT role, content FROM trace ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT role, content FROM trace WHERE project_id = ? ORDER BY id DESC LIMIT ?",
+            (self.project_id, limit),
         )
         return list(reversed(cur.fetchall()))
+
+    def fetch_item(self, item_id: int) -> Optional[dict]:
+        cur = self.conn.execute(
+            "SELECT id, ts, role, content, project_id FROM trace WHERE id = ?",
+            (item_id,),
+        )
+        row = cur.fetchone()
+        if row and row["project_id"] == self.project_id:
+            return dict(row)
+        return None
 
 # ---------- State schema (Pydantic) ----------
 class LoopState(BaseModel):
@@ -111,8 +124,8 @@ def build_graph():
 graph = build_graph()
 
 # ---------- CLI ----------
-def run(objective: str):
-    mem = Memory()
+def run(objective: str, project_id: int = 1):
+    mem = Memory(project_id)
     state = LoopState(objective=objective, mem_obj=mem, memory=mem.fetch())
     result = graph.invoke(state)
     print("✅ Résultat complet :\n", result["render"]["html"])

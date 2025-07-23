@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef } from "react";
+import { useProjects } from "@/context/ProjectContext";
 import { connectWS } from "@/lib/ws";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,21 +10,23 @@ import HistoryPanel from "@/components/HistoryPanel";
 export default function Home() {
   const [objective, setObjective] = useState("");
   const [history, setHistory] = useState<string[]>([]);
+  const { currentProject } = useProjects();
   const viewerRef = useRef<any>(null);
 
   const handleRun = async () => {
+    if (!currentProject) return;
     // API relative : même origin => pas de CORS
         const apiUrl = process.env.NEXT_PUBLIC_API_URL;
     const res = await fetch(`${apiUrl}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ objective }),
+      body: JSON.stringify({ objective, project_id: currentProject.id }),
     }).then(r => r.json());
 
     setHistory(h => [...h, res.html]);
 
     // WebSocket streaming
-    const ws = connectWS(objective);
+    const ws = connectWS(objective, currentProject.id);
     ws.onmessage = evt => {
       const chunk = JSON.parse(evt.data);
       viewerRef.current?.push(chunk);
@@ -45,8 +48,9 @@ export default function Home() {
           placeholder="Votre objectif…"
           value={objective}
           onChange={e => setObjective(e.target.value)}
+          disabled={!currentProject}
         />
-        <Button type="submit">Lancer</Button>
+        <Button type="submit" disabled={!currentProject}>Lancer</Button>
       </form>
 
       <StreamViewer ref={viewerRef} />

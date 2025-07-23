@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { ProjectProvider } from "@/context/ProjectContext";
+import ProjectSelector from "@/components/ProjectSelector";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -24,10 +26,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        <ProjectProvider>
+          <div className="p-4 border-b">
+            <ProjectSelector />
+          </div>
+          {children}
+        </ProjectProvider>
       </body>
     </html>
   );
