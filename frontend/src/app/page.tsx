@@ -8,6 +8,7 @@ import StreamViewer from "@/components/StreamViewer";
 import HistoryPanel from "@/components/HistoryPanel";
 import BacklogPane from "@/components/BacklogPane";
 import { BacklogProvider } from "@/context/BacklogContext";
+import { ProjectPanel } from "@/components/ProjectPanel";
 
 export default function Home() {
   const [objective, setObjective] = useState("");
@@ -36,31 +37,38 @@ export default function Home() {
 
   return (
     <BacklogProvider>
-      <main className="flex flex-col gap-6 p-6 max-w-3xl mx-auto">
-        <h1 className="text-2xl font-bold">Orchestrator Assistant</h1>
+      <div className="flex h-screen">
+        {/* Panel de gestion des projets à gauche */}
+        <ProjectPanel className="flex-shrink-0" />
+        
+        {/* Contenu principal */}
+        <main className="flex-1 flex flex-col gap-6 p-6 overflow-auto">
+          <div className="max-w-3xl mx-auto w-full space-y-6">
+            <h1 className="text-2xl font-bold">Orchestrator Assistant</h1>
 
-      <form
-        onSubmit={e => {
-          e.preventDefault();
-          handleRun();
-        }}
-        className="flex gap-2"
-      >
-        <Input
-          placeholder="Votre objectif…"
-          value={objective}
-          onChange={e => setObjective(e.target.value)}
-          disabled={!currentProject}
-        />
-        <Button type="submit" disabled={!currentProject}>Lancer</Button>
-      </form>
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                handleRun();
+              }}
+              className="flex gap-2"
+            >
+              <Input
+                placeholder="Votre objectif…"
+                value={objective}
+                onChange={e => setObjective(e.target.value)}
+              />
+              <Button type="submit">Lancer</Button>
+            </form>
 
-      <StreamViewer ref={viewerRef} />
+            <StreamViewer ref={viewerRef} />
 
-        <BacklogPane />
+            <BacklogPane />
 
-        <HistoryPanel history={history} />
-      </main>
+            <HistoryPanel history={history} />
+          </div>
+        </main>
+      </div>
     </BacklogProvider>
   );
 }
