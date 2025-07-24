@@ -25,3 +25,10 @@ class BacklogItemCreate(BacklogItemBase):
 
 class BacklogItem(BacklogItemBase):
     id: int
+
+
+class BacklogItemUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    type: str | None = None
+    parent_id: int | None = None

@@ -44,6 +44,7 @@ class Memory:
 # ---------- State schema (Pydantic) ----------
 class LoopState(BaseModel):
     objective: str
+    project_id: int | None = None
     mem_obj: Memory
     memory: List[Any] = Field(default_factory=list)
     plan: Optional[Plan] = None
