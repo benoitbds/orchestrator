@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef } from "react";
+import { Loader2 } from "lucide-react";
 import { useProjects } from "@/context/ProjectContext";
 import { connectWS } from "@/lib/ws";
 import { Button } from "@/components/ui/button";
@@ -13,10 +14,12 @@ import { ProjectPanel } from "@/components/ProjectPanel";
 export default function Home() {
   const [objective, setObjective] = useState("");
   const [history, setHistory] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const viewerRef = useRef<any>(null);
   const { currentProject } = useProjects();
 
   const handleRun = async () => {
+    setIsLoading(true);
     // API relative : même origin => pas de CORS
         const apiUrl = process.env.NEXT_PUBLIC_API_URL;
     const res = await fetch(`${apiUrl}/chat`, {
@@ -32,6 +35,9 @@ export default function Home() {
     ws.onmessage = evt => {
       const chunk = JSON.parse(evt.data);
       viewerRef.current?.push(chunk);
+    };
+    ws.onclose = () => {
+      setIsLoading(false);
     };
   };
 
@@ -57,8 +63,12 @@ export default function Home() {
                 placeholder="Votre objectif…"
                 value={objective}
                 onChange={e => setObjective(e.target.value)}
+                disabled={isLoading}
               />
-              <Button type="submit">Lancer</Button>
+              <Button type="submit" disabled={isLoading}>
+                {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Lancer
+              </Button>
             </form>
 
             <StreamViewer ref={viewerRef} />

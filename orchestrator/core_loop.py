@@ -75,19 +75,21 @@ def executor(state: LoopState) -> dict:
         outputs.append(f"### {step.title}\n{rsp}\n")
 
     exec_res = ExecResult(success=True, stdout="\n".join(outputs), stderr="")
-    state.mem_obj.add("agent-executor", outputs[-1][:256])
+    # Sauvegarder l'ensemble du message au lieu de seulement les 256 premiers caractères de la dernière sortie
+    full_output = "\n".join(outputs)
+    state.mem_obj.add("agent-executor", full_output)
     return {"exec_result": exec_res.model_dump()}
 
 def writer(state: LoopState) -> dict:
     er = ExecResult(**state.exec_result)
 
-    # HTML complet + résumé = dernier bloc non-vide (=> le haïku final)
+    # HTML complet + résumé = l'ensemble du message de l'executor
     html = (
         f"<h2>Résultat : {state.objective}</h2>\n"
         f"<pre><code>{er.stdout.strip()}</code></pre>"
     )
-    lines = [line.strip() for line in er.stdout.splitlines() if line.strip()]
-    summary = lines[-1] if lines else er.stdout.strip()
+    # Utiliser l'ensemble du message au lieu de seulement la dernière ligne
+    summary = er.stdout.strip() if er.stdout.strip() else "Aucun résultat"
 
     render = {"html": html, "summary": summary, "artifacts": []}
     state.mem_obj.add("agent-writer", summary)

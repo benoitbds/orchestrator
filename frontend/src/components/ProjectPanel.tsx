@@ -82,12 +82,23 @@ export function ProjectPanel({ className }: ProjectPanelProps) {
     `}>
       {/* Header avec bouton de collapse */}
       <div className="flex items-center justify-between p-4 border-b border-border">
-        {!isCollapsed && (
-          <div className="flex items-center gap-2">
-            <Folder className="size-5 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">Projets</h2>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {!isCollapsed && (
+            <>
+              <Folder className="size-5 text-muted-foreground" />
+              <h2 className="text-sm font-semibold">Projets</h2>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleCreateProject}
+                disabled={isLoading}
+                className="size-6"
+              >
+                <Plus className="size-4" />
+              </Button>
+            </>
+          )}
+        </div>
         <Button
           variant="ghost"
           size="icon"
@@ -139,16 +150,6 @@ export function ProjectPanel({ className }: ProjectPanelProps) {
               Actions
             </label>
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCreateProject}
-                className="flex-1"
-                disabled={isLoading}
-              >
-                <Plus className="size-4" />
-                Créer
-              </Button>
               <Button
                 variant="outline"
                 size="sm"

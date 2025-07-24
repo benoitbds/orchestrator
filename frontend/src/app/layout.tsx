@@ -30,9 +30,6 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ProjectProvider>
-          <div className="p-4 border-b">
-            <ProjectSelector />
-          </div>
           {children}
         </ProjectProvider>
       </body>
