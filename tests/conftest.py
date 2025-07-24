@@ -1,10 +1,14 @@
 import types
 import pytest
 import asyncio
+import sys
+import os
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
 # Provide a fake API key so OpenAI client initialization succeeds during import
-#os.environ.setdefault("OPENAI_API_KEY", "sk-test")
+os.environ.setdefault("OPENAI_API_KEY", "sk-test")
 
 @pytest.fixture(autouse=True)
 def patch_graph(monkeypatch):
