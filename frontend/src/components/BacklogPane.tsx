@@ -1,58 +1,58 @@
 "use client";
 import { useState } from 'react';
-import { useBacklog } from '@/context/BacklogContext';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { useProjects } from '@/context/ProjectContext';
+import { ItemTree } from '@/components/ItemTree';
+import { Button } from '@/components/ui/button';
+import { ItemDialog } from './ItemDialog';
+import { BacklogItem } from '@/models/backlogItem';
+import { mutate } from 'swr';
 
 export default function BacklogPane() {
-  const { items, createItem } = useBacklog();
   const { currentProject } = useProjects();
-  const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState('');
-  const [type, setType] = useState('Epic');
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<BacklogItem | undefined>(undefined);
 
-  const disabled = !currentProject;
-
-  const handleCreate = async () => {
-    await createItem({ title, type, description: '', parent_id: null, project_id: currentProject!.id });
-    setTitle('');
-    setOpen(false);
+  const handleNewItem = () => {
+    setEditingItem(undefined);
+    setIsDialogOpen(true);
   };
 
-  const renderItems = (parent: number | null, depth = 0) =>
-    items
-      .filter((i) => i.parent_id === parent)
-      .map((i) => (
-        <div key={i.id} style={{ marginLeft: depth * 16 }} className="flex items-center gap-2 py-1">
-          <span>{i.type === 'Epic' ? '📦' : '📝'}</span>
-          <span>{i.title}</span>
-        </div>
-      ));
+  const handleEditItem = (item: BacklogItem) => {
+    setEditingItem(item);
+    setIsDialogOpen(true);
+  };
+
+  const handleSave = async (item: Partial<BacklogItem>) => {
+    const method = item.id ? 'PATCH' : 'POST';
+    const url = item.id ? `/api/items/${item.id}` : '/api/items';
+
+    await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(item),
+    });
+
+    mutate(`/api/items?project_id=${currentProject?.id}`);
+  };
 
   return (
     <div className="p-4 border rounded-md bg-gray-50">
       <div className="flex justify-between items-center mb-2">
         <h3 className="font-medium">Backlog</h3>
-        <Button size="sm" onClick={() => setOpen(true)} disabled={disabled}>
-          +
+        <Button size="sm" onClick={handleNewItem} disabled={!currentProject}>
+          Nouvel item
         </Button>
       </div>
-      <div>{renderItems(null)}</div>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Nouvel item</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <Input placeholder="Titre" value={title} onChange={(e) => setTitle(e.target.value)} />
-          </div>
-          <DialogFooter>
-            <Button onClick={handleCreate}>Créer</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ItemTree projectId={currentProject?.id ?? null} onEdit={handleEditItem} />
+      {currentProject && (
+        <ItemDialog
+          isOpen={isDialogOpen}
+          onClose={() => setIsDialogOpen(false)}
+          item={editingItem}
+          projectId={currentProject.id}
+          onSave={handleSave}
+        />
+      )}
     </div>
   );
 }
