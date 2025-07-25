@@ -27,7 +27,7 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
     }
     setIsLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/projects/${currentProject.id}/items`);
+      const res = await fetch(`${apiUrl}/api/items?project_id=${currentProject.id}`);
       const data = await res.json();
       setItems(data);
     } catch (err) {
@@ -40,7 +40,7 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
   const createItem = async (item: Omit<BacklogItem, 'id'>) => {
     if (!currentProject) return null;
     try {
-      const res = await fetch(`${apiUrl}/projects/${currentProject.id}/items`, {
+      const res = await fetch(`${apiUrl}/api/items`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
@@ -57,8 +57,8 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
 
   const updateItem = async (id: number, item: Omit<BacklogItem, 'id'>) => {
     try {
-      const res = await fetch(`${apiUrl}/items/${id}`, {
-        method: 'PUT',
+      const res = await fetch(`${apiUrl}/api/items/${id}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
       });
@@ -74,7 +74,7 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
 
   const deleteItem = async (id: number) => {
     try {
-      const res = await fetch(`${apiUrl}/items/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${apiUrl}/api/items/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed');
       await fetchItems();
       return true;
@@ -102,4 +102,3 @@ export const useBacklog = () => {
   if (!ctx) throw new Error('useBacklog must be used within BacklogProvider');
   return ctx;
 };
-

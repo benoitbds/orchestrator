@@ -71,7 +71,7 @@ async def delete_project(project_id: int):
 
 # ---- Backlog item endpoints ----
 
-@app.get("/items", response_model=list[BacklogItem])
+@app.get("/api/items", response_model=list[BacklogItem])
 async def list_items(
     project_id: int = Query(...),
     type: str | None = Query(None),
@@ -81,28 +81,53 @@ async def list_items(
     return crud.get_items(project_id=project_id, type=type, limit=limit, offset=offset)
 
 
-@app.post("/items", response_model=BacklogItem, status_code=201)
-async def create_item(item: BacklogItemCreate):
+@app.post("/api/items", response_model=BacklogItem, status_code=201)
+async def create_item(item_data: dict):
+    from orchestrator.models import EpicCreate, CapabilityCreate, FeatureCreate, USCreate, UCCreate
+    
+    # Créer le bon modèle selon le type
+    item_type = item_data.get("type")
+    try:
+        if item_type == "Epic":
+            item = EpicCreate(**item_data)
+        elif item_type == "Capability":
+            item = CapabilityCreate(**item_data)
+        elif item_type == "Feature":
+            item = FeatureCreate(**item_data)
+        elif item_type == "US":
+            item = USCreate(**item_data)
+        elif item_type == "UC":
+            item = UCCreate(**item_data)
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid type: {item_type}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Validation error: {str(e)}")
+    
     if item.parent_id is not None:
         parent = crud.get_item(item.parent_id)
         if not parent or parent.project_id != item.project_id:
             raise HTTPException(status_code=400, detail="invalid parent_id")
-        if parent.type != "folder":
-            raise HTTPException(status_code=400, detail="parent must be folder")
+        # Vérifier la hiérarchie : Epic→Capability→Feature→US→UC
+        allowed = {
+            "Capability": ["Epic"], 
+            "Feature": ["Epic", "Capability"], 
+            "US": ["Feature"], 
+            "UC": ["US"]
+        }
+        if item.type not in allowed or parent.type not in allowed[item.type]:
+            raise HTTPException(status_code=400, detail="invalid hierarchy")
     return crud.create_item(item)
 
 
-@app.get("/items/{item_id}", response_model=BacklogItem)
-async def read_item(item_id: int, project_id: int | None = Query(None)):
+@app.get("/api/items/{item_id}", response_model=BacklogItem)
+async def read_item(item_id: int):
     item = crud.get_item(item_id)
     if not item:
-        raise HTTPException(status_code=404)
-    if project_id is not None and item.project_id != project_id:
         raise HTTPException(status_code=404)
     return item
 
 
-@app.patch("/items/{item_id}", response_model=BacklogItem)
+@app.patch("/api/items/{item_id}", response_model=BacklogItem)
 async def update_item(item_id: int, payload: BacklogItemUpdate):
     item = crud.get_item(item_id)
     if not item:
@@ -112,8 +137,17 @@ async def update_item(item_id: int, payload: BacklogItemUpdate):
         new_parent = crud.get_item(data["parent_id"])
         if not new_parent or new_parent.project_id != item.project_id:
             raise HTTPException(status_code=400, detail="invalid parent_id")
-        if new_parent.type != "folder" or new_parent.id == item_id:
+        # Vérifier la hiérarchie autorisée selon le type de l'item
+        allowed = {
+            "Capability": ["Epic"], 
+            "Feature": ["Epic", "Capability"], 
+            "US": ["Feature"], 
+            "UC": ["US"]
+        }
+        # pas de parent autorisé pour les Epics
+        if item.type not in allowed or new_parent.type not in allowed[item.type] or new_parent.id == item_id:
             raise HTTPException(status_code=400, detail="invalid hierarchy")
+        # détecter les cycles
         current = new_parent
         while current.parent_id is not None:
             if current.parent_id == item_id:
@@ -124,24 +158,11 @@ async def update_item(item_id: int, payload: BacklogItemUpdate):
     return crud.update_item(item_id, BacklogItemUpdate(**data))
 
 
-@app.delete("/items/{item_id}", status_code=204)
+@app.delete("/api/items/{item_id}", status_code=204)
 async def delete_item(item_id: int):
     item = crud.get_item(item_id)
     if not item:
         raise HTTPException(status_code=404)
-    if crud.item_has_children(item_id):
-        raise HTTPException(status_code=400, detail="item has children")
+    # suppression en cascade des descendants
     crud.delete_item(item_id)
     return None
-
-
-# compatibility helpers for scoped routes
-@app.get("/projects/{project_id}/items")
-async def list_items_scoped(project_id: int):
-    return crud.get_items(project_id)
-
-
-@app.post("/projects/{project_id}/items")
-async def create_item_scoped(project_id: int, item: BacklogItemCreate):
-    item.project_id = project_id
-    return crud.create_item(item)
