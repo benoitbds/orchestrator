@@ -9,6 +9,7 @@ from orchestrator.models import (
     BacklogItemUpdate,
     BacklogItem,
 )
+from uuid import uuid4
 
 app = FastAPI()
 crud.init_db()
@@ -42,9 +43,34 @@ async def ping():
 async def chat(payload: dict):
     objective = payload.get("objective", "")
     project_id = payload.get("project_id")
-    state = LoopState(objective=objective, project_id=project_id, mem_obj=Memory())
-    final = graph.invoke(state)
-    return final["render"]  # html + summary
+    run_id = str(uuid4())
+    crud.create_run(run_id, project_id)
+    state = LoopState(
+        objective=objective,
+        project_id=project_id,
+        run_id=run_id,
+        mem_obj=Memory(),
+    )
+    try:
+        final = graph.invoke(state)
+        crud.finish_run(run_id, "success")
+    except Exception as e:
+        crud.finish_run(run_id, "failed", str(e))
+        raise
+    return {"run_id": run_id, **final["render"]}
+
+
+@app.get("/runs/{run_id}")
+async def get_run(run_id: str):
+    run = crud.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404)
+    return run
+
+
+@app.get("/runs")
+async def list_runs(project_id: int | None = Query(None)):
+    return crud.get_runs(project_id)
 
 
 
@@ -117,6 +143,33 @@ async def create_item(item_data: dict):
         if item.type not in allowed or parent.type not in allowed[item.type]:
             raise HTTPException(status_code=400, detail="invalid hierarchy")
     return crud.create_item(item)
+
+
+# Compatibility routes
+@app.post("/items", response_model=BacklogItem, status_code=201)
+async def create_item_compat(item_data: dict):
+    return await create_item(item_data)
+
+
+@app.get("/items", response_model=list[BacklogItem])
+async def list_items_compat(
+    project_id: int = Query(...),
+    type: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    return crud.get_items(project_id=project_id, type=type, limit=limit, offset=offset)
+
+
+@app.post("/projects/{project_id}/items")
+async def create_project_item(project_id: int, item_data: dict):
+    item_data["project_id"] = project_id
+    return await create_item(item_data)
+
+
+@app.get("/projects/{project_id}/items")
+async def list_project_items(project_id: int):
+    return crud.get_items(project_id=project_id)
 
 
 @app.get("/api/items/{item_id}", response_model=BacklogItem)

@@ -10,6 +10,7 @@ import HistoryPanel from "@/components/HistoryPanel";
 import BacklogPane from "@/components/BacklogPane";
 import { BacklogProvider } from "@/context/BacklogContext";
 import { ProjectPanel } from "@/components/ProjectPanel";
+import RunsPanel from "@/components/RunsPanel";
 
 export default function Home() {
   const [objective, setObjective] = useState("");
@@ -76,6 +77,7 @@ export default function Home() {
             <BacklogPane />
 
             <HistoryPanel history={history} />
+            <RunsPanel />
           </div>
         </main>
       </div>

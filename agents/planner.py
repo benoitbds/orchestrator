@@ -1,27 +1,19 @@
-# agents/planner.py
-from dotenv import load_dotenv
-from langchain.output_parsers import PydanticOutputParser
+from typing import Any
+import json
 from langchain_openai import ChatOpenAI
-
 from .schemas import Plan
 
-load_dotenv()
-
+class PydanticOutputParser:
+    def __init__(self, pydantic_object: Any):
+        self.model = pydantic_object
+    def get_format_instructions(self) -> str:
+        return json.dumps(self.model.model_json_schema())
+    def parse(self, text: str) -> Any:
+        return self.model.model_validate_json(text)
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
-parser = PydanticOutputParser(pydantic_object=Plan)
-
-SYSTEM_PROMPT = (
-    "Tu es un planificateur expert. "
-    "Réponds STRICTEMENT en JSON conforme à ce schéma:\n"
-    f"{parser.get_format_instructions()}"
-)
+parser = PydanticOutputParser(Plan)
 
 def make_plan(objective: str) -> Plan:
-    user_msg = (
-        f"Objectif: {objective}\n"
-        "Détaille un plan (3-6 étapes max) avec id, title, description, depends_on."
-    )
-    rsp = llm.invoke([{"role": "system", "content": SYSTEM_PROMPT},
-                      {"role": "user", "content": user_msg}])
+    rsp = llm.invoke([{"role": "user", "content": objective}])
     return parser.parse(rsp.content)
