@@ -1,7 +1,7 @@
 # orchestrator/models.py
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Literal, Union
+from typing import Literal, Union, List
 
 class Project(BaseModel):
     id: int
@@ -150,3 +150,22 @@ class BacklogItemUpdate(BaseModel):
     invest_compliant: bool | None = None
     iteration: str | None = None
     status: str | None = None
+
+
+class RunStep(BaseModel):
+    name: str
+    status: Literal["success", "failed"]
+    started_at: datetime
+    ended_at: datetime
+    model: str
+    error: str | None = None
+
+
+class Run(BaseModel):
+    id: str
+    project_id: int | None = None
+    status: Literal["running", "success", "failed"]
+    started_at: datetime
+    ended_at: datetime | None = None
+    error: str | None = None
+    steps: List[RunStep] = Field(default_factory=list)

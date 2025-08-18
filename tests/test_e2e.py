@@ -1,10 +1,15 @@
 import orchestrator.core_loop as cl
 from agents.schemas import ExecResult
+from orchestrator import crud
+from uuid import uuid4
 
 def test_todo_e2e():
+    run_id = str(uuid4())
+    crud.create_run(run_id, None)
     state = cl.LoopState(
         objective="Construis une todo-app React",
-        mem_obj=cl.Memory()
+        mem_obj=cl.Memory(),
+        run_id=run_id,
     )
     out = cl.graph.invoke(state)
 

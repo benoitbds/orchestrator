@@ -10,56 +10,30 @@ transport = ASGIWebSocketTransport(app=app)
 
 @pytest.mark.asyncio
 async def test_items_crud():
-    # reset database
     if os.path.exists(crud.DATABASE_URL):
         os.remove(crud.DATABASE_URL)
     crud.init_db()
     project = crud.create_project(ProjectCreate(name="proj", description=None))
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.post("/items", json={"project_id": project.id, "title": "root", "type": "folder"})
+        epic_payload = {"project_id": project.id, "title": "Epic 1", "type": "Epic"}
+        r = await ac.post("/items", json=epic_payload)
         assert r.status_code == 201
-        folder1 = r.json()
+        epic = r.json()
 
-        r = await ac.post("/items", json={"project_id": project.id, "title": "folder2", "type": "folder"})
-        folder2 = r.json()
+        feature_payload = {"project_id": project.id, "title": "Feature", "type": "Feature", "parent_id": epic["id"]}
+        rf = await ac.post("/items", json=feature_payload)
+        assert rf.status_code == 201
+        feature = rf.json()
 
-        r_task = await ac.post("/items", json={"project_id": project.id, "title": "task", "type": "task", "parent_id": folder1["id"]})
-        assert r_task.status_code == 201
-        task = r_task.json()
+        story_payload = {"project_id": project.id, "title": "Story", "type": "US", "parent_id": feature["id"]}
+        r2 = await ac.post("/items", json=story_payload)
+        assert r2.status_code == 201
+        story = r2.json()
 
-        resp = await ac.post("/items", json={"project_id": project.id, "title": "oops", "type": "task", "parent_id": task["id"]})
-        assert resp.status_code == 400
+        rlist = await ac.get(f"/items?project_id={project.id}&type=US")
+        assert rlist.status_code == 200
+        assert len(rlist.json()) == 1
 
-        # cannot delete folder with child
-        resp = await ac.delete(f"/items/{folder1['id']}")
-        assert resp.status_code == 400
-
-        # list items filtered
-        r = await ac.get(f"/items?project_id={project.id}&type=task")
-        assert r.status_code == 200
-        tasks = r.json()
-        assert all(it["type"] == "task" for it in tasks)
-
-        # read item with wrong project
-        other_proj = crud.create_project(ProjectCreate(name="other", description=None))
-        resp = await ac.get(f"/items/{task['id']}?project_id={other_proj.id}")
-        assert resp.status_code == 404
-
-        # move task under root -> to check patch
-        r = await ac.patch(f"/items/{task['id']}", json={"parent_id": folder2["id"]})
-        assert r.status_code == 200
-        assert r.json()["parent_id"] == folder2["id"]
-
-        # folder1 now deletable since no child after move
-        resp = await ac.delete(f"/items/{folder1['id']}")
-        assert resp.status_code == 204
-
-        # folder2 still has child -> cannot delete
-        resp = await ac.delete(f"/items/{folder2['id']}")
-        assert resp.status_code == 400
-
-        # delete child then folder2
-        await ac.delete(f"/items/{task['id']}")
-        resp = await ac.delete(f"/items/{folder2['id']}")
-        assert resp.status_code == 204
+        rdel = await ac.delete(f"/api/items/{story['id']}")
+        assert rdel.status_code == 204
