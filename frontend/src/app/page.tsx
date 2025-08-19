@@ -51,7 +51,7 @@ export default function Home() {
         {/* Contenu principal */}
         <main className="flex-1 flex flex-col gap-6 p-6 overflow-auto">
           <div className="max-w-3xl mx-auto w-full space-y-6">
-            <h1 className="text-2xl font-bold">Orchestrator Assistant</h1>
+            <h1 className="text-2xl font-bold">Agent 4 BA</h1>
 
             <form
               onSubmit={e => {

@@ -1,6 +1,5 @@
 # orchestrator/crud.py
 import sqlite3
-from datetime import datetime
 from typing import List, Optional
 from .models import (
     Project,
@@ -13,8 +12,6 @@ from .models import (
     FeatureOut,
     USOut,
     UCOut,
-    Run,
-    RunStep,
 )
 
 DATABASE_URL = "orchestrator.db"
@@ -116,31 +113,6 @@ def init_db():
             conn.execute(f"ALTER TABLE backlog ADD COLUMN {column_name} {column_type}")
         except sqlite3.OperationalError:
             pass
-    # Runs table
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS runs ("
-        "id TEXT PRIMARY KEY," 
-        "project_id INTEGER," 
-        "status TEXT," 
-        "error TEXT," 
-        "started_at DATETIME DEFAULT CURRENT_TIMESTAMP," 
-        "ended_at DATETIME," 
-        "FOREIGN KEY(project_id) REFERENCES projects(id)"
-        ")"
-    )
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS run_steps ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT," 
-        "run_id TEXT," 
-        "name TEXT," 
-        "status TEXT," 
-        "started_at DATETIME," 
-        "ended_at DATETIME," 
-        "model TEXT," 
-        "error TEXT," 
-        "FOREIGN KEY(run_id) REFERENCES runs(id)"
-        ")"
-    )
     conn.close()
 
 def create_project(project: ProjectCreate) -> Project:
@@ -308,105 +280,3 @@ def item_has_children(item_id: int) -> bool:
     has = cursor.fetchone() is not None
     conn.close()
     return has
-
-
-# ----- Run tracking -----
-def create_run(run_id: str, project_id: int | None) -> None:
-    conn = get_db_connection()
-    conn.execute(
-        "INSERT INTO runs (id, project_id, status, started_at) VALUES (?, ?, 'running', CURRENT_TIMESTAMP)",
-        (run_id, project_id),
-    )
-    conn.commit()
-    conn.close()
-
-
-def finish_run(run_id: str, status: str, error: str | None = None) -> None:
-    conn = get_db_connection()
-    conn.execute(
-        "UPDATE runs SET status = ?, ended_at = CURRENT_TIMESTAMP, error = ? WHERE id = ?",
-        (status, error, run_id),
-    )
-    conn.commit()
-    conn.close()
-
-
-def record_run_step(
-    run_id: str,
-    name: str,
-    status: str,
-    started_at: datetime,
-    ended_at: datetime,
-    model: str,
-    error: str | None = None,
-) -> None:
-    conn = get_db_connection()
-    conn.execute(
-        "INSERT INTO run_steps (run_id, name, status, started_at, ended_at, model, error)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            run_id,
-            name,
-            status,
-            started_at.isoformat(),
-            ended_at.isoformat(),
-            model,
-            error,
-        ),
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_run(run_id: str) -> Optional[Run]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM runs WHERE id = ?", (run_id,))
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return None
-    steps_cur = conn.execute(
-        "SELECT * FROM run_steps WHERE run_id = ? ORDER BY started_at",
-        (run_id,),
-    )
-    steps = [
-        RunStep(
-            name=s["name"],
-            status=s["status"],
-            started_at=datetime.fromisoformat(s["started_at"]),
-            ended_at=datetime.fromisoformat(s["ended_at"]),
-            model=s["model"],
-            error=s["error"],
-        )
-        for s in steps_cur.fetchall()
-    ]
-    run = Run(
-        id=row["id"],
-        project_id=row["project_id"],
-        status=row["status"],
-        started_at=datetime.fromisoformat(row["started_at"]),
-        ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None,
-        error=row["error"],
-        steps=steps,
-    )
-    conn.close()
-    return run
-
-
-def get_runs(project_id: int | None = None) -> List[Run]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    if project_id is not None:
-        cursor.execute(
-            "SELECT * FROM runs WHERE project_id = ? ORDER BY started_at",
-            (project_id,),
-        )
-    else:
-        cursor.execute("SELECT * FROM runs ORDER BY started_at")
-    run_rows = cursor.fetchall()
-    runs = []
-    for row in run_rows:
-        runs.append(get_run(row["id"]))
-    conn.close()
-    return runs

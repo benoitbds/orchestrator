@@ -18,6 +18,7 @@ const Loader2 = dynamic(() => import('lucide-react').then(mod => ({ default: mod
 const ArrowUpDown = dynamic(() => import('lucide-react').then(mod => ({ default: mod.ArrowUpDown })), { ssr: false });
 const ArrowUp = dynamic(() => import('lucide-react').then(mod => ({ default: mod.ArrowUp })), { ssr: false });
 const ArrowDown = dynamic(() => import('lucide-react').then(mod => ({ default: mod.ArrowDown })), { ssr: false });
+const CpuIcon = dynamic(() => import('lucide-react').then(mod => ({ default: mod.Cpu })), { ssr: false });
 
 const typeColors: { [key: string]: string } = {
   Epic: 'bg-purple-500',
@@ -264,7 +265,15 @@ export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
                 </td>
                 <td className="px-4 py-3">
                   <div>
-                    <div className="font-medium">{item.title}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{item.title}</span>
+                      {item.generated_by_ai && (
+                        <Badge className="bg-purple-600 text-white text-xs flex items-center gap-1">
+                          <CpuIcon className="w-3 h-3" />
+                          IA - à valider
+                        </Badge>
+                      )}
+                    </div>
                     {item.description && (
                       <div className="text-sm text-gray-500 truncate max-w-xs">
                         {item.description}
