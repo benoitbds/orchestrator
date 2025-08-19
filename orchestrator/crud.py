@@ -1,5 +1,6 @@
 # orchestrator/crud.py
 import sqlite3
+from datetime import datetime
 from typing import List, Optional
 from .models import (
     Project,
@@ -12,6 +13,8 @@ from .models import (
     FeatureOut,
     USOut,
     UCOut,
+    Run,
+    RunStep,
 )
 
 DATABASE_URL = "orchestrator.db"
@@ -113,7 +116,122 @@ def init_db():
             conn.execute(f"ALTER TABLE backlog ADD COLUMN {column_name} {column_type}")
         except sqlite3.OperationalError:
             pass
+    # Tables for run tracking
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS runs ("
+        "run_id TEXT PRIMARY KEY,"
+        "project_id INTEGER,"
+        "status TEXT,"
+        "started_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "finished_at DATETIME,"
+        "error TEXT"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS run_steps ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "run_id TEXT,"
+        "step TEXT,"
+        "status TEXT,"
+        "start DATETIME,"
+        "end DATETIME,"
+        "model TEXT,"
+        "error TEXT,"
+        "FOREIGN KEY(run_id) REFERENCES runs(run_id)"
+        ")"
+    )
     conn.close()
+
+
+def create_run(run_id: str, project_id: int | None) -> None:
+    conn = get_db_connection()
+    conn.execute(
+        "INSERT INTO runs (run_id, project_id, status) VALUES (?, ?, ?)",
+        (run_id, project_id, "running"),
+    )
+    conn.commit()
+    conn.close()
+
+
+def record_run_step(
+    run_id: str,
+    step: str,
+    status: str,
+    start: datetime,
+    end: datetime,
+    model: str,
+    error: str | None = None,
+) -> None:
+    conn = get_db_connection()
+    conn.execute(
+        "INSERT INTO run_steps (run_id, step, status, start, end, model, error) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (run_id, step, status, start.isoformat(), end.isoformat(), model, error),
+    )
+    conn.commit()
+    conn.close()
+
+
+def finish_run(run_id: str, status: str, error: str | None = None) -> None:
+    conn = get_db_connection()
+    conn.execute(
+        "UPDATE runs SET status = ?, finished_at = CURRENT_TIMESTAMP, error = ? WHERE run_id = ?",
+        (status, error, run_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _run_from_row(row: sqlite3.Row) -> Run:
+    return Run(
+        run_id=row["run_id"],
+        project_id=row["project_id"],
+        status=row["status"],
+        started_at=datetime.fromisoformat(row["started_at"]),
+        finished_at=datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None,
+        error=row["error"],
+    )
+
+
+def get_run(run_id: str) -> Run | None:
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return None
+    run = _run_from_row(row)
+    cur.execute("SELECT step, status, start, end, model, error FROM run_steps WHERE run_id = ? ORDER BY id", (run_id,))
+    rows = cur.fetchall()
+    conn.close()
+    run.steps = [
+        RunStep(
+            step=r["step"],
+            status=r["status"],
+            start=datetime.fromisoformat(r["start"]),
+            end=datetime.fromisoformat(r["end"]),
+            model=r["model"],
+            error=r["error"],
+        )
+        for r in rows
+    ]
+    return run
+
+
+def get_runs(project_id: int | None = None) -> List[Run]:
+    conn = get_db_connection()
+    cur = conn.cursor()
+    if project_id is None:
+        cur.execute("SELECT * FROM runs ORDER BY started_at")
+    else:
+        cur.execute(
+            "SELECT * FROM runs WHERE project_id = ? ORDER BY started_at",
+            (project_id,),
+        )
+    rows = cur.fetchall()
+    conn.close()
+    return [_run_from_row(row) for row in rows]
 
 def create_project(project: ProjectCreate) -> Project:
     conn = get_db_connection()

@@ -4,6 +4,7 @@ import sqlite3
 import json
 from typing import List, Optional, Any
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ConfigDict
@@ -47,7 +48,7 @@ class Memory:
 class LoopState(BaseModel):
     objective: str
     project_id: int | None = None
-    run_id: str
+    run_id: str = Field(default_factory=lambda: str(uuid4()))
     mem_obj: Memory
     memory: List[Any] = Field(default_factory=list)
     plan: Optional[Plan] = None

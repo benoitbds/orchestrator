@@ -13,6 +13,29 @@ class ProjectCreate(BaseModel):
     description: str | None = None
 
 
+class RunStep(BaseModel):
+    """Information about a single step executed during a run."""
+
+    step: str
+    status: str
+    start: datetime
+    end: datetime
+    model: str
+    error: str | None = None
+
+
+class Run(BaseModel):
+    """High level metadata for a run of the orchestrator."""
+
+    run_id: str
+    project_id: int | None = None
+    status: Literal["running", "success", "failed"]
+    started_at: datetime
+    finished_at: datetime | None = None
+    error: str | None = None
+    steps: list[RunStep] = Field(default_factory=list)
+
+
 # Base item model
 class ItemBase(BaseModel):
     title: str
