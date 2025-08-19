@@ -18,7 +18,15 @@ export default function RunsPanel() {
     if (!currentProject) return;
     fetch(`${apiUrl}/runs?project_id=${currentProject.id}`)
       .then(r => r.json())
-      .then(setRuns)
+      .then(data => {
+        if (Array.isArray(data)) {
+          setRuns(data);
+        } else if (data && Array.isArray((data as any).runs)) {
+          setRuns((data as any).runs);
+        } else {
+          setRuns([]);
+        }
+      })
       .catch(() => setRuns([]));
   }, [currentProject]);
 
