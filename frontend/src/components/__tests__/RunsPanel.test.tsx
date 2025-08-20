@@ -25,7 +25,7 @@ afterEach(() => {
 
 it('renders runs when API returns an array', async () => {
   global.fetch = vi.fn().mockResolvedValue({
-    json: async () => [{ id: '1', status: 'ok', steps: [] }],
+    json: async () => [{ run_id: '1', status: 'ok', steps: [] }],
   });
 
   render(<RunsPanel />);
@@ -34,7 +34,7 @@ it('renders runs when API returns an array', async () => {
 
 it('supports object with runs property', async () => {
   global.fetch = vi.fn().mockResolvedValue({
-    json: async () => ({ runs: [{ id: '2', status: 'ok', steps: [] }] }),
+    json: async () => ({ runs: [{ run_id: '2', status: 'ok', steps: [] }] }),
   });
 
   render(<RunsPanel />);

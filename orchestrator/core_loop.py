@@ -128,6 +128,8 @@ def writer(state: LoopState) -> dict:
     render = {"html": html, "summary": summary, "artifacts": []}
     state.mem_obj.add("agent-writer", summary)
     state.mem_obj.add("assistant", summary)
+    # mark run as finished with the final render
+    crud.finish_run(state.run_id, "success", render)
     return {"render": render, "result": summary}
 
 # ---------- Build & compile graph ----------

@@ -4,9 +4,9 @@ import RunTimeline from "./RunTimeline";
 import { useProjects } from "@/context/ProjectContext";
 
 interface Run {
-  id: string;
+  run_id: string;
   status: string;
-  steps: { name: string; started_at: string; ended_at: string }[];
+  steps: { step: string; start: string; end: string }[];
 }
 
 export default function RunsPanel() {
@@ -34,7 +34,7 @@ export default function RunsPanel() {
     <section className="space-y-4">
       <h2 className="text-xl font-semibold text-gray-800">Historique des runs</h2>
       {runs.map(run => (
-        <RunTimeline key={run.id} run={run} />
+        <RunTimeline key={run.run_id} run={run} />
       ))}
     </section>
   );
