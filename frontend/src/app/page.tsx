@@ -3,10 +3,12 @@ import { useState, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { useProjects } from "@/context/ProjectContext";
 import { connectWS } from "@/lib/ws";
+import { http } from "@/lib/api";
+import StatusBar from "@/components/StatusBar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StreamViewer from "@/components/StreamViewer";
-import HistoryPanel from "@/components/HistoryPanel";
+import HistoryPanel, { HistoryItem } from "@/components/HistoryPanel";
 import BacklogPane from "@/components/BacklogPane";
 import { BacklogProvider } from "@/context/BacklogContext";
 import { ProjectPanel } from "@/components/ProjectPanel";
@@ -14,27 +16,38 @@ import RunsPanel from "@/components/RunsPanel";
 
 export default function Home() {
   const [objective, setObjective] = useState("");
-  const [history, setHistory] = useState<string[]>([]);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const viewerRef = useRef<any>(null);
   const { currentProject } = useProjects();
 
   const handleRun = async () => {
     setIsLoading(true);
-    // API relative : même origin => pas de CORS
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-    const res = await fetch(`${apiUrl}/chat`, {
+    const runObjective = objective;
+    const resp = await http('/chat', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ objective, project_id: currentProject?.id }),
-    }).then(r => r.json());
+      body: JSON.stringify({ objective: runObjective, project_id: currentProject?.id }),
+    });
+    const data = await resp.json();
+    const runId = data.run_id;
 
     // poll run result
     const poll = async () => {
-      const r = await fetch(`${apiUrl}/runs/${res.run_id}`);
+      const r = await http(`/runs/${runId}`);
       const data = await r.json();
       if (data.status === "success") {
-        setHistory(h => [...h, data.html]);
+        setHistory(h => [
+          ...h,
+          {
+            objective: runObjective,
+            html: data.html ?? "",
+            summary: data.summary,
+            timestamp: new Date().toLocaleString(),
+          },
+        ]);
+        setIsLoading(false);
+      } else if (data.status === "failed") {
         setIsLoading(false);
       } else {
         setTimeout(poll, 1000);
@@ -43,7 +56,8 @@ export default function Home() {
     poll();
 
     // WebSocket streaming
-    const ws = connectWS(objective, currentProject?.id);
+    const ws = connectWS('/stream');
+    ws.onopen = () => ws.send(JSON.stringify({ run_id: runId }));
     ws.onmessage = evt => {
       const chunk = JSON.parse(evt.data);
       viewerRef.current?.push(chunk);
@@ -55,7 +69,8 @@ export default function Home() {
 
   return (
     <BacklogProvider>
-      <div className="flex h-screen">
+      <StatusBar />
+      <div className="flex h-screen pt-8">
         {/* Panel de gestion des projets à gauche */}
         <ProjectPanel className="flex-shrink-0" />
         

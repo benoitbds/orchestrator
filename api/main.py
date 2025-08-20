@@ -1,11 +1,13 @@
 from fastapi import FastAPI, HTTPException, Query
 import asyncio
 import threading
+from datetime import datetime
+from importlib import metadata
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
 from uuid import uuid4
 from orchestrator.core_loop import graph, LoopState, Memory
-from orchestrator import crud
+from orchestrator import crud, stream
 from orchestrator.models import (
     ProjectCreate,
     BacklogItemCreate,
@@ -42,10 +44,12 @@ def startup_event():
 
 origins = [
     "http://localhost:3000",
+    "http://localhost:5173",
     "http://localhost:9080",
+    # "*",  # uncomment for permissive dev CORS
 ]
 
-# Autorise l’origine du front (dev localhost:3000)
+# Autorise l’origine du front (dev localhost:3000/5173)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -55,6 +59,22 @@ app.add_middleware(
 )
 
 app.include_router(ws_router)
+
+try:
+    __version__ = metadata.version("orchestrator")
+except metadata.PackageNotFoundError:  # pragma: no cover - fallback when not installed
+    __version__ = "0.1.0"
+
+
+@app.get("/health")
+async def health():
+    """Basic health-check endpoint."""
+    return {
+        "status": "ok",
+        "service": "orchestrator",
+        "version": __version__,
+        "time": datetime.utcnow().isoformat(),
+    }
 
 @app.get("/ping")
 async def ping():
@@ -68,17 +88,26 @@ async def chat(payload: dict):
     crud.create_run(run_id, project_id)
     state = LoopState(objective=objective, project_id=project_id, run_id=run_id, mem_obj=Memory())
 
+    # Register a stream queue for this run so WebSocket clients can subscribe
+    loop = asyncio.get_event_loop()
+    stream.register(run_id, loop)
+
     def _run():
-        try:
-            final = graph.invoke(state)
-            render = final.get("render") if isinstance(final, dict) else None
-            if render is None and hasattr(state, "render"):
-                render = state.render
-            if render is None:
-                render = {"html": "<p>done</p>", "summary": "done", "artifacts": []}
-            crud.finish_run(run_id, "success", render)
-        except Exception as e:
-            crud.finish_run(run_id, "failed", error=str(e))
+        async def runner():
+            try:
+                async for chunk in graph.astream(state):
+                    node, data = next(iter(chunk.items()))
+                    stream.publish(run_id, {"node": node, "state": data})
+                render = getattr(state, "render", None)
+                if render is None:
+                    render = {"html": "<p>done</p>", "summary": "done", "artifacts": []}
+                crud.finish_run(run_id, "success", render)
+            except Exception as e:
+                crud.finish_run(run_id, "failed", error=str(e))
+            finally:
+                stream.close(run_id)
+
+        asyncio.run(runner())
 
     threading.Thread(target=_run, daemon=True).start()
     return {"run_id": run_id}

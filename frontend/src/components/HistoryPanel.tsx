@@ -2,7 +2,8 @@ import { Card, CardContent } from "@/components/ui/card";
 
 export interface HistoryItem {
   objective: string;
-  result: string;
+  html: string;
+  summary?: string | null;
   timestamp: string;
 }
 
@@ -29,8 +30,11 @@ export default function HistoryPanel({ history }: { history: HistoryItem[] }) {
               </div>
               <div
                 className="text-gray-700 bg-gray-50 p-3 rounded text-sm leading-relaxed"
-                dangerouslySetInnerHTML={{ __html: item.result }}
+                dangerouslySetInnerHTML={{ __html: item.html }}
               />
+              {item.summary && (
+                <p className="mt-2 text-sm text-gray-600">{item.summary}</p>
+              )}
             </CardContent>
           </Card>
         ))

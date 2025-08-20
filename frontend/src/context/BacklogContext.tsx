@@ -2,6 +2,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { BacklogItem } from '@/models/backlogItem';
 import { useProjects } from '@/context/ProjectContext';
+import { http } from '@/lib/api';
 
 interface BacklogContextType {
   items: BacklogItem[];
@@ -18,8 +19,6 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
   const { currentProject } = useProjects();
   const [items, setItems] = useState<BacklogItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
-
   const fetchItems = async () => {
     if (!currentProject) {
       setItems([]);
@@ -27,7 +26,7 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
     }
     setIsLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/api/items?project_id=${currentProject.id}`);
+      const res = await http(`/items?project_id=${currentProject.id}`);
       const data = await res.json();
       setItems(data);
     } catch (err) {
@@ -40,7 +39,7 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
   const createItem = async (item: Omit<BacklogItem, 'id'>) => {
     if (!currentProject) return null;
     try {
-      const res = await fetch(`${apiUrl}/api/items`, {
+      const res = await http(`/items`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
@@ -57,7 +56,7 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
 
   const updateItem = async (id: number, item: Omit<BacklogItem, 'id'>) => {
     try {
-      const res = await fetch(`${apiUrl}/api/items/${id}`, {
+      const res = await http(`/items/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
@@ -74,7 +73,7 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
 
   const deleteItem = async (id: number) => {
     try {
-      const res = await fetch(`${apiUrl}/api/items/${id}`, { method: 'DELETE' });
+      const res = await http(`/items/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed');
       await fetchItems();
       return true;

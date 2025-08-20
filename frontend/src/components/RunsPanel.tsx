@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import RunTimeline from "./RunTimeline";
 import { useProjects } from "@/context/ProjectContext";
+import { http } from "@/lib/api";
 
 interface Run {
   run_id: string;
@@ -14,9 +15,8 @@ export default function RunsPanel() {
   const [runs, setRuns] = useState<Run[]>([]);
 
   useEffect(() => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
     if (!currentProject) return;
-    fetch(`${apiUrl}/runs?project_id=${currentProject.id}`)
+    http(`/runs?project_id=${currentProject.id}`)
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) {

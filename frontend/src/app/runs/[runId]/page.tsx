@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import RunTimeline from "@/components/RunTimeline";
+import { http } from "@/lib/api";
 
 interface Run {
   run_id: string;
@@ -12,12 +13,10 @@ interface Run {
 
 export default function RunDetail({ params }: { params: { runId: string } }) {
   const [run, setRun] = useState<Run | null>(null);
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-
   useEffect(() => {
     let cancelled = false;
     const fetchRun = async () => {
-      const res = await fetch(`${apiUrl}/runs/${params.runId}`);
+      const res = await http(`/runs/${params.runId}`);
       if (!res.ok) return;
       const data = await res.json();
       if (!cancelled) {
@@ -31,7 +30,7 @@ export default function RunDetail({ params }: { params: { runId: string } }) {
     return () => {
       cancelled = true;
     };
-  }, [apiUrl, params.runId]);
+  }, [params.runId]);
 
   if (!run) return <div className="p-6">Chargement...</div>;
 
