@@ -6,7 +6,7 @@ import { connectWS } from "@/lib/ws";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StreamViewer from "@/components/StreamViewer";
-import HistoryPanel from "@/components/HistoryPanel";
+import HistoryPanel, { HistoryItem } from "@/components/HistoryPanel";
 import BacklogPane from "@/components/BacklogPane";
 import { BacklogProvider } from "@/context/BacklogContext";
 import { ProjectPanel } from "@/components/ProjectPanel";
@@ -14,19 +14,19 @@ import RunsPanel from "@/components/RunsPanel";
 
 export default function Home() {
   const [objective, setObjective] = useState("");
-  const [history, setHistory] = useState<string[]>([]);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const viewerRef = useRef<any>(null);
   const { currentProject } = useProjects();
 
   const handleRun = async () => {
     setIsLoading(true);
-    // API relative : même origin => pas de CORS
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    const runObjective = objective;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
     const res = await fetch(`${apiUrl}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ objective, project_id: currentProject?.id }),
+      body: JSON.stringify({ objective: runObjective, project_id: currentProject?.id }),
     }).then(r => r.json());
 
     // poll run result
@@ -34,7 +34,17 @@ export default function Home() {
       const r = await fetch(`${apiUrl}/runs/${res.run_id}`);
       const data = await r.json();
       if (data.status === "success") {
-        setHistory(h => [...h, data.html]);
+        setHistory(h => [
+          ...h,
+          {
+            objective: runObjective,
+            html: data.html ?? "",
+            summary: data.summary,
+            timestamp: new Date().toLocaleString(),
+          },
+        ]);
+        setIsLoading(false);
+      } else if (data.status === "failed") {
         setIsLoading(false);
       } else {
         setTimeout(poll, 1000);
@@ -43,7 +53,7 @@ export default function Home() {
     poll();
 
     // WebSocket streaming
-    const ws = connectWS(objective, currentProject?.id);
+    const ws = connectWS(runObjective, currentProject?.id);
     ws.onmessage = evt => {
       const chunk = JSON.parse(evt.data);
       viewerRef.current?.push(chunk);
