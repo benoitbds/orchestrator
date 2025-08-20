@@ -21,6 +21,11 @@ import { BacklogItem } from '@/models/backlogItem';
 import { useItems } from '@/lib/hooks';
 import { useBacklog } from '@/context/BacklogContext';
 import { mutate } from 'swr';
+import dynamic from 'next/dynamic';
+const Loader2 = dynamic(
+  () => import('lucide-react').then((mod) => ({ default: mod.Loader2 })),
+  { ssr: false }
+);
 
 interface ItemDialogProps {
   isOpen: boolean;
@@ -50,6 +55,8 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
   const { data: items } = useItems(projectId);
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const saveLabel = item?.generated_by_ai ? 'Valider' : 'Enregistrer';
+  const [isGeneratingFeatures, setIsGeneratingFeatures] = useState(false);
 
   useEffect(() => {
     if (item) {
@@ -99,7 +106,7 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
     };
 
     // Ajouter les champs spécifiques selon le type
-    let extraData = {};
+    let extraData: any = {};
     
     if (type === 'Epic' || type === 'Capability') {
       extraData = {
@@ -125,6 +132,11 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
         iteration: iteration || undefined,
         status: state || 'Todo',
       };
+    }
+
+    // Si c'était généré par l'IA, on marque validé
+    if (item?.generated_by_ai) {
+      extraData.generated_by_ai = false;
     }
 
     await onSave({ ...baseData, ...extraData });
@@ -373,7 +385,39 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
               Supprimer
             </Button>
           )}
-          <Button onClick={handleSubmit}>Enregistrer</Button>
+          {item && type === 'Epic' && (
+            <Button
+              variant="secondary"
+              disabled={isGeneratingFeatures}
+              onClick={async () => {
+                setIsGeneratingFeatures(true);
+                const resp = await fetch('/api/feature_proposals', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    project_id: projectId,
+                    parent_id: item.id,
+                    parent_title: title,
+                  }),
+                });
+                if (resp.ok) {
+                  await mutate(`/api/items?project_id=${projectId}`);
+                  onClose();
+                }
+                setIsGeneratingFeatures(false);
+              }}
+            >
+              {isGeneratingFeatures ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Génération…
+                </>
+              ) : (
+                'Générer features'
+              )}
+            </Button>
+          )}
+          <Button onClick={handleSubmit}>{saveLabel}</Button>
         </DialogFooter>
       </DialogContent>
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>

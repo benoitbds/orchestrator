@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useProjects } from '@/context/ProjectContext';
 import { ItemTree } from '@/components/ItemTree';
 import { BacklogTable } from '@/components/BacklogTable';
+import { BacklogDiagram } from '@/components/BacklogDiagram';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ItemDialog } from './ItemDialog';
@@ -64,7 +65,8 @@ export default function BacklogPane() {
       </div>
       
       <Tabs defaultValue="tree" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 mb-4">
+        <TabsList className="grid w-full grid-cols-3 mb-4">
+          <TabsTrigger value="diagram">Vue Diagramme</TabsTrigger>
           <TabsTrigger value="tree">Vue Arbre</TabsTrigger>
           <TabsTrigger value="table">Vue Table</TabsTrigger>
         </TabsList>
@@ -75,6 +77,10 @@ export default function BacklogPane() {
         
         <TabsContent value="table">
           <BacklogTable projectId={currentProject?.id ?? null} onEdit={handleEditItem} />
+        </TabsContent>
+        
+        <TabsContent value="diagram">
+          <BacklogDiagram projectId={currentProject?.id ?? null} onEdit={handleEditItem} />
         </TabsContent>
       </Tabs>
       

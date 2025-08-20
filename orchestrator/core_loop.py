@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 import json
 from typing import List, Optional, Any
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ConfigDict
@@ -12,6 +14,7 @@ from langgraph.graph import StateGraph, END
 from agents.planner import make_plan
 from agents.schemas import ExecResult, Plan
 import threading
+from orchestrator import crud
 
 load_dotenv()
 
@@ -45,6 +48,7 @@ class Memory:
 class LoopState(BaseModel):
     objective: str
     project_id: int | None = None
+    run_id: str = Field(default_factory=lambda: str(uuid4()))
     mem_obj: Memory
     memory: List[Any] = Field(default_factory=list)
     plan: Optional[Plan] = None
@@ -56,12 +60,41 @@ class LoopState(BaseModel):
 
 # ---------- LangGraph nodes ----------
 llm_step = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+LLM_MODEL = "gpt-4o-mini"
 
+def track_step(name: str):
+    def decorator(fn):
+        def wrapped(state: LoopState):
+            start = datetime.now(timezone.utc)
+            status = "success"
+            error = None
+            try:
+                return fn(state)
+            except Exception as exc:
+                status = "failed"
+                error = str(exc)
+                raise
+            finally:
+                end = datetime.now(timezone.utc)
+                crud.record_run_step(
+                    state.run_id,
+                    name,
+                    status,
+                    start,
+                    end,
+                    LLM_MODEL,
+                    error,
+                )
+        return wrapped
+    return decorator
+
+@track_step("plan")
 def planner(state: LoopState) -> dict:
     plan = make_plan(state.objective)
     state.mem_obj.add("agent-planner", json.dumps(plan.model_dump()))
     return {"plan": plan}
 
+@track_step("execute")
 def executor(state: LoopState) -> dict:
     outputs = []          # garde la sortie de chaque étape
     for step in state.plan.steps:
@@ -80,6 +113,7 @@ def executor(state: LoopState) -> dict:
     state.mem_obj.add("agent-executor", full_output)
     return {"exec_result": exec_res.model_dump()}
 
+@track_step("write")
 def writer(state: LoopState) -> dict:
     er = ExecResult(**state.exec_result)
 
@@ -94,6 +128,8 @@ def writer(state: LoopState) -> dict:
     render = {"html": html, "summary": summary, "artifacts": []}
     state.mem_obj.add("agent-writer", summary)
     state.mem_obj.add("assistant", summary)
+    # mark run as finished with the final render
+    crud.finish_run(state.run_id, "success", render)
     return {"render": render, "result": summary}
 
 # ---------- Build & compile graph ----------

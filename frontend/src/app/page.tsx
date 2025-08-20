@@ -10,6 +10,7 @@ import HistoryPanel from "@/components/HistoryPanel";
 import BacklogPane from "@/components/BacklogPane";
 import { BacklogProvider } from "@/context/BacklogContext";
 import { ProjectPanel } from "@/components/ProjectPanel";
+import RunsPanel from "@/components/RunsPanel";
 
 export default function Home() {
   const [objective, setObjective] = useState("");
@@ -28,7 +29,18 @@ export default function Home() {
       body: JSON.stringify({ objective, project_id: currentProject?.id }),
     }).then(r => r.json());
 
-    setHistory(h => [...h, res.html]);
+    // poll run result
+    const poll = async () => {
+      const r = await fetch(`${apiUrl}/runs/${res.run_id}`);
+      const data = await r.json();
+      if (data.status === "success") {
+        setHistory(h => [...h, data.html]);
+        setIsLoading(false);
+      } else {
+        setTimeout(poll, 1000);
+      }
+    };
+    poll();
 
     // WebSocket streaming
     const ws = connectWS(objective, currentProject?.id);
@@ -50,7 +62,7 @@ export default function Home() {
         {/* Contenu principal */}
         <main className="flex-1 flex flex-col gap-6 p-6 overflow-auto">
           <div className="max-w-3xl mx-auto w-full space-y-6">
-            <h1 className="text-2xl font-bold">Orchestrator Assistant</h1>
+            <h1 className="text-2xl font-bold">Agent 4 BA</h1>
 
             <form
               onSubmit={e => {
@@ -76,6 +88,7 @@ export default function Home() {
             <BacklogPane />
 
             <HistoryPanel history={history} />
+            <RunsPanel />
           </div>
         </main>
       </div>

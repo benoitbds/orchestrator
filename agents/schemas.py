@@ -25,3 +25,15 @@ class RenderResult(BaseModel):
     html: str
     summary: str
     artifacts: List[str] = Field(default_factory=list, description="Chemins de fichiers joints")
+
+class FeatureProposal(BaseModel):
+    """Représente une proposition de feature avec titre et description."""
+    title: str
+    description: str
+
+class FeatureProposals(BaseModel):
+    """Liste de propositions de features pour un épic donné."""
+    project_id: int
+    parent_id: int
+    parent_title: str
+    proposals: List[FeatureProposal]

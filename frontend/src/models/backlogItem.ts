@@ -6,6 +6,8 @@ export interface ItemBase {
   type: "Epic" | "Capability" | "Feature" | "US" | "UC";
   project_id: number;
   parent_id: number | null;
+  /** Indique si cet item a été généré par l'IA et doit être validé */
+  generated_by_ai?: boolean;
   created_at?: string | null;
   updated_at?: string | null;
 }

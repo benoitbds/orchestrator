@@ -3,6 +3,7 @@ import dynamic from 'next/dynamic';
 
 const Loader2 = dynamic(() => import('lucide-react').then(mod => ({ default: mod.Loader2 })), { ssr: false });
 const Pencil = dynamic(() => import('lucide-react').then(mod => ({ default: mod.Pencil })), { ssr: false });
+const CpuIcon = dynamic(() => import('lucide-react').then(mod => ({ default: mod.Cpu })), { ssr: false });
 import { useItems, TreeNode } from '@/lib/hooks';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -125,7 +126,15 @@ function Item({ item, onEdit, level = 0 }: { item: TreeNode, onEdit: (item: Back
           )}
         </div>
         
-        <span className="flex-1">{item.title}</span>
+        <div className="flex-1 flex items-center gap-2">
+          <span>{item.title}</span>
+          {item.generated_by_ai && (
+            <Badge className="bg-purple-600 text-white text-xs flex items-center gap-1">
+              <CpuIcon className="w-3 h-3" />
+              IA
+            </Badge>
+          )}
+        </div>
         <Button variant="ghost" size="icon" className="ml-auto" onClick={() => onEdit(item)}>
           <Pencil className="h-4 w-4" />
         </Button>
