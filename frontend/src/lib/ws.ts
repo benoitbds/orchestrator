@@ -12,7 +12,7 @@ function getWsBaseUrl(): string {
 }
 
 export function connectWS(path: string): WebSocket {
-  const base = getWsBaseUrl().replace(/\/+$, '');
+  const base = getWsBaseUrl().replace(/\/+$/, '');
   const url = `${base}${path.startsWith('/') ? path : '/' + path}`;
   return new WebSocket(url);
 }
