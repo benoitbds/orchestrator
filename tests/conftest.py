@@ -63,5 +63,3 @@ def patch_graph(monkeypatch):
     import api.main as main
     monkeypatch.setattr(main, "graph", FakeGraph)
 
-    import api.ws as ws
-    monkeypatch.setattr(ws, "graph", FakeGraph)

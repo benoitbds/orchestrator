@@ -13,7 +13,7 @@ import { FileText, Terminal, Zap } from "lucide-react";
 -------------------------------------------------------------------*/
 type Line = {
   node: string;
-  raw: string;
+  state: any;
   timestamp: Date;
 };
 
@@ -45,14 +45,10 @@ const StreamViewer = forwardRef((_, ref) => {
   }, [glowingStep]);
 
   useImperativeHandle(ref, () => ({
-    push(chunk: any) {
-      console.log("StreamViewer received chunk:", chunk); // DEBUG
-      const node = Object.keys(chunk).find(key => ['plan', 'execute', 'write'].includes(key)) ?? "unknown";
+    push({ node, state }: { node: string; state: any }) {
+      console.log("StreamViewer received chunk:", { node, state }); // DEBUG
 
-      setLines(ls => [
-        ...ls,
-        { node, raw: JSON.stringify(chunk, null, 2), timestamp: new Date() },
-      ]);
+      setLines(ls => [...ls, { node, state, timestamp: new Date() }]);
 
       setGlowingStep(node);
 
@@ -64,8 +60,7 @@ const StreamViewer = forwardRef((_, ref) => {
         return newSteps.map((step, index) => {
           if (index < currentStepIndex) return { ...step, status: 'completed' };
           if (index === currentStepIndex) {
-            // Si c'est l'étape "write" avec du contenu, marquer comme complété
-            if (node === 'write' && chunk[node]?.result) {
+            if (node === 'write' && state?.result) {
               return { ...step, status: 'completed' };
             }
             return { ...step, status: 'active' };
@@ -86,66 +81,58 @@ const StreamViewer = forwardRef((_, ref) => {
     }
   }));
 
-  const renderContent = (raw: string) => {
-    try {
-      const data = JSON.parse(raw);
-      const node = Object.keys(data).find(key => ['plan', 'execute', 'write'].includes(key)) ?? "unknown";
-      const state = data[node];
+  const renderContent = (node: string, state: any) => {
+    if (!state) {
+      return <span className="text-gray-500">Génération du contenu...</span>;
+    }
 
-      if (!state) {
-        return <span className="text-gray-500">Génération du contenu...</span>;
-      }
-
-      switch (node) {
-        case 'plan':
-          return (
-            <div className="space-y-2">
-              <div className="text-blue-400 font-semibold text-sm">📋 Plan généré</div>
-              <ul className="space-y-1 pl-4">
-                {state.plan?.steps?.map((step: any, i: number) => (
-                  <li key={i} className="text-gray-300 text-sm flex items-start">
-                    <span className="text-blue-400 mr-2">•</span>
-                    <span className="font-medium text-white mr-2">
-                      {typeof step === 'string' ? `Étape ${i + 1}:` : `${step.title}:`}
-                    </span>
-                    <span>{typeof step === 'string' ? step : step.description}</span>
-                  </li>
-                ))}
-              </ul>
+    switch (node) {
+      case 'plan':
+        return (
+          <div className="space-y-2">
+            <div className="text-blue-400 font-semibold text-sm">📋 Plan généré</div>
+            <ul className="space-y-1 pl-4">
+              {state.plan?.steps?.map((step: any, i: number) => (
+                <li key={i} className="text-gray-300 text-sm flex items-start">
+                  <span className="text-blue-400 mr-2">•</span>
+                  <span className="font-medium text-white mr-2">
+                    {typeof step === 'string' ? `Étape ${i + 1}:` : `${step.title}:`}
+                  </span>
+                  <span>{typeof step === 'string' ? step : step.description}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      case 'execute':
+        return (
+          <div className="space-y-2">
+            <div className="text-yellow-400 font-semibold text-sm">⚡ Exécution</div>
+            <div className="bg-gray-900 p-3 rounded text-sm border-l-2 border-yellow-400">
+              <pre className="text-gray-200 whitespace-pre-wrap font-mono text-xs leading-relaxed">
+                {state.command || state.exec_result?.stdout || JSON.stringify(state, null, 2)}
+              </pre>
             </div>
-          );
-        case 'execute':
-          return (
-            <div className="space-y-2">
-              <div className="text-yellow-400 font-semibold text-sm">⚡ Exécution</div>
-              <div className="bg-gray-900 p-3 rounded text-sm border-l-2 border-yellow-400">
-                <pre className="text-gray-200 whitespace-pre-wrap font-mono text-xs leading-relaxed">
-                  {state.command || state.exec_result?.stdout || JSON.stringify(state, null, 2)}
-                </pre>
+            {state.stderr && (
+              <div className="text-red-400 text-sm bg-red-900/20 p-2 rounded border-l-2 border-red-400">
+                <span className="font-medium">Erreur:</span> {state.stderr}
               </div>
-              {state.stderr && (
-                <div className="text-red-400 text-sm bg-red-900/20 p-2 rounded border-l-2 border-red-400">
-                  <span className="font-medium">Erreur:</span> {state.stderr}
-                </div>
-              )}
-            </div>
-          );
-        case 'write':
-          return (
-            <div className="space-y-2">
-              <div className="text-green-400 font-semibold text-sm">✅ Résultat final</div>
-              <div className="bg-green-900/20 p-3 rounded border-l-2 border-green-400">
-                <div className="text-gray-200 text-sm whitespace-pre-wrap">
-                  {state.result || JSON.stringify(state, null, 2)}
-                </div>
+            )}
+          </div>
+        );
+      case 'write':
+        return (
+          <div className="space-y-2">
+            <div className="text-green-400 font-semibold text-sm">✅ Résultat final</div>
+            <div className="bg-green-900/20 p-3 rounded border-l-2 border-green-400">
+              <div className="text-gray-200 text-sm whitespace-pre-wrap">
+                {state.result || JSON.stringify(state, null, 2)}
               </div>
             </div>
-          );
-        default:
-          return <span className="text-gray-400 text-sm">Traitement en cours...</span>;
-      }
-    } catch (e) {
-      return <span className="text-red-500">Erreur de parsing du chunk.</span>;
+          </div>
+        );
+      default:
+        return <span className="text-gray-400 text-sm">Traitement en cours...</span>;
     }
   };
 
@@ -174,10 +161,10 @@ const StreamViewer = forwardRef((_, ref) => {
         ref={innerRef}
         className="bg-black p-4 h-80 overflow-y-auto rounded-lg text-xs font-mono"
       >
-        {[...lines].reverse().map(({ raw, timestamp }, i) => (
+        {[...lines].reverse().map(({ node, state, timestamp }, i) => (
           <div key={lines.length - 1 - i} className="flex gap-3 items-start mb-2">
             <span className="text-gray-400 text-xs min-w-[60px]">{timestamp.toLocaleTimeString()}</span>
-            <div className="flex-1">{renderContent(raw)}</div>
+            <div className="flex-1">{renderContent(node, state)}</div>
           </div>
         ))}
       </pre>

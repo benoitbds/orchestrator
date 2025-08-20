@@ -28,10 +28,11 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ objective: runObjective, project_id: currentProject?.id }),
     }).then(r => r.json());
+    const runId = res.run_id;
 
     // poll run result
     const poll = async () => {
-      const r = await fetch(`${apiUrl}/runs/${res.run_id}`);
+      const r = await fetch(`${apiUrl}/runs/${runId}`);
       const data = await r.json();
       if (data.status === "success") {
         setHistory(h => [
@@ -53,7 +54,7 @@ export default function Home() {
     poll();
 
     // WebSocket streaming
-    const ws = connectWS(runObjective, currentProject?.id);
+    const ws = connectWS(runId);
     ws.onmessage = evt => {
       const chunk = JSON.parse(evt.data);
       viewerRef.current?.push(chunk);

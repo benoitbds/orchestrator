@@ -50,12 +50,12 @@ async def test_chat_endpoint(monkeypatch):
 @pytest.mark.asyncio
 async def test_ws_stream():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        r = await ac.post("/chat", json={"objective": "demo"})
+        run_id = r.json()["run_id"]
         async with aconnect_ws("http://test/stream", ac) as ws:
-            await ws.send_json({"objective": "demo"})
-            run_info = await ws.receive_json()
-            assert "run_id" in run_info
+            await ws.send_json({"run_id": run_id})
             chunk = await ws.receive_json()
-            assert "plan" in chunk or "execute" in chunk or "write" in chunk
+            assert chunk["node"] in {"plan", "execute", "write"}
 
 
 @pytest.mark.asyncio
