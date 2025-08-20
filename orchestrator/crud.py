@@ -1,5 +1,6 @@
 # orchestrator/crud.py
 import sqlite3
+import json
 from datetime import datetime
 from typing import List, Optional
 from .models import (
@@ -124,9 +125,22 @@ def init_db():
         "status TEXT,"
         "started_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
         "finished_at DATETIME,"
-        "error TEXT"
+        "error TEXT,"
+        "html TEXT,"
+        "summary TEXT,"
+        "artifacts TEXT"
         ")"
     )
+    # ensure new columns exist if database pre-dates these fields
+    for col, typ in (
+        ("html", "TEXT"),
+        ("summary", "TEXT"),
+        ("artifacts", "TEXT"),
+    ):
+        try:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError:
+            pass
     conn.execute(
         "CREATE TABLE IF NOT EXISTS run_steps ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -143,11 +157,24 @@ def init_db():
     conn.close()
 
 
-def create_run(run_id: str, project_id: int | None) -> None:
+def create_run(
+    run_id: str,
+    project_id: int | None,
+    html: str | None = None,
+    summary: str | None = None,
+    artifacts: list[str] | None = None,
+) -> None:
     conn = get_db_connection()
     conn.execute(
-        "INSERT INTO runs (run_id, project_id, status) VALUES (?, ?, ?)",
-        (run_id, project_id, "running"),
+        "INSERT INTO runs (run_id, project_id, status, html, summary, artifacts) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            run_id,
+            project_id,
+            "running",
+            html,
+            summary,
+            json.dumps(artifacts) if artifacts is not None else None,
+        ),
     )
     conn.commit()
     conn.close()
@@ -172,11 +199,21 @@ def record_run_step(
     conn.close()
 
 
-def finish_run(run_id: str, status: str, error: str | None = None) -> None:
+def finish_run(
+    run_id: str,
+    status: str,
+    render: dict | None = None,
+    error: str | None = None,
+) -> None:
+    html = summary = artifacts = None
+    if render:
+        html = render.get("html")
+        summary = render.get("summary")
+        artifacts = json.dumps(render.get("artifacts")) if render.get("artifacts") is not None else None
     conn = get_db_connection()
     conn.execute(
-        "UPDATE runs SET status = ?, finished_at = CURRENT_TIMESTAMP, error = ? WHERE run_id = ?",
-        (status, error, run_id),
+        "UPDATE runs SET status = ?, finished_at = CURRENT_TIMESTAMP, error = ?, html = ?, summary = ?, artifacts = ? WHERE run_id = ?",
+        (status, error, html, summary, artifacts, run_id),
     )
     conn.commit()
     conn.close()
@@ -190,6 +227,9 @@ def _run_from_row(row: sqlite3.Row) -> Run:
         started_at=datetime.fromisoformat(row["started_at"]),
         finished_at=datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None,
         error=row["error"],
+        html=row["html"],
+        summary=row["summary"],
+        artifacts=json.loads(row["artifacts"]) if row["artifacts"] else None,
     )
 
 
