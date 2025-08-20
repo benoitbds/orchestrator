@@ -198,7 +198,7 @@ def get_run(run_id: str) -> dict | None:
         return None
     run = dict(row)
     cur.execute(
-        "SELECT node, timestamp, content FROM run_steps WHERE run_id = ? ORDER BY step_order",
+        "SELECT step_order as 'order', node, timestamp, content FROM run_steps WHERE run_id = ? ORDER BY step_order",
         (run_id,),
     )
     run["steps"] = [dict(r) for r in cur.fetchall()]
