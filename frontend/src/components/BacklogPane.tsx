@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ItemDialog } from './ItemDialog';
 import { BacklogItem } from '@/models/backlogItem';
 import { mutate } from 'swr';
+import { http } from '@/lib/api';
 
 export default function BacklogPane() {
   const { currentProject } = useProjects();
@@ -28,11 +29,11 @@ export default function BacklogPane() {
   const handleSave = async (item: Partial<BacklogItem>) => {
     try {
       const method = item.id ? 'PATCH' : 'POST';
-      const url = item.id ? `/api/items/${item.id}` : '/api/items';
+      const url = item.id ? `/items/${item.id}` : '/items';
 
       console.log('Saving item:', item); // Debug log
 
-      const response = await fetch(url, {
+      const response = await http(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
@@ -48,7 +49,7 @@ export default function BacklogPane() {
       const result = await response.json();
       console.log('Save successful:', result); // Debug log
       
-      mutate(`/api/items?project_id=${currentProject?.id}`);
+      mutate(`/items?project_id=${currentProject?.id}`);
     } catch (error) {
       console.error('Save error:', error);
       alert(`Erreur: ${error.message}`);

@@ -1,11 +1,18 @@
-export function connectWS(runId: string) {
-  const wsUrl = (process.env.NEXT_PUBLIC_API_URL || "ws://localhost:8000").replace(
-    /^http/,
-    "ws"
-  );
-  const ws = new WebSocket(`${wsUrl}/stream`);
-  ws.addEventListener("open", () => {
-    ws.send(JSON.stringify({ run_id: runId }));
-  });
-  return ws;
+import { getApiBaseUrl } from './api';
+
+function getWsBaseUrl(): string {
+  const api = getApiBaseUrl();
+  if (api.startsWith('http')) {
+    return api.replace(/^http/, 'ws');
+  }
+  const { protocol, host } = window.location;
+  const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
+  const base = api ? api : '';
+  return `${wsProto}//${host}${base}`;
+}
+
+export function connectWS(path: string): WebSocket {
+  const base = getWsBaseUrl().replace(/\/+$, '');
+  const url = `${base}${path.startsWith('/') ? path : '/' + path}`;
+  return new WebSocket(url);
 }
