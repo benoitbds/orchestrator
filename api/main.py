@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException, Query
 import asyncio
 import threading
+from datetime import datetime
+from importlib import metadata
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
 from uuid import uuid4
@@ -42,10 +44,12 @@ def startup_event():
 
 origins = [
     "http://localhost:3000",
+    "http://localhost:5173",
     "http://localhost:9080",
+    # "*",  # uncomment for permissive dev CORS
 ]
 
-# Autorise l’origine du front (dev localhost:3000)
+# Autorise l’origine du front (dev localhost:3000/5173)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -55,6 +59,22 @@ app.add_middleware(
 )
 
 app.include_router(ws_router)
+
+try:
+    __version__ = metadata.version("orchestrator")
+except metadata.PackageNotFoundError:  # pragma: no cover - fallback when not installed
+    __version__ = "0.1.0"
+
+
+@app.get("/health")
+async def health():
+    """Basic health-check endpoint."""
+    return {
+        "status": "ok",
+        "service": "orchestrator",
+        "version": __version__,
+        "time": datetime.utcnow().isoformat(),
+    }
 
 @app.get("/ping")
 async def ping():

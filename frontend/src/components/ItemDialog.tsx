@@ -21,6 +21,7 @@ import { BacklogItem } from '@/models/backlogItem';
 import { useItems } from '@/lib/hooks';
 import { useBacklog } from '@/context/BacklogContext';
 import { mutate } from 'swr';
+import { http } from '@/lib/api';
 import dynamic from 'next/dynamic';
 const Loader2 = dynamic(
   () => import('lucide-react').then((mod) => ({ default: mod.Loader2 })),
@@ -391,7 +392,7 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
               disabled={isGeneratingFeatures}
               onClick={async () => {
                 setIsGeneratingFeatures(true);
-                const resp = await fetch('/api/feature_proposals', {
+                const resp = await http('/feature_proposals', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
@@ -401,7 +402,7 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
                   }),
                 });
                 if (resp.ok) {
-                  await mutate(`/api/items?project_id=${projectId}`);
+                  await mutate(`/items?project_id=${projectId}`);
                   onClose();
                 }
                 setIsGeneratingFeatures(false);
@@ -447,7 +448,7 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
                 if (item) {
                   await deleteItem(item.id);
                   // rafraîchir la liste des items
-                  mutate(`/api/items?project_id=${projectId}`);
+                  mutate(`/items?project_id=${projectId}`);
                   setShowDeleteConfirm(false);
                   onClose();
                 }

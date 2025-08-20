@@ -3,6 +3,8 @@ import { useState, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { useProjects } from "@/context/ProjectContext";
 import { connectWS } from "@/lib/ws";
+import { http } from "@/lib/api";
+import StatusBar from "@/components/StatusBar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StreamViewer from "@/components/StreamViewer";
@@ -22,17 +24,17 @@ export default function Home() {
   const handleRun = async () => {
     setIsLoading(true);
     const runObjective = objective;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-    const res = await fetch(`${apiUrl}/chat`, {
+    const resp = await http('/chat', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ objective: runObjective, project_id: currentProject?.id }),
-    }).then(r => r.json());
-    const runId = res.run_id;
+    });
+    const data = await resp.json();
+    const runId = data.run_id;
 
     // poll run result
     const poll = async () => {
-      const r = await fetch(`${apiUrl}/runs/${runId}`);
+      const r = await http(`/runs/${runId}`);
       const data = await r.json();
       if (data.status === "success") {
         setHistory(h => [
@@ -54,7 +56,8 @@ export default function Home() {
     poll();
 
     // WebSocket streaming
-    const ws = connectWS(runId);
+    const ws = connectWS('/stream');
+    ws.onopen = () => ws.send(JSON.stringify({ run_id: runId }));
     ws.onmessage = evt => {
       const chunk = JSON.parse(evt.data);
       viewerRef.current?.push(chunk);
@@ -66,7 +69,8 @@ export default function Home() {
 
   return (
     <BacklogProvider>
-      <div className="flex h-screen">
+      <StatusBar />
+      <div className="flex h-screen pt-8">
         {/* Panel de gestion des projets à gauche */}
         <ProjectPanel className="flex-shrink-0" />
         
