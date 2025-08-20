@@ -85,7 +85,7 @@ async def chat(payload: dict):
     objective = payload.get("objective", "")
     project_id = payload.get("project_id")
     run_id = str(uuid4())
-    crud.create_run(run_id, project_id)
+    crud.create_run(run_id, objective, project_id)
     state = LoopState(objective=objective, project_id=project_id, run_id=run_id, mem_obj=Memory())
 
     # Register a stream queue for this run so WebSocket clients can subscribe
@@ -100,10 +100,10 @@ async def chat(payload: dict):
                     stream.publish(run_id, {"node": node, "state": data})
                 render = getattr(state, "render", None)
                 if render is None:
-                    render = {"html": "<p>done</p>", "summary": "done", "artifacts": []}
-                crud.finish_run(run_id, "success", render)
+                    render = {"html": "<p>done</p>", "summary": "done"}
+                crud.finish_run(run_id, render["html"], render["summary"])
             except Exception as e:
-                crud.finish_run(run_id, "failed", error=str(e))
+                crud.finish_run(run_id, "", str(e))
             finally:
                 stream.close(run_id)
 

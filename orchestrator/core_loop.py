@@ -3,7 +3,6 @@ from __future__ import annotations
 import sqlite3
 import json
 from typing import List, Optional, Any
-from datetime import datetime, timezone
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -60,31 +59,17 @@ class LoopState(BaseModel):
 
 # ---------- LangGraph nodes ----------
 llm_step = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
-LLM_MODEL = "gpt-4o-mini"
-
 def track_step(name: str):
     def decorator(fn):
         def wrapped(state: LoopState):
-            start = datetime.now(timezone.utc)
-            status = "success"
-            error = None
+            content = "success"
             try:
                 return fn(state)
             except Exception as exc:
-                status = "failed"
-                error = str(exc)
+                content = f"error: {exc}"
                 raise
             finally:
-                end = datetime.now(timezone.utc)
-                crud.record_run_step(
-                    state.run_id,
-                    name,
-                    status,
-                    start,
-                    end,
-                    LLM_MODEL,
-                    error,
-                )
+                crud.record_run_step(state.run_id, name, content)
         return wrapped
     return decorator
 
@@ -129,7 +114,7 @@ def writer(state: LoopState) -> dict:
     state.mem_obj.add("agent-writer", summary)
     state.mem_obj.add("assistant", summary)
     # mark run as finished with the final render
-    crud.finish_run(state.run_id, "success", render)
+    crud.finish_run(state.run_id, render["html"], render["summary"])
     return {"render": render, "result": summary}
 
 # ---------- Build & compile graph ----------
