@@ -34,6 +34,9 @@ class Run(BaseModel):
     finished_at: datetime | None = None
     error: str | None = None
     steps: list[RunStep] = Field(default_factory=list)
+    html: str | None = None
+    summary: str | None = None
+    artifacts: list[str] | None = None
 
 
 # Base item model

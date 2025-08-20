@@ -1,4 +1,6 @@
 import pytest
+import asyncio
+import types
 from httpx import AsyncClient
 from httpx_ws import aconnect_ws
 from httpx_ws.transport import ASGIWebSocketTransport
@@ -18,16 +20,30 @@ async def test_ping():
         assert r.json() == {"status": "ok"}
 
 @pytest.mark.asyncio
-async def test_chat_endpoint():
+async def test_chat_endpoint(monkeypatch):
+    from langchain_openai import ChatOpenAI
+    def fake_invoke(self, prompt):
+        if isinstance(prompt, list):
+            return types.SimpleNamespace(content='{"objective":"o","steps":[{"id":1,"title":"t","description":"d"}]}')
+        return types.SimpleNamespace(content="done")
+    monkeypatch.setattr(ChatOpenAI, "invoke", fake_invoke)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.post("/chat", json={"objective": "demo", "project_id": 1})
         body = r.json()
         assert r.status_code == 200
-        assert "html" in body and "summary" in body and "run_id" in body
+        assert "run_id" in body
+
+        # poll the run until completion
+        for _ in range(200):
+            r2 = await ac.get(f"/runs/{body['run_id']}")
+            data = r2.json()
+            if data["status"] != "running":
+                break
+            await asyncio.sleep(0.1)
+        assert data["status"] == "success"
+        assert data["html"] and data["summary"]
         run = crud.get_run(body["run_id"])
         assert run and len(run.steps) == 3
-        r2 = await ac.get(f"/runs/{body['run_id']}")
-        assert r2.status_code == 200
         r3 = await ac.get(f"/runs?project_id=1")
         assert r3.status_code == 200
 

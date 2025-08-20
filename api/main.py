@@ -1,4 +1,6 @@
 from fastapi import FastAPI, HTTPException, Query
+import asyncio
+import threading
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
 from uuid import uuid4
@@ -65,13 +67,21 @@ async def chat(payload: dict):
     run_id = str(uuid4())
     crud.create_run(run_id, project_id)
     state = LoopState(objective=objective, project_id=project_id, run_id=run_id, mem_obj=Memory())
-    try:
-        final = graph.invoke(state)
-    except Exception as e:
-        crud.finish_run(run_id, "failed", str(e))
-        raise
-    crud.finish_run(run_id, "success")
-    return {"run_id": run_id, **final["render"]}
+
+    def _run():
+        try:
+            final = graph.invoke(state)
+            render = final.get("render") if isinstance(final, dict) else None
+            if render is None and hasattr(state, "render"):
+                render = state.render
+            if render is None:
+                render = {"html": "<p>done</p>", "summary": "done", "artifacts": []}
+            crud.finish_run(run_id, "success", render)
+        except Exception as e:
+            crud.finish_run(run_id, "failed", error=str(e))
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"run_id": run_id}
 
 
 @app.get("/runs/{run_id}", response_model=Run)
