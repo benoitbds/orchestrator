@@ -16,13 +16,14 @@ class ProjectCreate(BaseModel):
 class RunStep(BaseModel):
     """Timeline entry for a run."""
 
+    order: int
     node: str
     timestamp: datetime
     content: str
 
 
-class Run(BaseModel):
-    """High level metadata for an orchestrator run."""
+class RunDetail(BaseModel):
+    """Detailed representation of an orchestrator run."""
 
     run_id: str
     project_id: int | None = None
@@ -33,6 +34,21 @@ class Run(BaseModel):
     html: str | None = None
     summary: str | None = None
     steps: list[RunStep] = Field(default_factory=list)
+
+
+class RunSummary(BaseModel):
+    """Lightweight run metadata for listings."""
+
+    run_id: str
+    project_id: int | None = None
+    objective: str
+    status: Literal["running", "done"]
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+# Backward compatibility for existing imports
+Run = RunDetail
 
 
 # Base item model
