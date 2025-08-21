@@ -20,6 +20,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const viewerRef = useRef<any>(null);
   const { currentProject } = useProjects();
+  const [runsRefreshKey, setRunsRefreshKey] = useState(0);
 
   const handleRun = async () => {
     setIsLoading(true);
@@ -31,6 +32,7 @@ export default function Home() {
     });
     const data = await resp.json();
     const runId = data.run_id;
+    setRunsRefreshKey(k => k + 1);
 
     // poll run result
     const poll = async () => {
@@ -47,8 +49,10 @@ export default function Home() {
           },
         ]);
         setIsLoading(false);
+        setRunsRefreshKey(k => k + 1);
       } else if (data.status === "failed") {
         setIsLoading(false);
+        setRunsRefreshKey(k => k + 1);
       } else {
         setTimeout(poll, 1000);
       }
@@ -103,7 +107,7 @@ export default function Home() {
             <BacklogPane />
 
             <HistoryPanel history={history} />
-            <RunsPanel />
+            <RunsPanel refreshKey={runsRefreshKey} />
           </div>
         </main>
       </div>

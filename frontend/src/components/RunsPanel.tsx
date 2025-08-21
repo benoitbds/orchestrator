@@ -10,25 +10,39 @@ interface Run {
   steps: { step: string; start: string; end: string }[];
 }
 
-export default function RunsPanel() {
+export default function RunsPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const { currentProject } = useProjects();
   const [runs, setRuns] = useState<Run[]>([]);
 
   useEffect(() => {
     if (!currentProject) return;
-    http(`/runs?project_id=${currentProject.id}`)
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setRuns(data);
-        } else if (data && Array.isArray((data as any).runs)) {
-          setRuns((data as any).runs);
+    let cancelled = false;
+    async function fetchRuns() {
+      try {
+        const res = await http(`/runs?project_id=${currentProject.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            !cancelled && setRuns(data);
+          } else if (data && Array.isArray((data as any).runs)) {
+            !cancelled && setRuns((data as any).runs);
+          } else {
+            !cancelled && setRuns([]);
+          }
         } else {
-          setRuns([]);
+          console.warn(`Failed to fetch runs: ${res.status}`);
+          !cancelled && setRuns([]);
         }
-      })
-      .catch(() => setRuns([]));
-  }, [currentProject]);
+      } catch (e) {
+        console.warn("Error fetching runs", e);
+        !cancelled && setRuns([]);
+      }
+    }
+    fetchRuns();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProject, refreshKey]);
 
   return (
     <section className="space-y-4">
