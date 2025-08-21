@@ -5,9 +5,10 @@ from uuid import uuid4
 
 def test_todo_e2e():
     run_id = str(uuid4())
-    crud.create_run(run_id, None)
+    objective = "Construis une todo-app React"
+    crud.create_run(run_id, objective, None)
     state = cl.LoopState(
-        objective="Construis une todo-app React",
+        objective=objective,
         mem_obj=cl.Memory(),
         run_id=run_id,
     )

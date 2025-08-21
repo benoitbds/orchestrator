@@ -1,7 +1,5 @@
 # orchestrator/crud.py
 import sqlite3
-import json
-from datetime import datetime
 from typing import List, Optional
 from .models import (
     Project,
@@ -14,8 +12,6 @@ from .models import (
     FeatureOut,
     USOut,
     UCOut,
-    Run,
-    RunStep,
 )
 
 DATABASE_URL = "orchestrator.db"
@@ -122,156 +118,109 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS runs ("
         "run_id TEXT PRIMARY KEY,"
         "project_id INTEGER,"
+        "objective TEXT,"
         "status TEXT,"
-        "started_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "finished_at DATETIME,"
-        "error TEXT,"
+        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "completed_at DATETIME,"
         "html TEXT,"
-        "summary TEXT,"
-        "artifacts TEXT"
+        "summary TEXT"
         ")"
     )
-    # ensure new columns exist if database pre-dates these fields
-    for col, typ in (
-        ("html", "TEXT"),
-        ("summary", "TEXT"),
-        ("artifacts", "TEXT"),
-    ):
-        try:
-            conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {typ}")
-        except sqlite3.OperationalError:
-            pass
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS run_steps ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "run_id TEXT,"
-        "step TEXT,"
-        "status TEXT,"
-        "start DATETIME,"
-        "end DATETIME,"
-        "model TEXT,"
-        "error TEXT,"
+        "step_order INTEGER,"
+        "node TEXT,"
+        "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "content TEXT,"
         "FOREIGN KEY(run_id) REFERENCES runs(run_id)"
         ")"
     )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id)")
     conn.close()
 
 
-def create_run(
-    run_id: str,
-    project_id: int | None,
-    html: str | None = None,
-    summary: str | None = None,
-    artifacts: list[str] | None = None,
-) -> None:
+def create_run(run_id: str, objective: str, project_id: int | None) -> None:
+    """Insert a new run with running status."""
+    if not run_id or not objective:
+        raise ValueError("run_id and objective are required")
     conn = get_db_connection()
     conn.execute(
-        "INSERT INTO runs (run_id, project_id, status, html, summary, artifacts) VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            run_id,
-            project_id,
-            "running",
-            html,
-            summary,
-            json.dumps(artifacts) if artifacts is not None else None,
-        ),
+        "INSERT INTO runs (run_id, project_id, objective, status) VALUES (?, ?, ?, 'running')",
+        (run_id, project_id, objective),
     )
     conn.commit()
     conn.close()
 
 
-def record_run_step(
-    run_id: str,
-    step: str,
-    status: str,
-    start: datetime,
-    end: datetime,
-    model: str,
-    error: str | None = None,
-) -> None:
-    conn = get_db_connection()
-    conn.execute(
-        "INSERT INTO run_steps (run_id, step, status, start, end, model, error) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (run_id, step, status, start.isoformat(), end.isoformat(), model, error),
-    )
-    conn.commit()
-    conn.close()
-
-
-def finish_run(
-    run_id: str,
-    status: str,
-    render: dict | None = None,
-    error: str | None = None,
-) -> None:
-    html = summary = artifacts = None
-    if render:
-        html = render.get("html")
-        summary = render.get("summary")
-        artifacts = json.dumps(render.get("artifacts")) if render.get("artifacts") is not None else None
-    conn = get_db_connection()
-    conn.execute(
-        "UPDATE runs SET status = ?, finished_at = CURRENT_TIMESTAMP, error = ?, html = ?, summary = ?, artifacts = ? WHERE run_id = ?",
-        (status, error, html, summary, artifacts, run_id),
-    )
-    conn.commit()
-    conn.close()
-
-
-def _run_from_row(row: sqlite3.Row) -> Run:
-    return Run(
-        run_id=row["run_id"],
-        project_id=row["project_id"],
-        status=row["status"],
-        started_at=datetime.fromisoformat(row["started_at"]),
-        finished_at=datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None,
-        error=row["error"],
-        html=row["html"],
-        summary=row["summary"],
-        artifacts=json.loads(row["artifacts"]) if row["artifacts"] else None,
-    )
-
-
-def get_run(run_id: str) -> Run | None:
+def record_run_step(run_id: str, node: str, content: str) -> None:
+    """Append a step entry for a run."""
+    if not run_id or not node:
+        raise ValueError("run_id and node are required")
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,))
+    cur.execute(
+        "SELECT COALESCE(MAX(step_order), 0) + 1 FROM run_steps WHERE run_id = ?",
+        (run_id,),
+    )
+    next_order = cur.fetchone()[0]
+    cur.execute(
+        "INSERT INTO run_steps (run_id, step_order, node, content) VALUES (?, ?, ?, ?)",
+        (run_id, next_order, node, content),
+    )
+    conn.commit()
+    conn.close()
+
+
+def finish_run(run_id: str, html: str, summary: str) -> None:
+    """Mark a run as completed and store final render."""
+    conn = get_db_connection()
+    conn.execute(
+        "UPDATE runs SET status = 'done', completed_at = CURRENT_TIMESTAMP, html = ?, summary = ? WHERE run_id = ?",
+        (html, summary, run_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_run(run_id: str) -> dict | None:
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT run_id, project_id, objective, status, created_at, completed_at, html, summary FROM runs WHERE run_id = ?",
+        (run_id,),
+    )
     row = cur.fetchone()
     if not row:
         conn.close()
         return None
-    run = _run_from_row(row)
-    cur.execute("SELECT step, status, start, end, model, error FROM run_steps WHERE run_id = ? ORDER BY id", (run_id,))
-    rows = cur.fetchall()
+    run = dict(row)
+    cur.execute(
+        "SELECT step_order as 'order', node, timestamp, content FROM run_steps WHERE run_id = ? ORDER BY step_order",
+        (run_id,),
+    )
+    run["steps"] = [dict(r) for r in cur.fetchall()]
     conn.close()
-    run.steps = [
-        RunStep(
-            step=r["step"],
-            status=r["status"],
-            start=datetime.fromisoformat(r["start"]),
-            end=datetime.fromisoformat(r["end"]),
-            model=r["model"],
-            error=r["error"],
-        )
-        for r in rows
-    ]
     return run
 
 
-def get_runs(project_id: int | None = None) -> List[Run]:
+def get_runs(project_id: int | None = None) -> List[dict]:
     conn = get_db_connection()
     cur = conn.cursor()
     if project_id is None:
-        cur.execute("SELECT * FROM runs ORDER BY started_at")
+        cur.execute(
+            "SELECT run_id, project_id, objective, status, created_at, completed_at FROM runs ORDER BY created_at"
+        )
     else:
         cur.execute(
-            "SELECT * FROM runs WHERE project_id = ? ORDER BY started_at",
+            "SELECT run_id, project_id, objective, status, created_at, completed_at FROM runs WHERE project_id = ? ORDER BY created_at",
             (project_id,),
         )
     rows = cur.fetchall()
     conn.close()
-    return [_run_from_row(row) for row in rows]
+    return [dict(row) for row in rows]
 
 def create_project(project: ProjectCreate) -> Project:
     conn = get_db_connection()

@@ -20,26 +20,18 @@ def patch_graph(monkeypatch):
     import orchestrator.core_loop as cl
 
     async def fake_astream(state):
-        from datetime import datetime, timedelta, timezone
         from orchestrator import crud
-        now = datetime.now(timezone.utc)
         steps = ["plan", "execute", "write"]
-        for i, name in enumerate(steps):
-            start = now + timedelta(seconds=i)
-            end = start + timedelta(milliseconds=100)
-            crud.record_run_step(state.run_id, name, "success", start, end, "gpt-4o-mini")
+        for name in steps:
+            crud.record_run_step(state.run_id, name, f"{name} done")
             yield {name: {"result": f"{name} done"}}
             await asyncio.sleep(0)
 
     def fake_invoke(state):
-        from datetime import datetime, timedelta, timezone
         from orchestrator import crud
-        now = datetime.now(timezone.utc)
         steps = ["plan", "execute", "write"]
-        for i, name in enumerate(steps):
-            start = now + timedelta(seconds=i)
-            end = start + timedelta(milliseconds=100)
-            crud.record_run_step(state.run_id, name, "success", start, end, "gpt-4o-mini")
+        for name in steps:
+            crud.record_run_step(state.run_id, name, f"{name} done")
         summary = "Exécution réussie ✅"
         return {
             "render": {

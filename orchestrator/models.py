@@ -14,29 +14,41 @@ class ProjectCreate(BaseModel):
 
 
 class RunStep(BaseModel):
-    """Information about a single step executed during a run."""
+    """Timeline entry for a run."""
 
-    step: str
-    status: str
-    start: datetime
-    end: datetime
-    model: str
-    error: str | None = None
+    order: int
+    node: str
+    timestamp: datetime
+    content: str
 
 
-class Run(BaseModel):
-    """High level metadata for a run of the orchestrator."""
+class RunDetail(BaseModel):
+    """Detailed representation of an orchestrator run."""
 
     run_id: str
     project_id: int | None = None
-    status: Literal["running", "success", "failed"]
-    started_at: datetime
-    finished_at: datetime | None = None
-    error: str | None = None
-    steps: list[RunStep] = Field(default_factory=list)
+    objective: str
+    status: Literal["running", "done"]
+    created_at: datetime
+    completed_at: datetime | None = None
     html: str | None = None
     summary: str | None = None
-    artifacts: list[str] | None = None
+    steps: list[RunStep] = Field(default_factory=list)
+
+
+class RunSummary(BaseModel):
+    """Lightweight run metadata for listings."""
+
+    run_id: str
+    project_id: int | None = None
+    objective: str
+    status: Literal["running", "done"]
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+# Backward compatibility for existing imports
+Run = RunDetail
 
 
 # Base item model

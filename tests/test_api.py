@@ -40,10 +40,10 @@ async def test_chat_endpoint(monkeypatch):
             if data["status"] != "running":
                 break
             await asyncio.sleep(0.1)
-        assert data["status"] == "success"
+        assert data["status"] == "done"
         assert data["html"] and data["summary"]
         run = crud.get_run(body["run_id"])
-        assert run and len(run.steps) == 3
+        assert run and len(run["steps"]) == 3
         r3 = await ac.get(f"/runs?project_id=1")
         assert r3.status_code == 200
 
