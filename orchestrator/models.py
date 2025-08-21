@@ -33,6 +33,7 @@ class RunDetail(BaseModel):
     completed_at: datetime | None = None
     html: str | None = None
     summary: str | None = None
+    artifacts: dict | None = None
     steps: list[RunStep] = Field(default_factory=list)
 
 
