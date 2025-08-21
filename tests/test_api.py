@@ -34,7 +34,8 @@ async def test_chat_endpoint(monkeypatch):
 
         run = crud.get_run(body["run_id"])
         assert run["status"] == "done"
-        assert len(run["steps"]) == 1  # only plan step
+        # plan step + intent_error because objective is unhandled
+        assert len(run["steps"]) == 2
         r3 = await ac.get(f"/runs?project_id=1")
         assert r3.status_code == 200
 
