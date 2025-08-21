@@ -31,31 +31,57 @@ async def test_chat_endpoint(monkeypatch):
         r = await ac.post("/chat", json={"objective": "demo", "project_id": 1})
         body = r.json()
         assert r.status_code == 200
-        assert "run_id" in body
+        assert "run_id" in body and body["html"]
 
-        # poll the run until completion
-        for _ in range(200):
-            r2 = await ac.get(f"/runs/{body['run_id']}")
-            data = r2.json()
-            if data["status"] != "running":
-                break
-            await asyncio.sleep(0.1)
-        assert data["status"] == "done"
-        assert data["html"] and data["summary"]
         run = crud.get_run(body["run_id"])
-        assert run and len(run["steps"]) == 3
+        assert run["status"] == "done"
+        assert len(run["steps"]) == 3
         r3 = await ac.get(f"/runs?project_id=1")
         assert r3.status_code == 200
 
 @pytest.mark.asyncio
-async def test_ws_stream():
+async def test_ws_stream_new_run():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.post("/chat", json={"objective": "demo"})
-        run_id = r.json()["run_id"]
+        async with aconnect_ws("http://test/stream", ac) as ws:
+            await ws.send_json({"objective": "demo"})
+            first = await ws.receive_json()
+            run_id = first["run_id"]
+            assert first["status"] == "started"
+            nodes = []
+            while True:
+                msg = await ws.receive_json()
+                if msg.get("status") == "done":
+                    assert msg["run_id"] == run_id
+                    break
+                nodes.append(msg["node"])
+            assert nodes == ["plan", "execute", "write"]
+
+
+@pytest.mark.asyncio
+async def test_ws_stream_existing_run_only_new_steps():
+    from uuid import uuid4
+    from orchestrator import stream as run_stream
+
+    run_id = str(uuid4())
+    crud.create_run(run_id, "obj", None)
+    queue = run_stream.register(run_id, asyncio.get_event_loop())
+    # record a step before connecting
+    crud.record_run_step(run_id, "before", "one")
+
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
         async with aconnect_ws("http://test/stream", ac) as ws:
             await ws.send_json({"run_id": run_id})
-            chunk = await ws.receive_json()
-            assert chunk["node"] in {"plan", "execute", "write"}
+
+            async def later():
+                await asyncio.sleep(0.1)
+                crud.record_run_step(run_id, "after", "two")
+                run_stream.close(run_id)
+
+            asyncio.create_task(later())
+            msg = await ws.receive_json()
+            assert msg["node"] == "after"
+            done = await ws.receive_json()
+            assert done["status"] == "done" and done["run_id"] == run_id
 
 
 @pytest.mark.asyncio
