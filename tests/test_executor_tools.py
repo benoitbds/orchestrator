@@ -1,12 +1,14 @@
 import json
 import types
 import pytest
-from httpx import AsyncClient
-from httpx import ASGITransport
+import types
+import json
+import uuid
+import pytest
 
-from api.main import app
 from orchestrator import crud
 from orchestrator.models import ProjectCreate, FeatureCreate
+from orchestrator.core_loop import run_chat_tools
 
 
 @pytest.mark.asyncio
@@ -17,6 +19,7 @@ async def test_chat_creates_item(monkeypatch, tmp_path):
     crud.create_project(ProjectCreate(name="Proj", description=""))
 
     from langchain_openai import ChatOpenAI
+
     calls = [
         types.SimpleNamespace(
             content="",
@@ -44,21 +47,15 @@ async def test_chat_creates_item(monkeypatch, tmp_path):
     monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
     monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages: calls.pop(0))
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.post(
-            "/chat",
-            json={"objective": "Create Feature 'Canal de vente'", "project_id": 1},
-        )
-        run_id = resp.json()["run_id"]
-        run_resp = await ac.get(f"/runs/{run_id}")
-        items_resp = await ac.get("/api/items", params={"project_id": 1})
-
-    data = run_resp.json()
-    assert data["artifacts"]["created_item_ids"][0] > 0
-    nodes = [s["node"] for s in data["steps"]]
+    run_id = str(uuid.uuid4())
+    crud.create_run(run_id, "Create Feature 'Canal de vente'", 1)
+    await run_chat_tools("Create Feature 'Canal de vente'", 1, run_id)
+    run = crud.get_run(run_id)
+    assert run["artifacts"]["created_item_ids"][0] > 0
+    nodes = [s["node"] for s in run["steps"]]
     assert "tool:create_item" in nodes
-    assert any(it["title"] == "Canal de vente" for it in items_resp.json())
+    items = crud.get_items(project_id=1)
+    assert any(it.title == "Canal de vente" for it in items)
 
 
 @pytest.mark.asyncio
@@ -70,6 +67,7 @@ async def test_chat_updates_item(monkeypatch, tmp_path):
     feature = crud.create_item(FeatureCreate(title="Canal", description="", project_id=1, parent_id=None))
 
     from langchain_openai import ChatOpenAI
+
     calls = [
         types.SimpleNamespace(
             content="",
@@ -91,21 +89,15 @@ async def test_chat_updates_item(monkeypatch, tmp_path):
     monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
     monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages: calls.pop(0))
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.post(
-            "/chat",
-            json={"objective": "Rename feature", "project_id": 1},
-        )
-        run_id = resp.json()["run_id"]
-        run_resp = await ac.get(f"/runs/{run_id}")
-        item_resp = await ac.get(f"/api/items/{feature.id}")
-
-    data = run_resp.json()
-    assert data["artifacts"]["updated_item_ids"][0] == feature.id
-    nodes = [s["node"] for s in data["steps"]]
+    run_id = str(uuid.uuid4())
+    crud.create_run(run_id, "Rename feature", 1)
+    await run_chat_tools("Rename feature", 1, run_id)
+    run = crud.get_run(run_id)
+    assert run["artifacts"]["updated_item_ids"][0] == feature.id
+    nodes = [s["node"] for s in run["steps"]]
     assert "tool:update_item" in nodes
-    assert item_resp.json()["title"] == "Canal v2"
+    item = crud.get_item(feature.id)
+    assert item.title == "Canal v2"
 
 
 @pytest.mark.asyncio
@@ -116,6 +108,7 @@ async def test_chat_max_tool_calls(monkeypatch, tmp_path):
     crud.create_project(ProjectCreate(name="Proj", description=""))
 
     from langchain_openai import ChatOpenAI
+
     def fake_invoke(self, messages):
         return types.SimpleNamespace(
             content="",
@@ -138,22 +131,18 @@ async def test_chat_max_tool_calls(monkeypatch, tmp_path):
                 ]
             },
         )
+
     monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
     monkeypatch.setattr(ChatOpenAI, "invoke", fake_invoke)
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.post(
-            "/chat",
-            json={"objective": "loop", "project_id": 1},
-        )
-        run_id = resp.json()["run_id"]
-        run_resp = await ac.get(f"/runs/{run_id}")
-    data = run_resp.json()
-    nodes = [s["node"] for s in data["steps"]]
+    run_id = str(uuid.uuid4())
+    crud.create_run(run_id, "loop", 1)
+    await run_chat_tools("loop", 1, run_id)
+    run = crud.get_run(run_id)
+    nodes = [s["node"] for s in run["steps"]]
     assert nodes.count("tool:create_item") == 6
     assert "error" in nodes
-    assert "max tool calls" in data["summary"].lower()
+    assert "max tool calls" in run["summary"].lower()
 
 
 @pytest.mark.asyncio
@@ -164,6 +153,7 @@ async def test_handler_error(monkeypatch, tmp_path):
     crud.create_project(ProjectCreate(name="Proj", description=""))
 
     from langchain_openai import ChatOpenAI
+
     calls = [
         types.SimpleNamespace(
             content="",
@@ -192,16 +182,11 @@ async def test_handler_error(monkeypatch, tmp_path):
     monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
     monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages: calls.pop(0))
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.post(
-            "/chat",
-            json={"objective": "bad parent", "project_id": 1},
-        )
-        run_id = resp.json()["run_id"]
-        run_resp = await ac.get(f"/runs/{run_id}")
-    data = run_resp.json()
-    nodes = [s["node"] for s in data["steps"]]
+    run_id = str(uuid.uuid4())
+    crud.create_run(run_id, "bad parent", 1)
+    await run_chat_tools("bad parent", 1, run_id)
+    run = crud.get_run(run_id)
+    nodes = [s["node"] for s in run["steps"]]
     assert "tool:create_item" in nodes
     assert "error" in nodes
-    assert "invalid parent" in data["summary"].lower()
+    assert "invalid parent" in run["summary"].lower()
