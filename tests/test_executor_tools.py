@@ -41,8 +41,8 @@ async def test_chat_creates_item(monkeypatch, tmp_path):
         ),
         types.SimpleNamespace(content="done", additional_kwargs={}),
     ]
-
-    monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages, tools=None, tool_choice=None: calls.pop(0))
+    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
+    monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages: calls.pop(0))
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -88,7 +88,8 @@ async def test_chat_updates_item(monkeypatch, tmp_path):
         ),
         types.SimpleNamespace(content="done", additional_kwargs={}),
     ]
-    monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages, tools=None, tool_choice=None: calls.pop(0))
+    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
+    monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages: calls.pop(0))
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -115,7 +116,7 @@ async def test_chat_max_tool_calls(monkeypatch, tmp_path):
     crud.create_project(ProjectCreate(name="Proj", description=""))
 
     from langchain_openai import ChatOpenAI
-    def fake_invoke(self, messages, tools=None, tool_choice=None):
+    def fake_invoke(self, messages):
         return types.SimpleNamespace(
             content="",
             additional_kwargs={
@@ -137,6 +138,7 @@ async def test_chat_max_tool_calls(monkeypatch, tmp_path):
                 ]
             },
         )
+    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
     monkeypatch.setattr(ChatOpenAI, "invoke", fake_invoke)
 
     transport = ASGITransport(app=app)
@@ -187,7 +189,8 @@ async def test_handler_error(monkeypatch, tmp_path):
         ),
         types.SimpleNamespace(content="Invalid parent", additional_kwargs={}),
     ]
-    monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages, tools=None, tool_choice=None: calls.pop(0))
+    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
+    monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages: calls.pop(0))
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
