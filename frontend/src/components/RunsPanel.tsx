@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import RunTimeline from "./RunTimeline";
+import RunProgress from "./RunProgress";
 import { useProjects } from "@/context/ProjectContext";
 import { http } from "@/lib/api";
 
@@ -34,7 +34,7 @@ export default function RunsPanel() {
     <section className="space-y-4">
       <h2 className="text-xl font-semibold text-gray-800">Historique des runs</h2>
       {runs.map(run => (
-        <RunTimeline key={run.run_id} run={run} />
+        <RunProgress key={run.run_id} run={run} />
       ))}
     </section>
   );
