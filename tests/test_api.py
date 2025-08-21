@@ -22,10 +22,9 @@ async def test_ping():
 @pytest.mark.asyncio
 async def test_chat_endpoint(monkeypatch):
     from langchain_openai import ChatOpenAI
-    def fake_invoke(self, prompt):
-        if isinstance(prompt, list):
-            return types.SimpleNamespace(content='{"objective":"o","steps":[{"id":1,"title":"t","description":"d"}]}')
-        return types.SimpleNamespace(content="done")
+    def fake_invoke(self, messages):
+        return types.SimpleNamespace(content="done", additional_kwargs={})
+    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
     monkeypatch.setattr(ChatOpenAI, "invoke", fake_invoke)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.post("/chat", json={"objective": "demo", "project_id": 1})
@@ -35,8 +34,8 @@ async def test_chat_endpoint(monkeypatch):
 
         run = crud.get_run(body["run_id"])
         assert run["status"] == "done"
-        # A preliminary plan step is recorded before the core graph runs
-        assert len(run["steps"]) == 4
+        # plan step + intent_error because objective is unhandled
+        assert len(run["steps"]) == 2
         r3 = await ac.get(f"/runs?project_id=1")
         assert r3.status_code == 200
 

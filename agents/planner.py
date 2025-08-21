@@ -17,3 +17,12 @@ parser = PydanticOutputParser(Plan)
 def make_plan(objective: str) -> Plan:
     rsp = llm.invoke([{"role": "user", "content": objective}])
     return parser.parse(rsp.content)
+
+
+# Prompt used by the tool-enabled chat executor
+TOOL_SYSTEM_PROMPT = (
+    "You manage a product backlog. "
+    "Use the provided tools to create or update items when appropriate. "
+    "If several items could match a reference, call find_item first, then use update_item with the chosen id. "
+    "Keep answers concise and mention created or modified items."
+)

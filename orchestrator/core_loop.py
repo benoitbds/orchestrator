@@ -10,8 +10,10 @@ from pydantic import BaseModel, Field, ConfigDict
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 
-from agents.planner import make_plan
+from agents.planner import make_plan, TOOL_SYSTEM_PROMPT
 from agents.schemas import ExecResult, Plan
+from agents.tools import TOOLS, HANDLERS
+from orchestrator import stream
 import threading
 from orchestrator import crud
 
@@ -128,6 +130,57 @@ def build_graph():
 
 graph = build_graph()
 
+# ---------- Tool loop executor ----------
+async def run_chat_tools(objective: str, project_id: int | None, run_id: str, max_tool_calls: int = 6) -> dict:
+    """Run a function-calling loop with the LLM."""
+    model = ChatOpenAI(model="gpt-4o-mini", temperature=0).bind_tools(TOOLS)
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": TOOL_SYSTEM_PROMPT},
+        {"role": "user", "content": objective},
+    ]
+    artifacts: dict[str, list[int]] = {"created_item_ids": [], "updated_item_ids": []}
+    for _ in range(max_tool_calls):
+        rsp = model.invoke(messages)
+        tool_calls = rsp.additional_kwargs.get("tool_calls") or []
+        if tool_calls:
+            tc = tool_calls[0]
+            name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"].get("arguments", "{}"))
+            except json.JSONDecodeError:
+                args = {}
+            handler = HANDLERS.get(name)
+            if handler is None:
+                result = {"ok": False, "error": f"unknown tool {name}"}
+            else:
+                try:
+                    result = await handler(args)
+                except Exception as exc:  # pragma: no cover - defensive
+                    result = {"ok": False, "error": str(exc)}
+            payload = {"args": args, "result": result}
+            crud.record_run_step(run_id, f"tool:{name}", json.dumps(payload))
+            stream.publish(run_id, {"node": f"tool:{name}", "payload": payload})
+            if result.get("ok"):
+                if name == "create_item":
+                    artifacts["created_item_ids"].append(result["item_id"])
+                elif name == "update_item":
+                    artifacts["updated_item_ids"].append(result["item_id"])
+            else:
+                crud.record_run_step(run_id, "error", result.get("error", "error"))
+            messages.append(
+                {"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)}
+            )
+            continue
+        final = rsp.content
+        html = f"<p>{final}</p>"
+        crud.finish_run(run_id, html, final, artifacts)
+        return {"html": html}
+    crud.record_run_step(run_id, "error", "max tool calls exceeded")
+    summary = "Max tool calls exceeded"
+    crud.finish_run(run_id, "", summary, artifacts)
+    return {"html": ""}
+
+
 # ---------- CLI ----------
 def run(objective: str):
     mem = Memory()
@@ -136,6 +189,7 @@ def run(objective: str):
     state = LoopState(objective=objective, mem_obj=mem, memory=mem.fetch(), run_id=run_id)
     result = graph.invoke(state)
     print("✅ Résultat complet :\n", result["render"]["html"])
+
 
 if __name__ == "__main__":
     import typer
