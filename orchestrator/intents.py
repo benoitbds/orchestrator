@@ -34,6 +34,17 @@ def parse_intent(objective: str) -> Optional[Dict]:
         title_match = re.search(r"['\"]([^'\"]+)['\"]", obj)
         title = title_match.group(1) if title_match else None
         if not title:
+            # No quoted title; use tokens directly after the item type
+            after_type = obj[type_match.end():]
+            tokens = after_type.strip().split()
+            stop_words = {"sous", "under", "avec", "with", "description"}
+            title_tokens: list[str] = []
+            for tok in tokens:
+                if tok.lower() in stop_words:
+                    break
+                title_tokens.append(tok)
+            title = " ".join(title_tokens).strip(" ,.") if title_tokens else None
+        if not title:
             return None
         parent = None
         parent_match = re.search(
