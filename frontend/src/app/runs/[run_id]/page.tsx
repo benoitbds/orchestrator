@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import RunTimeline, { TimelineStep } from "@/components/RunTimeline";
 import { http } from "@/lib/api";
 import { connectWS } from "@/lib/ws";
@@ -17,15 +18,27 @@ interface Run {
 
 export default function RunDetail({ params }: { params: { run_id: string } }) {
   const [run, setRun] = useState<Run | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const res = await http(`/runs/${params.run_id}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (!cancelled) setRun(data);
+      try {
+        const res = await http(`/runs/${params.run_id}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled) setRun(data);
+        } else if (res.status === 404) {
+          console.warn(`Run ${params.run_id} not found`);
+          if (!cancelled) setError("Run not found or has been deleted");
+        } else {
+          console.warn(`Failed to fetch run ${params.run_id}: ${res.status}`);
+          if (!cancelled) setError("Failed to load run");
+        }
+      } catch (e) {
+        console.warn("Error loading run", e);
+        if (!cancelled) setError("Failed to load run");
       }
     }
     load();
@@ -67,6 +80,16 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
       ws.close();
     };
   }, [params.run_id]);
+
+  if (error)
+    return (
+      <div className="p-6 space-y-2">
+        <p>{error}</p>
+        <Link href="/" className="text-blue-500 underline">
+          Back to runs
+        </Link>
+      </div>
+    );
 
   if (!run) return <div className="p-6">Loading...</div>;
 

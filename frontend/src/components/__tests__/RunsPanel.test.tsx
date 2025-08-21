@@ -25,6 +25,8 @@ afterEach(() => {
 
 it('renders runs when API returns an array', async () => {
   global.fetch = vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
     json: async () => [{ run_id: '1', status: 'ok', steps: [] }],
   });
 
@@ -34,6 +36,8 @@ it('renders runs when API returns an array', async () => {
 
 it('supports object with runs property', async () => {
   global.fetch = vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
     json: async () => ({ runs: [{ run_id: '2', status: 'ok', steps: [] }] }),
   });
 
@@ -48,4 +52,23 @@ it('falls back to empty list on fetch error', async () => {
   await waitFor(() => {
     expect(screen.queryByText('Détails du run')).not.toBeInTheDocument();
   });
+});
+
+it('refetches when refreshKey changes', async () => {
+  const fetchMock = vi.fn().mockImplementation(() => {
+    if (fetchMock.mock.calls.length === 0) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => [{ run_id: '3', status: 'ok', steps: [] }],
+    });
+  });
+  global.fetch = fetchMock;
+
+  const { rerender } = render(<RunsPanel refreshKey={0} />);
+  rerender(<RunsPanel refreshKey={1} />);
+
+  expect(await screen.findByText('Détails du run')).toBeInTheDocument();
 });
