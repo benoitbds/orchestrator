@@ -13,7 +13,8 @@ from orchestrator.models import (
     BacklogItemCreate,
     BacklogItemUpdate,
     BacklogItem,
-    Run,
+    RunDetail,
+    RunSummary,
     FeatureCreate,
 )
 import agents.writer as writer
@@ -113,7 +114,7 @@ async def chat(payload: dict):
     return {"run_id": run_id}
 
 
-@app.get("/runs/{run_id}", response_model=Run)
+@app.get("/runs/{run_id}", response_model=RunDetail)
 async def read_run(run_id: str):
     run = crud.get_run(run_id)
     if not run:
@@ -121,7 +122,7 @@ async def read_run(run_id: str):
     return run
 
 
-@app.get("/runs", response_model=list[Run])
+@app.get("/runs", response_model=list[RunSummary])
 async def list_runs(project_id: int | None = Query(None)):
     return crud.get_runs(project_id)
 
