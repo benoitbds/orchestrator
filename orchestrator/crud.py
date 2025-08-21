@@ -1,4 +1,5 @@
 # orchestrator/crud.py
+import json
 import sqlite3
 from typing import List, Optional
 from .models import (
@@ -127,6 +128,11 @@ def init_db():
         ")"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)")
+    # Ensure artifacts column exists
+    cur = conn.execute("PRAGMA table_info(runs)")
+    cols = [row[1] for row in cur.fetchall()]
+    if "artifacts" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN artifacts TEXT")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS run_steps ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -189,12 +195,12 @@ def record_run_step(run_id: str, node: str, content: str) -> dict:
     return step
 
 
-def finish_run(run_id: str, html: str, summary: str) -> None:
+def finish_run(run_id: str, html: str, summary: str, artifacts: dict | None = None) -> None:
     """Mark a run as completed and store final render."""
     conn = get_db_connection()
     conn.execute(
-        "UPDATE runs SET status = 'done', completed_at = CURRENT_TIMESTAMP, html = ?, summary = ? WHERE run_id = ?",
-        (html, summary, run_id),
+        "UPDATE runs SET status = 'done', completed_at = CURRENT_TIMESTAMP, html = ?, summary = ?, artifacts = ? WHERE run_id = ?",
+        (html, summary, json.dumps(artifacts) if artifacts is not None else None, run_id),
     )
     conn.commit()
     conn.close()
@@ -204,7 +210,7 @@ def get_run(run_id: str) -> dict | None:
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
-        "SELECT run_id, project_id, objective, status, created_at, completed_at, html, summary FROM runs WHERE run_id = ?",
+        "SELECT run_id, project_id, objective, status, created_at, completed_at, html, summary, artifacts FROM runs WHERE run_id = ?",
         (run_id,),
     )
     row = cur.fetchone()
@@ -212,6 +218,8 @@ def get_run(run_id: str) -> dict | None:
         conn.close()
         return None
     run = dict(row)
+    artifacts = run.get("artifacts")
+    run["artifacts"] = json.loads(artifacts) if artifacts else None
     cur.execute(
         "SELECT step_order as 'order', node, timestamp, content FROM run_steps WHERE run_id = ? ORDER BY step_order",
         (run_id,),
