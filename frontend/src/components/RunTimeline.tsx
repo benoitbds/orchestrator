@@ -10,7 +10,7 @@ interface Step {
 interface Run {
   run_id: string;
   status: string;
-  steps: Step[];
+  steps?: Step[];
 }
 
 const colors: Record<string, string> = {
@@ -20,19 +20,29 @@ const colors: Record<string, string> = {
 };
 
 export default function RunTimeline({ run }: { run: Run }) {
-  const durations = run.steps.map(s => new Date(s.end).getTime() - new Date(s.start).getTime());
+  const steps = run.steps ?? [];
+  const durations = steps.map(
+    s => new Date(s.end).getTime() - new Date(s.start).getTime(),
+  );
   const total = durations.reduce((a, b) => a + b, 0) || 1;
   return (
     <div className="space-y-1">
       <div className="flex h-2 w-full overflow-hidden rounded">
-        {run.steps.map((s, i) => (
+        {steps.length === 0 ? (
           <div
-            key={s.step}
-            className={`${colors[s.step] || "bg-gray-400"} h-full`}
-            style={{ width: `${(durations[i] / total) * 100}%` }}
-            title={s.step}
+            data-testid="timeline-loading"
+            className="h-full w-full animate-pulse rounded bg-gray-200"
           />
-        ))}
+        ) : (
+          steps.map((s, i) => (
+            <div
+              key={s.step}
+              className={`${colors[s.step] || "bg-gray-400"} h-full`}
+              style={{ width: `${(durations[i] / total) * 100}%` }}
+              title={s.step}
+            />
+          ))
+        )}
       </div>
       <Link href={`/runs/${run.run_id}`} className="text-xs text-blue-500 hover:underline">
         Détails du run
