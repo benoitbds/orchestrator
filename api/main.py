@@ -5,7 +5,7 @@ from uuid import uuid4
 import json
 from importlib import metadata
 from datetime import datetime
-from orchestrator.core_loop import graph, LoopState, Memory
+from orchestrator.core_loop import run_chat_tools
 from orchestrator import crud
 from orchestrator.models import (
     ProjectCreate,
@@ -20,7 +20,6 @@ from orchestrator.models import (
     USCreate,
     UCCreate,
 )
-from orchestrator.intents import parse_intent, ALLOWED_TYPES
 import agents.writer as writer
 import httpx
 
@@ -92,96 +91,8 @@ async def chat(payload: dict):
     run_id = str(uuid4())
     crud.create_run(run_id, objective, project_id)
     crud.record_run_step(run_id, "plan", json.dumps({"objective": objective}))
-
-    intent = parse_intent(objective)
-    if intent:
-        try:
-            if intent["action"] == "create":
-                item_type = intent.get("type", "").lower()
-                if item_type not in ALLOWED_TYPES:
-                    raise ValueError(f"invalid type: {intent.get('type')}")
-                proj = intent.get("project_id") or project_id
-                if proj is None:
-                    raise ValueError("project_id required")
-                model_map = {
-                    "epic": EpicCreate,
-                    "capability": CapabilityCreate,
-                    "feature": FeatureCreate,
-                    "us": USCreate,
-                    "uc": UCCreate,
-                }
-                Model = model_map[item_type]
-                item = Model(
-                    title=intent["title"],
-                    description="",
-                    project_id=proj,
-                    parent_id=intent.get("parent_id"),
-                )
-                if item.parent_id is not None:
-                    parent = crud.get_item(item.parent_id)
-                    if not parent or parent.project_id != item.project_id:
-                        raise ValueError("invalid parent_id")
-                    allowed = {
-                        "Capability": ["Epic"],
-                        "Feature": ["Epic", "Capability"],
-                        "US": ["Feature"],
-                        "UC": ["US"],
-                    }
-                    if item.type not in allowed or parent.type not in allowed[item.type]:
-                        raise ValueError("invalid hierarchy")
-                created = crud.create_item(item)
-                crud.record_run_step(
-                    run_id,
-                    "tool:create_item",
-                    json.dumps({"item_id": created.id, "type": created.type, "title": created.title}),
-                )
-                html = summary = f"Created {created.type} '{created.title}' (id {created.id})."
-                artifacts = {"created_item_id": created.id}
-            elif intent["action"] == "update":
-                target_id = intent.get("id")
-                if target_id is None and intent.get("lookup"):
-                    lookup = intent["lookup"]
-                    lookup_project = lookup.get("project_id") or project_id
-                    if lookup_project is None:
-                        raise ValueError("project_id required for lookup")
-                    items = crud.get_items(lookup_project, type=lookup["type"])
-                    match = next((i for i in items if i.title == lookup["title"]), None)
-                    if match:
-                        target_id = match.id
-                if target_id is None:
-                    raise ValueError("item not found")
-                update = BacklogItemUpdate(**intent["fields"])
-                updated = crud.update_item(target_id, update)
-                if not updated:
-                    raise ValueError("item not found")
-                crud.record_run_step(
-                    run_id,
-                    "tool:update_item",
-                    json.dumps({"item_id": target_id, "fields": intent["fields"]}),
-                )
-                html = summary = f"Updated item {target_id}."
-                artifacts = {"updated_item_id": target_id}
-            else:  # pragma: no cover - defensive programming
-                raise ValueError("unsupported action")
-        except Exception as e:
-            crud.record_run_step(run_id, "error", str(e))
-            summary = f"Intent error: {e}"
-            html = ""
-            artifacts = None
-        crud.finish_run(run_id, html, summary, artifacts)
-        return {"run_id": run_id, "html": html}
-
-    # Fallback to the core graph when no intent detected
-    state = LoopState(
-        objective=objective,
-        project_id=project_id,
-        run_id=run_id,
-        mem_obj=Memory(),
-    )
-    result = graph.invoke(state)
-    render = result.get("render", {"html": "", "summary": ""})
-    crud.finish_run(run_id, render.get("html", ""), render.get("summary", ""), None)
-    return {"run_id": run_id, "html": render.get("html", "")}
+    result = await run_chat_tools(objective, project_id, run_id)
+    return {"run_id": run_id, "html": result.get("html", "")}
 
 
 @app.get("/runs/{run_id}", response_model=RunDetail)
