@@ -1,29 +1,27 @@
-import { render, screen } from "@testing-library/react";
-import RunTimeline from "./RunTimeline";
+import { render, screen, fireEvent, within } from "@testing-library/react";
+import RunTimeline, { TimelineStep } from "./RunTimeline";
 
-describe("RunTimeline", () => {
-  const baseRun = { run_id: "1", status: "running" };
+describe("RunTimeline detail", () => {
+  const steps: TimelineStep[] = [
+    { order: 1, node: "plan", timestamp: "2024-01-01T00:00:00Z", content: "plan step" },
+    { order: 2, node: "execute", timestamp: "2024-01-01T00:01:00Z", content: "execute step" },
+  ];
 
-  it("renders segments for provided steps", () => {
-    const run = {
-      ...baseRun,
-      steps: [
-        { step: "plan", start: "2024-01-01T00:00:00Z", end: "2024-01-01T00:01:00Z" },
-        { step: "execute", start: "2024-01-01T00:01:00Z", end: "2024-01-01T00:02:00Z" },
-      ],
-    };
-    render(<RunTimeline run={run} />);
-    expect(screen.getByTitle("plan")).toBeInTheDocument();
-    expect(screen.getByTitle("execute")).toBeInTheDocument();
+  it("renders provided steps", () => {
+    render(<RunTimeline steps={steps} />);
+    expect(screen.getByText("plan")).toBeInTheDocument();
+    expect(screen.getByText("execute")).toBeInTheDocument();
   });
 
-  it("shows loading skeleton when steps are undefined", () => {
-    render(<RunTimeline run={baseRun as any} />);
-    expect(screen.getByTestId("timeline-loading")).toBeInTheDocument();
+  it("shows fallback when no steps", () => {
+    render(<RunTimeline steps={[]} />);
+    expect(screen.getByText(/No steps yet/i)).toBeInTheDocument();
   });
 
-  it("shows loading skeleton when steps array is empty", () => {
-    render(<RunTimeline run={{ ...baseRun, steps: [] }} />);
-    expect(screen.getByTestId("timeline-loading")).toBeInTheDocument();
+  it("opens modal with step details on click", () => {
+    render(<RunTimeline steps={steps} />);
+    fireEvent.click(screen.getByText("plan"));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("plan step")).toBeInTheDocument();
   });
 });

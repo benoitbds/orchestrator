@@ -155,8 +155,8 @@ def create_run(run_id: str, objective: str, project_id: int | None) -> None:
     conn.close()
 
 
-def record_run_step(run_id: str, node: str, content: str) -> None:
-    """Append a step entry for a run."""
+def record_run_step(run_id: str, node: str, content: str) -> dict:
+    """Append a step entry for a run and broadcast it."""
     if not run_id or not node:
         raise ValueError("run_id and node are required")
     conn = get_db_connection()
@@ -170,8 +170,23 @@ def record_run_step(run_id: str, node: str, content: str) -> None:
         "INSERT INTO run_steps (run_id, step_order, node, content) VALUES (?, ?, ?, ?)",
         (run_id, next_order, node, content),
     )
+    step_id = cur.lastrowid
+    cur.execute("SELECT timestamp FROM run_steps WHERE id = ?", (step_id,))
+    timestamp = cur.fetchone()[0]
     conn.commit()
     conn.close()
+
+    step = {
+        "run_id": run_id,
+        "node": node,
+        "content": content,
+        "order": next_order,
+        "timestamp": timestamp,
+    }
+    from . import stream
+
+    stream.publish(run_id, step)
+    return step
 
 
 def finish_run(run_id: str, html: str, summary: str) -> None:
