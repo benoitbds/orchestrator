@@ -133,14 +133,14 @@ graph = build_graph()
 # ---------- Tool loop executor ----------
 async def run_chat_tools(objective: str, project_id: int | None, run_id: str, max_tool_calls: int = 6) -> dict:
     """Run a function-calling loop with the LLM."""
-    model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    model = ChatOpenAI(model="gpt-4o-mini", temperature=0).bind_tools(TOOLS)
     messages: list[dict[str, str]] = [
         {"role": "system", "content": TOOL_SYSTEM_PROMPT},
         {"role": "user", "content": objective},
     ]
     artifacts: dict[str, list[int]] = {"created_item_ids": [], "updated_item_ids": []}
     for _ in range(max_tool_calls):
-        rsp = model.invoke(messages, tools=TOOLS, tool_choice="auto")
+        rsp = model.invoke(messages)
         tool_calls = rsp.additional_kwargs.get("tool_calls") or []
         if tool_calls:
             tc = tool_calls[0]
