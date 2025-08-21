@@ -35,7 +35,8 @@ async def test_chat_endpoint(monkeypatch):
 
         run = crud.get_run(body["run_id"])
         assert run["status"] == "done"
-        assert len(run["steps"]) == 3
+        # A preliminary plan step is recorded before the core graph runs
+        assert len(run["steps"]) == 4
         r3 = await ac.get(f"/runs?project_id=1")
         assert r3.status_code == 200
 

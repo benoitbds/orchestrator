@@ -1,10 +1,10 @@
 from fastapi import FastAPI, HTTPException, Query
-from datetime import datetime
-from importlib import metadata
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
 from uuid import uuid4
 import json
+from importlib import metadata
+from datetime import datetime
 from orchestrator.core_loop import graph, LoopState, Memory
 from orchestrator import crud
 from orchestrator.models import (
@@ -91,14 +91,8 @@ async def chat(payload: dict):
     project_id = payload.get("project_id")
     run_id = str(uuid4())
     crud.create_run(run_id, objective, project_id)
-    state = LoopState(
-        objective=objective,
-        project_id=project_id,
-        run_id=run_id,
-        mem_obj=Memory(),
-    )
+    crud.record_run_step(run_id, "plan", json.dumps({"objective": objective}))
 
-    artifacts = None
     intent = parse_intent(objective)
     if intent:
         try:
@@ -106,6 +100,9 @@ async def chat(payload: dict):
                 item_type = intent.get("type", "").lower()
                 if item_type not in ALLOWED_TYPES:
                     raise ValueError(f"invalid type: {intent.get('type')}")
+                proj = intent.get("project_id") or project_id
+                if proj is None:
+                    raise ValueError("project_id required")
                 model_map = {
                     "epic": EpicCreate,
                     "capability": CapabilityCreate,
@@ -114,13 +111,12 @@ async def chat(payload: dict):
                     "uc": UCCreate,
                 }
                 Model = model_map[item_type]
-                item_payload = {
-                    "title": intent["title"],
-                    "description": "",
-                    "project_id": intent["project_id"],
-                    "parent_id": intent.get("parent_id"),
-                }
-                item = Model(**item_payload)
+                item = Model(
+                    title=intent["title"],
+                    description="",
+                    project_id=proj,
+                    parent_id=intent.get("parent_id"),
+                )
                 if item.parent_id is not None:
                     parent = crud.get_item(item.parent_id)
                     if not parent or parent.project_id != item.project_id:
@@ -134,29 +130,57 @@ async def chat(payload: dict):
                     if item.type not in allowed or parent.type not in allowed[item.type]:
                         raise ValueError("invalid hierarchy")
                 created = crud.create_item(item)
-                crud.record_run_step(run_id, "tool:create_item", json.dumps(created.model_dump(), default=str))
+                crud.record_run_step(
+                    run_id,
+                    "tool:create_item",
+                    json.dumps({"item_id": created.id, "type": created.type, "title": created.title}),
+                )
+                html = summary = f"Created {created.type} '{created.title}' (id {created.id})."
                 artifacts = {"created_item_id": created.id}
             elif intent["action"] == "update":
+                target_id = intent.get("id")
+                if target_id is None and intent.get("lookup"):
+                    lookup = intent["lookup"]
+                    lookup_project = lookup.get("project_id") or project_id
+                    if lookup_project is None:
+                        raise ValueError("project_id required for lookup")
+                    items = crud.get_items(lookup_project, type=lookup["type"])
+                    match = next((i for i in items if i.title == lookup["title"]), None)
+                    if match:
+                        target_id = match.id
+                if target_id is None:
+                    raise ValueError("item not found")
                 update = BacklogItemUpdate(**intent["fields"])
-                updated = crud.update_item(intent["id"], update)
+                updated = crud.update_item(target_id, update)
                 if not updated:
                     raise ValueError("item not found")
-                crud.record_run_step(run_id, "tool:update_item", json.dumps(updated.model_dump(), default=str))
-                artifacts = {"updated_item_id": intent["id"]}
-        except Exception as e:  # record error but continue
+                crud.record_run_step(
+                    run_id,
+                    "tool:update_item",
+                    json.dumps({"item_id": target_id, "fields": intent["fields"]}),
+                )
+                html = summary = f"Updated item {target_id}."
+                artifacts = {"updated_item_id": target_id}
+            else:  # pragma: no cover - defensive programming
+                raise ValueError("unsupported action")
+        except Exception as e:
             crud.record_run_step(run_id, "error", str(e))
-            state.mem_obj.add("error", str(e))
-            error_summary = f"Intent error: {e}"
-        else:
-            error_summary = None
-    else:
-        error_summary = None
+            summary = f"Intent error: {e}"
+            html = ""
+            artifacts = None
+        crud.finish_run(run_id, html, summary, artifacts)
+        return {"run_id": run_id, "html": html}
 
+    # Fallback to the core graph when no intent detected
+    state = LoopState(
+        objective=objective,
+        project_id=project_id,
+        run_id=run_id,
+        mem_obj=Memory(),
+    )
     result = graph.invoke(state)
     render = result.get("render", {"html": "", "summary": ""})
-    if error_summary:
-        render["summary"] = error_summary
-    crud.finish_run(run_id, render.get("html", ""), render.get("summary", ""), artifacts)
+    crud.finish_run(run_id, render.get("html", ""), render.get("summary", ""), None)
     return {"run_id": run_id, "html": render.get("html", "")}
 
 
