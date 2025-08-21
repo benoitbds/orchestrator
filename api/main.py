@@ -1,12 +1,11 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
-from uuid import uuid4
 import json
 from importlib import metadata
 from datetime import datetime
-from orchestrator.core_loop import run_chat_tools
 from orchestrator import crud
+from api.orchestrator import execute_objective
 from orchestrator.models import (
     ProjectCreate,
     BacklogItemCreate,
@@ -84,15 +83,12 @@ async def health():
 async def ping():
     return {"status": "ok"}
 
-@app.post("/chat")
+@app.post("/chat", response_model=RunDetail)
 async def chat(payload: dict):
     objective = payload.get("objective", "")
     project_id = payload.get("project_id")
-    run_id = str(uuid4())
-    crud.create_run(run_id, objective, project_id)
-    crud.record_run_step(run_id, "plan", json.dumps({"objective": objective}))
-    result = await run_chat_tools(objective, project_id, run_id)
-    return {"run_id": run_id, "html": result.get("html", "")}
+    run = execute_objective(None, project_id, objective)
+    return run
 
 
 @app.get("/runs/{run_id}", response_model=RunDetail)
