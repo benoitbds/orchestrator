@@ -20,13 +20,16 @@ async def test_chat_creates_feature():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.post(
-            "/chat", json={"objective": "Crée la feature entête", "project_id": project.id}
+            "/chat",
+            json={"objective": "Créer la feature 'Accueil'", "project_id": project.id},
         )
-    assert resp.status_code == 200
-    data = resp.json()
-    created = data["artifacts"]["created_item_ids"]
+        assert resp.status_code == 200
+        run_id = resp.json()["run_id"]
+        run = await ac.get(f"/runs/{run_id}")
+    run_data = run.json()
+    created = run_data["artifacts"]["created_item_ids"]
     assert len(created) == 1
     feature = crud.get_item(created[0])
     assert feature is not None
-    assert feature.title == "Crée la feature entête"
+    assert feature.title == "Accueil"
     assert feature.type == "Feature"
