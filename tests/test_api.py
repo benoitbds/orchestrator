@@ -2,7 +2,7 @@ import pytest
 import asyncio
 import types
 from httpx import AsyncClient
-from httpx_ws import aconnect_ws
+from httpx_ws import aconnect_ws, WebSocketDisconnect
 from httpx_ws.transport import ASGIWebSocketTransport
 from api.main import app
 from orchestrator import crud
@@ -83,6 +83,28 @@ async def test_ws_stream_existing_run_only_new_steps():
             assert msg["node"] == "after"
             done = await ws.receive_json()
             assert done["status"] == "done" and done["run_id"] == run_id
+
+
+@pytest.mark.asyncio
+async def test_ws_stream_unknown_run():
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        with pytest.raises(WebSocketDisconnect) as exc:
+            async with aconnect_ws("http://test/stream", ac) as ws:
+                await ws.send_json({"run_id": "missing"})
+                await ws.receive_json()
+        assert exc.value.code == 4404
+        assert exc.value.reason == "unknown run"
+
+
+@pytest.mark.asyncio
+async def test_ws_stream_missing_objective():
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        with pytest.raises(WebSocketDisconnect) as exc:
+            async with aconnect_ws("http://test/stream", ac) as ws:
+                await ws.send_json({})
+                await ws.receive_json()
+        assert exc.value.code == 1008
+        assert exc.value.reason == "objective required"
 
 
 @pytest.mark.asyncio

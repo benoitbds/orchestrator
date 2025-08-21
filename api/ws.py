@@ -4,11 +4,18 @@ import asyncio
 from uuid import uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 from orchestrator.core_loop import graph, LoopState, Memory
 from orchestrator import crud, stream
 
 router = APIRouter()
+
+
+async def close_ws(ws: WebSocket, code: int, reason: str | None = None) -> None:
+    """Close websocket if still connected."""
+    if ws.client_state == WebSocketState.CONNECTED:
+        await ws.close(code=code, reason=reason)
 
 
 @router.websocket("/stream")
@@ -25,7 +32,7 @@ async def stream_chat(ws: WebSocket):
         if run_id:
             queue = stream.get(run_id)
             if queue is None:
-                await ws.close(code=404, reason="unknown run")
+                await close_ws(ws, code=4404, reason="unknown run")
                 return
             # discard existing queued steps so only fresh ones are sent
             try:
@@ -35,7 +42,7 @@ async def stream_chat(ws: WebSocket):
                 pass
         else:
             if not objective:
-                await ws.close(code=1008, reason="objective required")
+                await close_ws(ws, code=1008, reason="objective required")
                 return
             run_id = str(uuid4())
             crud.create_run(run_id, objective, project_id)
@@ -71,10 +78,10 @@ async def stream_chat(ws: WebSocket):
             await ws.send_json(chunk)
         await ws.send_json({"status": "done", "run_id": run_id})
         stream.discard(run_id)
-        await ws.close(code=1000)
+        await close_ws(ws, code=1000)
     except WebSocketDisconnect:
         if run_id:
             stream.discard(run_id)
     except Exception as e:  # pragma: no cover - runtime errors
         msg = (str(e) or "internal error")[:120]
-        await ws.close(code=1011, reason=msg)
+        await close_ws(ws, code=1011, reason=msg)
