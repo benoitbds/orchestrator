@@ -4,6 +4,7 @@ from importlib import metadata
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
 from uuid import uuid4
+import json
 from orchestrator.core_loop import graph, LoopState, Memory
 from orchestrator import crud
 from orchestrator.models import (
@@ -14,7 +15,12 @@ from orchestrator.models import (
     RunDetail,
     RunSummary,
     FeatureCreate,
+    EpicCreate,
+    CapabilityCreate,
+    USCreate,
+    UCCreate,
 )
+from orchestrator.intents import parse_intent, ALLOWED_TYPES
 import agents.writer as writer
 import httpx
 
@@ -92,9 +98,65 @@ async def chat(payload: dict):
         mem_obj=Memory(),
     )
 
+    artifacts = None
+    intent = parse_intent(objective)
+    if intent:
+        try:
+            if intent["action"] == "create":
+                item_type = intent.get("type", "").lower()
+                if item_type not in ALLOWED_TYPES:
+                    raise ValueError(f"invalid type: {intent.get('type')}")
+                model_map = {
+                    "epic": EpicCreate,
+                    "capability": CapabilityCreate,
+                    "feature": FeatureCreate,
+                    "us": USCreate,
+                    "uc": UCCreate,
+                }
+                Model = model_map[item_type]
+                item_payload = {
+                    "title": intent["title"],
+                    "description": "",
+                    "project_id": intent["project_id"],
+                    "parent_id": intent.get("parent_id"),
+                }
+                item = Model(**item_payload)
+                if item.parent_id is not None:
+                    parent = crud.get_item(item.parent_id)
+                    if not parent or parent.project_id != item.project_id:
+                        raise ValueError("invalid parent_id")
+                    allowed = {
+                        "Capability": ["Epic"],
+                        "Feature": ["Epic", "Capability"],
+                        "US": ["Feature"],
+                        "UC": ["US"],
+                    }
+                    if item.type not in allowed or parent.type not in allowed[item.type]:
+                        raise ValueError("invalid hierarchy")
+                created = crud.create_item(item)
+                crud.record_run_step(run_id, "tool:create_item", json.dumps(created.model_dump(), default=str))
+                artifacts = {"created_item_id": created.id}
+            elif intent["action"] == "update":
+                update = BacklogItemUpdate(**intent["fields"])
+                updated = crud.update_item(intent["id"], update)
+                if not updated:
+                    raise ValueError("item not found")
+                crud.record_run_step(run_id, "tool:update_item", json.dumps(updated.model_dump(), default=str))
+                artifacts = {"updated_item_id": intent["id"]}
+        except Exception as e:  # record error but continue
+            crud.record_run_step(run_id, "error", str(e))
+            state.mem_obj.add("error", str(e))
+            error_summary = f"Intent error: {e}"
+        else:
+            error_summary = None
+    else:
+        error_summary = None
+
     result = graph.invoke(state)
     render = result.get("render", {"html": "", "summary": ""})
-    crud.finish_run(run_id, render.get("html", ""), render.get("summary", ""))
+    if error_summary:
+        render["summary"] = error_summary
+    crud.finish_run(run_id, render.get("html", ""), render.get("summary", ""), artifacts)
     return {"run_id": run_id, "html": render.get("html", "")}
 
 
