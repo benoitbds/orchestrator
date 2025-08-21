@@ -1,13 +1,11 @@
 from fastapi import FastAPI, HTTPException, Query
-import asyncio
-import threading
 from datetime import datetime
 from importlib import metadata
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
 from uuid import uuid4
 from orchestrator.core_loop import graph, LoopState, Memory
-from orchestrator import crud, stream
+from orchestrator import crud
 from orchestrator.models import (
     ProjectCreate,
     BacklogItemCreate,
@@ -87,31 +85,17 @@ async def chat(payload: dict):
     project_id = payload.get("project_id")
     run_id = str(uuid4())
     crud.create_run(run_id, objective, project_id)
-    state = LoopState(objective=objective, project_id=project_id, run_id=run_id, mem_obj=Memory())
+    state = LoopState(
+        objective=objective,
+        project_id=project_id,
+        run_id=run_id,
+        mem_obj=Memory(),
+    )
 
-    # Register a stream queue for this run so WebSocket clients can subscribe
-    loop = asyncio.get_event_loop()
-    stream.register(run_id, loop)
-
-    def _run():
-        async def runner():
-            try:
-                async for chunk in graph.astream(state):
-                    node, data = next(iter(chunk.items()))
-                    stream.publish(run_id, {"node": node, "state": data})
-                render = getattr(state, "render", None)
-                if render is None:
-                    render = {"html": "<p>done</p>", "summary": "done"}
-                crud.finish_run(run_id, render["html"], render["summary"])
-            except Exception as e:
-                crud.finish_run(run_id, "", str(e))
-            finally:
-                stream.close(run_id)
-
-        asyncio.run(runner())
-
-    threading.Thread(target=_run, daemon=True).start()
-    return {"run_id": run_id}
+    result = graph.invoke(state)
+    render = result.get("render", {"html": "", "summary": ""})
+    crud.finish_run(run_id, render.get("html", ""), render.get("summary", ""))
+    return {"run_id": run_id, "html": render.get("html", "")}
 
 
 @app.get("/runs/{run_id}", response_model=RunDetail)

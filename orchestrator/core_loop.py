@@ -45,9 +45,11 @@ class Memory:
 
 # ---------- State schema (Pydantic) ----------
 class LoopState(BaseModel):
+    """State shared across LangGraph nodes."""
+
     objective: str
     project_id: int | None = None
-    run_id: str = Field(default_factory=lambda: str(uuid4()))
+    run_id: str
     mem_obj: Memory
     memory: List[Any] = Field(default_factory=list)
     plan: Optional[Plan] = None
@@ -59,29 +61,19 @@ class LoopState(BaseModel):
 
 # ---------- LangGraph nodes ----------
 llm_step = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
-def track_step(name: str):
-    def decorator(fn):
-        def wrapped(state: LoopState):
-            content = "success"
-            try:
-                return fn(state)
-            except Exception as exc:
-                content = f"error: {exc}"
-                raise
-            finally:
-                crud.record_run_step(state.run_id, name, content)
-        return wrapped
-    return decorator
 
-@track_step("plan")
 def planner(state: LoopState) -> dict:
+    """Generate a plan and record the step."""
     plan = make_plan(state.objective)
-    state.mem_obj.add("agent-planner", json.dumps(plan.model_dump()))
+    payload = json.dumps(plan.model_dump())
+    state.mem_obj.add("agent-planner", payload)
+    crud.record_run_step(state.run_id, "plan", payload)
     return {"plan": plan}
 
-@track_step("execute")
+
 def executor(state: LoopState) -> dict:
-    outputs = []          # garde la sortie de chaque étape
+    """Execute each plan step sequentially and record outputs."""
+    outputs = []
     for step in state.plan.steps:
         prompt = (
             f"Objectif : {state.objective}\n"
@@ -91,28 +83,32 @@ def executor(state: LoopState) -> dict:
         )
         rsp = llm_step.invoke(prompt).content.strip()
         outputs.append(f"### {step.title}\n{rsp}\n")
+        crud.record_run_step(
+            state.run_id,
+            "execute",
+            json.dumps({"title": step.title, "result": rsp}),
+        )
 
     exec_res = ExecResult(success=True, stdout="\n".join(outputs), stderr="")
-    # Sauvegarder l'ensemble du message au lieu de seulement les 256 premiers caractères de la dernière sortie
     full_output = "\n".join(outputs)
     state.mem_obj.add("agent-executor", full_output)
     return {"exec_result": exec_res.model_dump()}
 
-@track_step("write")
+
 def writer(state: LoopState) -> dict:
+    """Summarise execution results and record the final output."""
     er = ExecResult(**state.exec_result)
 
-    # HTML complet + résumé = l'ensemble du message de l'executor
     html = (
         f"<h2>Résultat : {state.objective}</h2>\n"
         f"<pre><code>{er.stdout.strip()}</code></pre>"
     )
-    # Utiliser l'ensemble du message au lieu de seulement la dernière ligne
     summary = er.stdout.strip() if er.stdout.strip() else "Aucun résultat"
 
     render = {"html": html, "summary": summary, "artifacts": []}
     state.mem_obj.add("agent-writer", summary)
     state.mem_obj.add("assistant", summary)
+    crud.record_run_step(state.run_id, "write", json.dumps(render))
     # mark run as finished with the final render
     crud.finish_run(state.run_id, render["html"], render["summary"])
     return {"render": render, "result": summary}
@@ -135,7 +131,9 @@ graph = build_graph()
 # ---------- CLI ----------
 def run(objective: str):
     mem = Memory()
-    state = LoopState(objective=objective, mem_obj=mem, memory=mem.fetch())
+    run_id = str(uuid4())
+    crud.create_run(run_id, objective, None)
+    state = LoopState(objective=objective, mem_obj=mem, memory=mem.fetch(), run_id=run_id)
     result = graph.invoke(state)
     print("✅ Résultat complet :\n", result["render"]["html"])
 
