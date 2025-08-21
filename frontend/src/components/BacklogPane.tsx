@@ -1,15 +1,12 @@
 "use client";
 import { useState } from 'react';
 import { useProjects } from '@/context/ProjectContext';
-import { ItemTree } from '@/components/ItemTree';
-import { BacklogTable } from '@/components/BacklogTable';
-import { BacklogDiagram } from '@/components/BacklogDiagram';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ItemDialog } from './ItemDialog';
 import { BacklogItem } from '@/models/backlogItem';
 import { mutate } from 'swr';
 import { http } from '@/lib/api';
+import { BacklogViewTabs } from '@/components/BacklogViewTabs';
 
 export default function BacklogPane() {
   const { currentProject } = useProjects();
@@ -65,25 +62,10 @@ export default function BacklogPane() {
         </Button>
       </div>
       
-      <Tabs defaultValue="tree" className="w-full">
-        <TabsList className="grid w-full grid-cols-3 mb-4">
-          <TabsTrigger value="diagram">Vue Diagramme</TabsTrigger>
-          <TabsTrigger value="tree">Vue Arbre</TabsTrigger>
-          <TabsTrigger value="table">Vue Table</TabsTrigger>
-        </TabsList>
-        
-        <TabsContent value="tree">
-          <ItemTree projectId={currentProject?.id ?? null} onEdit={handleEditItem} />
-        </TabsContent>
-        
-        <TabsContent value="table">
-          <BacklogTable projectId={currentProject?.id ?? null} onEdit={handleEditItem} />
-        </TabsContent>
-        
-        <TabsContent value="diagram">
-          <BacklogDiagram projectId={currentProject?.id ?? null} onEdit={handleEditItem} />
-        </TabsContent>
-      </Tabs>
+      <BacklogViewTabs
+        projectId={currentProject?.id ?? null}
+        onEdit={handleEditItem}
+      />
       
       {currentProject && (
         <ItemDialog
