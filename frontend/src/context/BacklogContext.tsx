@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { BacklogItem } from '@/models/backlogItem';
 import { useProjects } from '@/context/ProjectContext';
-import { http } from '@/lib/api';
+import { fetchItems as apiFetchItems } from '@/state/data';
 
 interface BacklogContextType {
   items: BacklogItem[];
@@ -26,8 +26,7 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
     }
     setIsLoading(true);
     try {
-      const res = await http(`/items?project_id=${currentProject.id}`);
-      const data = await res.json();
+      const data = await apiFetchItems(currentProject.id);
       setItems(data);
     } catch (err) {
       console.error('Failed to fetch backlog items:', err);
