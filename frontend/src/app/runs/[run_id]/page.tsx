@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import RunTimeline, { TimelineStep } from "@/components/RunTimeline";
+import RunTimeline from "@/components/RunTimeline";
 import { http } from "@/lib/api";
-import { connectWS } from "@/lib/ws";
+import { Step } from "@/models/run";
 
 interface Run {
   run_id: string;
@@ -13,13 +13,12 @@ interface Run {
   completed_at?: string | null;
   html?: string | null;
   summary?: string | null;
-  steps: TimelineStep[];
+  steps: Step[];
 }
 
 export default function RunDetail({ params }: { params: { run_id: string } }) {
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,43 +42,27 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
     }
     load();
 
-    const ws = connectWS("/stream");
-    wsRef.current = ws;
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ run_id: params.run_id }));
-    };
-    ws.onmessage = evt => {
-      const msg = JSON.parse(evt.data);
-      setRun(prev => {
-        if (!prev) return prev;
-        if (msg.status === "done") {
-          ws.close();
-          return {
-            ...prev,
-            status: "done",
-            html: msg.html ?? prev.html,
-            summary: msg.summary ?? prev.summary,
-            completed_at: msg.completed_at ?? prev.completed_at,
-          };
-        }
-        if (msg.node) {
-          const step: TimelineStep = {
-            order: msg.order ?? prev.steps.length + 1,
-            node: msg.node,
-            timestamp: msg.timestamp ?? new Date().toISOString(),
-            content: msg.content ?? "",
-          };
-          return { ...prev, steps: [...prev.steps, step] };
-        }
-        return prev;
-      });
-    };
-    ws.onerror = () => ws.close();
     return () => {
       cancelled = true;
-      ws.close();
     };
   }, [params.run_id]);
+
+  const handleFinal = (msg: any) => {
+    setRun(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        status: "done",
+        html: msg.html ?? prev.html,
+        summary: msg.summary ?? prev.summary,
+        completed_at: msg.completed_at ?? prev.completed_at,
+      };
+    });
+  };
+
+  const handleStep = (step: Step) => {
+    setRun(prev => (prev ? { ...prev, steps: [...prev.steps, step] } : prev));
+  };
 
   if (error)
     return (
@@ -108,7 +91,7 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
           </p>
         )}
       </div>
-      <RunTimeline steps={run.steps} />
+      <RunTimeline runId={run.run_id} initialSteps={run.steps} onFinal={handleFinal} onStep={handleStep} />
       {run.status === "done" && (
         <div className="space-y-4">
           {run.summary && <p>{run.summary}</p>}

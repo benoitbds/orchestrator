@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import RunProgress from "./RunProgress";
 import { useProjects } from "@/context/ProjectContext";
-import { http } from "@/lib/api";
+import { fetchRuns } from "@/state/data";
 
 interface Run {
   run_id: string;
@@ -17,28 +17,16 @@ export default function RunsPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   useEffect(() => {
     if (!currentProject) return;
     let cancelled = false;
-    async function fetchRuns() {
+    async function loadRuns() {
       try {
-        const res = await http(`/runs?project_id=${currentProject.id}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data)) {
-            !cancelled && setRuns(data);
-          } else if (data && Array.isArray((data as any).runs)) {
-            !cancelled && setRuns((data as any).runs);
-          } else {
-            !cancelled && setRuns([]);
-          }
-        } else {
-          console.warn(`Failed to fetch runs: ${res.status}`);
-          !cancelled && setRuns([]);
-        }
+        const data = await fetchRuns(currentProject.id);
+        !cancelled && setRuns(data);
       } catch (e) {
         console.warn("Error fetching runs", e);
         !cancelled && setRuns([]);
       }
     }
-    fetchRuns();
+    loadRuns();
     return () => {
       cancelled = true;
     };
