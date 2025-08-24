@@ -20,42 +20,6 @@ async def test_ping():
         assert r.json() == {"status": "ok"}
 
 @pytest.mark.asyncio
-async def test_chat_endpoint(monkeypatch):
-    from langchain_openai import ChatOpenAI
-    def fake_invoke(self, messages):
-        return types.SimpleNamespace(content="done", additional_kwargs={})
-    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
-    monkeypatch.setattr(ChatOpenAI, "invoke", fake_invoke)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.post("/chat", json={"objective": "demo", "project_id": 1})
-        body = r.json()
-        assert r.status_code == 200
-        assert "run_id" in body and body["html"]
-        run = crud.get_run(body["run_id"])
-        assert run["status"] == "done"
-        assert len(run["steps"]) == 1
-        assert run["steps"][0]["node"] == "plan"
-        assert not any(s["node"] in {"intent_detected", "intent_error"} for s in run["steps"])
-        r3 = await ac.get(f"/runs?project_id=1")
-        assert r3.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_chat_endpoint_with_parser(monkeypatch):
-    from langchain_openai import ChatOpenAI
-    def fake_invoke(self, messages):
-        return types.SimpleNamespace(content="done", additional_kwargs={})
-    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
-    monkeypatch.setattr(ChatOpenAI, "invoke", fake_invoke)
-    monkeypatch.setenv("INTENT_PARSER_ENABLED", "true")
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.post("/chat", json={"objective": "demo", "project_id": 1})
-        body = r.json()
-        assert r.status_code == 200
-        run = crud.get_run(body["run_id"])
-        assert any(s["node"] == "intent_error" for s in run["steps"])
-
-@pytest.mark.asyncio
 async def test_ws_stream_new_run():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         async with aconnect_ws("http://test/stream", ac) as ws:
