@@ -177,7 +177,16 @@ async def run_chat_tools(
     max_tool_calls: int = 10,
 ) -> dict:
     """Run a function-calling loop with the LLM."""
-    model = ChatOpenAI(model="gpt-4o-mini", temperature=0).bind_tools(TOOLS)
+    import os, logging
+    logger = logging.getLogger(__name__)
+    logger.info("FULL-AGENT MODE: starting run_chat_tools(project_id=%s)", project_id)
+    logger.info("OPENAI_API_KEY set: %s", bool(os.getenv("OPENAI_API_KEY")))
+    from agents.tools import TOOLS, HANDLERS  # noqa: F401
+    logger.info("TOOLS loaded: %s", [t["name"] for t in TOOLS])
+
+    model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    model = model.bind_tools(TOOLS)
+    logger.info("Model bound to %d tools.", len(TOOLS))
     messages: list[dict[str, str]] = [
         {"role": "system", "content": TOOL_SYSTEM_PROMPT},
         {"role": "user", "content": objective},
@@ -190,7 +199,10 @@ async def run_chat_tools(
     consecutive_errors = 0
     for _ in range(max_tool_calls):
         rsp = model.invoke(messages)
-        tool_calls = rsp.additional_kwargs.get("tool_calls") or []
+        tc = rsp.additional_kwargs.get("tool_calls")
+        logger.info("LLM raw content: %r", rsp.content)
+        logger.info("LLM tool_calls: %s", tc)
+        tool_calls = tc or []
         if tool_calls:
             tc = tool_calls[0]
             name = tc["function"]["name"]
@@ -199,6 +211,7 @@ async def run_chat_tools(
             except json.JSONDecodeError:
                 args = {}
             safe_args = _sanitize(args)
+            logger.info("DISPATCH tool=%s args=%s", name, safe_args)
             crud.record_run_step(
                 run_id,
                 f"tool:{name}:request",
