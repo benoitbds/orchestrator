@@ -34,7 +34,7 @@ async def test_create_feature_and_run_steps():
         )
         run_id = resp.json()["run_id"]
         run = (await ac.get(f"/runs/{run_id}")).json()
-    assert any(s["node"] == "tool:create_item" for s in run["steps"])
+    assert any(s["node"] == "tool:create_item:response" for s in run["steps"])
     assert run["artifacts"]["created_item_ids"]
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
