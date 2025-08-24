@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StreamViewer from "@/components/StreamViewer";
 import HistoryPanel, { HistoryItem } from "@/components/HistoryPanel";
+import type { AgentTimelineStep } from "@/components/AgentTimeline";
 import BacklogPane from "@/components/BacklogPane";
 import { BacklogProvider } from "@/context/BacklogContext";
 import { ProjectPanel } from "@/components/ProjectPanel";
@@ -21,9 +22,12 @@ export default function Home() {
   const viewerRef = useRef<any>(null);
   const { currentProject } = useProjects();
   const [runsRefreshKey, setRunsRefreshKey] = useState(0);
+  const [steps, setSteps] = useState<AgentTimelineStep[]>([]);
 
   const handleRun = async () => {
     setIsLoading(true);
+    setSteps([]);
+    viewerRef.current?.clear?.();
     const runObjective = objective;
     const resp = await http('/chat', {
       method: "POST",
@@ -64,7 +68,19 @@ export default function Home() {
     ws.onopen = () => ws.send(JSON.stringify({ run_id: runId }));
     ws.onmessage = evt => {
       const chunk = JSON.parse(evt.data);
-      viewerRef.current?.push(chunk);
+      if (chunk.node) {
+        let parsed: any;
+        try {
+          parsed = chunk.content ? JSON.parse(chunk.content) : undefined;
+        } catch {
+          parsed = chunk.content;
+        }
+        viewerRef.current?.push({ node: chunk.node, state: parsed });
+        setSteps(s => [
+          ...s,
+          { runId: chunk.run_id, node: chunk.node, content: parsed, timestamp: chunk.timestamp },
+        ]);
+      }
     };
     ws.onclose = () => {
       setIsLoading(false);
@@ -102,7 +118,7 @@ export default function Home() {
               </Button>
             </form>
 
-            <StreamViewer ref={viewerRef} />
+            <StreamViewer ref={viewerRef} timelineSteps={steps} />
 
             <BacklogPane />
 

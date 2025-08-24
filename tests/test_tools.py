@@ -1,7 +1,14 @@
 import pytest
 from orchestrator import crud
-from orchestrator.models import ProjectCreate, EpicCreate, FeatureCreate
-from agents.tools import create_item_tool, update_item_tool, find_item_tool
+from orchestrator.models import ProjectCreate, EpicCreate, FeatureCreate, USCreate
+from agents.tools import (
+    create_item_tool,
+    update_item_tool,
+    find_item_tool,
+    list_items_tool,
+    move_item_tool,
+    bulk_create_features_tool,
+)
 
 @pytest.mark.asyncio
 async def test_create_item_tool(tmp_path, monkeypatch):
@@ -36,3 +43,66 @@ async def test_find_item_tool(tmp_path, monkeypatch):
     crud.create_item(FeatureCreate(title="Canal", description="", project_id=1, parent_id=None))
     res = await find_item_tool({"query": "can", "project_id": 1, "type": "Feature"})
     assert res["ok"] and res["matches"][0]["title"] == "Canal"
+
+
+@pytest.mark.asyncio
+async def test_list_items_tool(tmp_path, monkeypatch):
+    db = tmp_path / "db.sqlite"
+    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
+    crud.init_db()
+    crud.create_project(ProjectCreate(name="Proj", description=""))
+    epic = crud.create_item(EpicCreate(title="Epic1", description="", project_id=1, parent_id=None))
+    crud.create_item(FeatureCreate(title="FeatA", description="", project_id=1, parent_id=epic.id))
+    crud.create_item(FeatureCreate(title="FeatB", description="", project_id=1, parent_id=epic.id))
+    all_items = await list_items_tool({"project_id": 1})
+    assert all_items["ok"] and len(all_items["result"]) == 3
+    filtered = await list_items_tool({"project_id": 1, "type": "Feature"})
+    assert filtered["ok"] and len(filtered["result"]) == 2
+    queried = await list_items_tool({"project_id": 1, "query": "FeatB"})
+    assert queried["ok"] and queried["result"][0]["title"] == "FeatB"
+
+
+@pytest.mark.asyncio
+async def test_move_item_tool(tmp_path, monkeypatch):
+    db = tmp_path / "db.sqlite"
+    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
+    crud.init_db()
+    crud.create_project(ProjectCreate(name="Proj", description=""))
+    epic = crud.create_item(EpicCreate(title="Epic1", description="", project_id=1, parent_id=None))
+    feature = crud.create_item(FeatureCreate(title="Feat1", description="", project_id=1, parent_id=epic.id))
+    us = crud.create_item(USCreate(title="US1", description="", project_id=1, parent_id=feature.id))
+    # same parent no-op
+    same = await move_item_tool({"id": feature.id, "new_parent_id": epic.id})
+    assert same["ok"] and crud.get_item(feature.id).parent_id == epic.id
+    # invalid parent type
+    bad_parent = await move_item_tool({"id": feature.id, "new_parent_id": us.id})
+    assert not bad_parent["ok"]
+    assert crud.get_item(feature.id).parent_id == epic.id
+    # cycle detection
+    cycle = await move_item_tool({"id": feature.id, "new_parent_id": feature.id})
+    assert not cycle["ok"]
+    assert crud.get_item(feature.id).parent_id == epic.id
+
+
+@pytest.mark.asyncio
+async def test_bulk_create_features_tool(tmp_path, monkeypatch):
+    db = tmp_path / "db.sqlite"
+    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
+    crud.init_db()
+    crud.create_project(ProjectCreate(name="Proj", description=""))
+    epic = crud.create_item(EpicCreate(title="Epic1", description="", project_id=1, parent_id=None))
+    crud.create_item(FeatureCreate(title="Existing", description="", project_id=1, parent_id=epic.id))
+    res = await bulk_create_features_tool(
+        {
+            "project_id": 1,
+            "parent_id": epic.id,
+            "items": [
+                {"title": "New1"},
+                {"title": "Existing"},
+                {"title": "New1"},
+            ],
+        }
+    )
+    assert res["ok"] and len(res["result"]["created_ids"]) == 1
+    titles = [it.title for it in crud.get_items(1, type="Feature") if it.parent_id == epic.id]
+    assert sorted(titles) == ["Existing", "New1"]
