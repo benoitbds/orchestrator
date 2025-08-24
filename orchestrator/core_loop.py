@@ -177,7 +177,8 @@ async def run_chat_tools(
     max_tool_calls: int = 10,
 ) -> dict:
     """Run a function-calling loop with the LLM."""
-    model = ChatOpenAI(model="gpt-4o-mini", temperature=0).bind_tools(TOOLS)
+    model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    model = model.bind_tools(TOOLS)
     messages: list[dict[str, str]] = [
         {"role": "system", "content": TOOL_SYSTEM_PROMPT},
         {"role": "user", "content": objective},
