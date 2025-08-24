@@ -19,6 +19,19 @@ from orchestrator import crud
 
 load_dotenv()
 
+
+def _sanitize(obj: Any) -> Any:
+    """Recursively remove keys that might contain secrets."""
+    if isinstance(obj, dict):
+        return {
+            k: _sanitize(v)
+            for k, v in obj.items()
+            if "key" not in k.lower() and "secret" not in k.lower()
+        }
+    if isinstance(obj, list):
+        return [_sanitize(v) for v in obj]
+    return obj
+
 # ---------- Mini-mémoire SQLite ----------
 class Memory:
     def __init__(self, db_path: str = "orchestrator.db"):
@@ -158,8 +171,13 @@ async def run_chat_tools(objective: str, project_id: int | None, run_id: str, ma
                 except Exception as exc:  # pragma: no cover - defensive
                     result = {"ok": False, "error": str(exc)}
             payload = {"args": args, "result": result}
-            crud.record_run_step(run_id, f"tool:{name}", json.dumps(payload))
-            stream.publish(run_id, {"node": f"tool:{name}", "payload": payload})
+            safe_payload = _sanitize(payload)
+            crud.record_run_step(
+                run_id, f"tool:{name}", json.dumps(safe_payload)
+            )
+            stream.publish(
+                run_id, {"node": f"tool:{name}", "payload": safe_payload}
+            )
             if result.get("ok"):
                 if name == "create_item":
                     artifacts["created_item_ids"].append(result["item_id"])

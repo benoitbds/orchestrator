@@ -380,9 +380,13 @@ def update_item(item_id: int, data: BacklogItemUpdate) -> Optional[BacklogItem]:
     return get_item(item_id)
 
 
-def delete_item(item_id: int) -> bool:
+def delete_item(item_id: int) -> int:
     """
     Delete an item and all its descendants in a single operation.
+
+    Returns the number of rows removed.  ``0`` indicates that no matching item
+    existed.  Callers should validate existence beforehand when they need to
+    differentiate between "not found" and "nothing deleted".
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -398,9 +402,10 @@ def delete_item(item_id: int) -> bool:
         """,
         (item_id,),
     )
+    deleted = cursor.rowcount
     conn.commit()
     conn.close()
-    return True
+    return deleted
 
 
 def item_has_children(item_id: int) -> bool:
