@@ -2,6 +2,7 @@
 from __future__ import annotations
 import sqlite3
 import json
+import asyncio
 from typing import List, Optional, Any
 from uuid import uuid4
 
@@ -144,14 +145,50 @@ def build_graph():
 graph = build_graph()
 
 # ---------- Tool loop executor ----------
-async def run_chat_tools(objective: str, project_id: int | None, run_id: str, max_tool_calls: int = 6) -> dict:
+def _build_html(summary: str, artifacts: dict[str, list[int]]) -> str:
+    def fmt(ids: list[int]) -> str:
+        return ", ".join(map(str, ids)) if ids else "none"
+
+    return (
+        "<ul>"
+        f"<li>Created items: {fmt(artifacts['created_item_ids'])}</li>"
+        f"<li>Updated items: {fmt(artifacts['updated_item_ids'])}</li>"
+        f"<li>Deleted items: {fmt(artifacts['deleted_item_ids'])}</li>"
+        "</ul>"
+        f"<p>{summary}</p>"
+    )
+
+
+async def _run_tool(name: str, args: dict) -> dict:
+    handler = HANDLERS.get(name)
+    if handler is None:
+        return {"ok": False, "error": f"unknown tool {name}"}
+    try:
+        return await asyncio.wait_for(handler(args), timeout=8)
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": "timeout"}
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"ok": False, "error": str(exc)}
+
+
+async def run_chat_tools(
+    objective: str,
+    project_id: int | None,
+    run_id: str,
+    max_tool_calls: int = 10,
+) -> dict:
     """Run a function-calling loop with the LLM."""
     model = ChatOpenAI(model="gpt-4o-mini", temperature=0).bind_tools(TOOLS)
     messages: list[dict[str, str]] = [
         {"role": "system", "content": TOOL_SYSTEM_PROMPT},
         {"role": "user", "content": objective},
     ]
-    artifacts: dict[str, list[int]] = {"created_item_ids": [], "updated_item_ids": []}
+    artifacts: dict[str, list[int]] = {
+        "created_item_ids": [],
+        "updated_item_ids": [],
+        "deleted_item_ids": [],
+    }
+    consecutive_errors = 0
     for _ in range(max_tool_calls):
         rsp = model.invoke(messages)
         tool_calls = rsp.additional_kwargs.get("tool_calls") or []
@@ -162,41 +199,41 @@ async def run_chat_tools(objective: str, project_id: int | None, run_id: str, ma
                 args = json.loads(tc["function"].get("arguments", "{}"))
             except json.JSONDecodeError:
                 args = {}
-            handler = HANDLERS.get(name)
-            if handler is None:
-                result = {"ok": False, "error": f"unknown tool {name}"}
-            else:
-                try:
-                    result = await handler(args)
-                except Exception as exc:  # pragma: no cover - defensive
-                    result = {"ok": False, "error": str(exc)}
+            result = await _run_tool(name, args)
             payload = {"args": args, "result": result}
             safe_payload = _sanitize(payload)
-            crud.record_run_step(
-                run_id, f"tool:{name}", json.dumps(safe_payload)
-            )
-            stream.publish(
-                run_id, {"node": f"tool:{name}", "payload": safe_payload}
-            )
+            crud.record_run_step(run_id, f"tool:{name}", json.dumps(safe_payload))
+            stream.publish(run_id, {"node": f"tool:{name}", "payload": safe_payload})
             if result.get("ok"):
+                consecutive_errors = 0
                 if name == "create_item":
                     artifacts["created_item_ids"].append(result["item_id"])
                 elif name == "update_item":
                     artifacts["updated_item_ids"].append(result["item_id"])
+                elif name == "delete_item":
+                    artifacts["deleted_item_ids"].append(result["item_id"])
             else:
+                consecutive_errors += 1
                 crud.record_run_step(run_id, "error", result.get("error", "error"))
+                if consecutive_errors >= 3:
+                    summary = "Too many consecutive tool errors"
+                    crud.record_run_step(run_id, "error", summary)
+                    html = _build_html(summary, artifacts)
+                    crud.finish_run(run_id, html, summary, artifacts)
+                    return {"html": html}
             messages.append(
                 {"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)}
             )
             continue
-        final = rsp.content
-        html = f"<p>{final}</p>"
-        crud.finish_run(run_id, html, final, artifacts)
+        summary = rsp.content
+        html = _build_html(summary, artifacts)
+        crud.finish_run(run_id, html, summary, artifacts)
         return {"html": html}
     crud.record_run_step(run_id, "error", "max tool calls exceeded")
     summary = "Max tool calls exceeded"
-    crud.finish_run(run_id, "", summary, artifacts)
-    return {"html": ""}
+    html = _build_html(summary, artifacts)
+    crud.finish_run(run_id, html, summary, artifacts)
+    return {"html": html}
 
 
 # ---------- CLI ----------
