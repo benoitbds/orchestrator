@@ -21,7 +21,7 @@ from orchestrator.models import (
 # Tool schemas (OpenAI function calling format)
 # ---------------------------------------------------------------------------
 
-create_item_spec = {
+create_item_tool_schema = {
     "name": "create_item",
     "description": "Create a backlog item in the given project.",
     "parameters": {
@@ -39,7 +39,7 @@ create_item_spec = {
     },
 }
 
-update_item_spec = {
+update_item_tool_schema = {
     "name": "update_item",
     "description": "Update fields of an existing backlog item.",
     "parameters": {
@@ -55,7 +55,7 @@ update_item_spec = {
     },
 }
 
-find_item_spec = {
+find_item_tool_schema = {
     "name": "find_item",
     "description": "Search items by text within a project and/or type.",
     "parameters": {
@@ -72,7 +72,7 @@ find_item_spec = {
     },
 }
 
-get_item_spec = {
+get_item_tool_schema = {
     "name": "get_item",
     "description": "Fetch a single item by id or by (type, title, project_id).",
     "parameters": {
@@ -93,7 +93,7 @@ get_item_spec = {
     },
 }
 
-list_items_spec = {
+list_items_tool_schema = {
     "name": "list_items",
     "description": "List items for a project with optional filters.",
     "parameters": {
@@ -112,7 +112,7 @@ list_items_spec = {
     },
 }
 
-delete_item_spec = {
+delete_item_tool_schema = {
     "name": "delete_item",
     "description": "Delete an item and its descendants.",
     "parameters": {
@@ -122,7 +122,7 @@ delete_item_spec = {
     },
 }
 
-move_item_spec = {
+move_item_tool_schema = {
     "name": "move_item",
     "description": "Reparent an item while enforcing hierarchy rules.",
     "parameters": {
@@ -135,7 +135,7 @@ move_item_spec = {
     },
 }
 
-summarize_project_spec = {
+summarize_project_tool_schema = {
     "name": "summarize_project",
     "description": "Generate a short textual summary of the project tree.",
     "parameters": {
@@ -148,7 +148,7 @@ summarize_project_spec = {
     },
 }
 
-bulk_create_features_spec = {
+bulk_create_features_tool_schema = {
     "name": "bulk_create_features",
     "description": "Create multiple features under an epic or capability.",
     "parameters": {
@@ -173,15 +173,15 @@ bulk_create_features_spec = {
 }
 
 TOOLS = [
-    create_item_spec,
-    update_item_spec,
-    find_item_spec,
-    get_item_spec,
-    list_items_spec,
-    delete_item_spec,
-    move_item_spec,
-    summarize_project_spec,
-    bulk_create_features_spec,
+    create_item_tool_schema,
+    update_item_tool_schema,
+    find_item_tool_schema,
+    get_item_tool_schema,
+    list_items_tool_schema,
+    delete_item_tool_schema,
+    move_item_tool_schema,
+    summarize_project_tool_schema,
+    bulk_create_features_tool_schema,
 ]
 
 # ---------------------------------------------------------------------------
@@ -673,3 +673,5 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
     "summarize_project": summarize_project_tool,
     "bulk_create_features": bulk_create_features_tool,
 }
+
+__all__ = ["TOOLS", "HANDLERS"]
