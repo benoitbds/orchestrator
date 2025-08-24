@@ -5,13 +5,9 @@ import json
 from importlib import metadata
 from datetime import datetime
 from uuid import uuid4
+import os
 
 from orchestrator import crud
-from orchestrator.intents import (
-    parse_intent,
-    intent_detected,
-    intent_error,
-)
 from agents.tools import create_item_tool, update_item_tool
 from orchestrator.core_loop import run_chat_tools
 from orchestrator.models import (
@@ -93,7 +89,7 @@ async def ping():
 
 @app.post("/chat")
 async def chat(payload: dict) -> dict:
-    """Handle a chat objective and perform deterministic CRUD actions when possible."""
+    """Handle a chat objective, optionally using the deterministic parser."""
 
     objective = payload.get("objective", "")
     project_id = payload.get("project_id")
@@ -104,80 +100,92 @@ async def chat(payload: dict) -> dict:
 
     artifacts = {"created_item_ids": [], "updated_item_ids": []}
 
-    intent = parse_intent(objective)
-    if intent:
-        intent_detected(run_id, intent)
-    else:
-        # Unknown intent: fall back to graph-based executor
-        intent_error(run_id, "unhandled_objective")
-        await run_chat_tools(objective, project_id, run_id)
-        run = crud.get_run(run_id)
-        return {"run_id": run_id, "html": run.get("html")}
-
-    # Intent-specific processing
-    if intent["action"] == "create":
-        if project_id is None:
-            intent_error(run_id, "missing_project_id")
-            summary = "project_id required"
-            crud.finish_run(run_id, "<p>project_id required</p>", summary, artifacts)
-            return {"run_id": run_id, "html": "<p>project_id required</p>"}
-        args = {
-            "title": intent["title"],
-            "type": intent["type"],
-            "project_id": project_id,
-        }
-        if intent.get("parent"):
-            args["parent"] = intent["parent"]
-        if intent.get("description"):
-            args["description"] = intent["description"]
-        res = await create_item_tool(args)
-        if res.get("ok"):
-            crud.record_run_step(run_id, "tool:create_item", json.dumps(res))
-            artifacts["created_item_ids"].append(res["item_id"])
-            html = (
-                f"<p>Created {res['type']} “{res['title']}” (id {res['item_id']}).</p>"
+    if os.environ.get("INTENT_PARSER_ENABLED", "false").lower() == "true":
+        try:  # lazy import so prod builds without parser still work
+            from orchestrator.intents import (
+                parse_intent,
+                intent_detected,
+                intent_error,
             )
-            summary = f"Created {res['type']} #{res['item_id']}"
-            crud.finish_run(run_id, html, summary, artifacts)
-            return {"run_id": run_id, "html": html}
-        else:
-            crud.record_run_step(run_id, "error", json.dumps(res))
-            html = f"<p>{res['error']}</p>"
-            crud.finish_run(run_id, html, res["error"], artifacts)
-            return {"run_id": run_id, "html": html}
 
-    if intent["action"] == "update":
-        target = intent.get("target", {})
-        args: dict = {"fields": intent.get("fields", {})}
-        if target.get("id") is not None:
-            args["id"] = target["id"]
-        else:
-            if project_id is None and target.get("project_id") is None:
-                intent_error(run_id, "missing_project_id")
-                html = "<p>project_id required</p>"
-                crud.finish_run(run_id, html, "project_id required", artifacts)
-                return {"run_id": run_id, "html": html}
-            args["lookup"] = {
-                "type": target["type"],
-                "title": target["title"],
-                "project_id": target.get("project_id") or project_id,
-            }
-        res = await update_item_tool(args)
-        if res.get("ok"):
-            crud.record_run_step(run_id, "tool:update_item", json.dumps(res))
-            artifacts["updated_item_ids"].append(res["item_id"])
-            html = f"<p>Updated item {res['item_id']}.</p>"
-            summary = f"Updated item #{res['item_id']}"
-            crud.finish_run(run_id, html, summary, artifacts)
-            return {"run_id": run_id, "html": html}
-        else:
-            crud.record_run_step(run_id, "error", json.dumps(res))
-            html = f"<p>{res['error']}</p>"
-            crud.finish_run(run_id, html, res["error"], artifacts)
-            return {"run_id": run_id, "html": html}
+            intent = parse_intent(objective)
+            if intent:
+                intent_detected(run_id, intent)
+                if intent["action"] == "create":
+                    if project_id is None:
+                        intent_error(run_id, "missing_project_id")
+                        summary = "project_id required"
+                        crud.finish_run(
+                            run_id, "<p>project_id required</p>", summary, artifacts
+                        )
+                        return {"run_id": run_id, "html": "<p>project_id required</p>"}
+                    args = {
+                        "title": intent["title"],
+                        "type": intent["type"],
+                        "project_id": project_id,
+                    }
+                    if intent.get("parent"):
+                        args["parent"] = intent["parent"]
+                    if intent.get("description"):
+                        args["description"] = intent["description"]
+                    res = await create_item_tool(args)
+                    if res.get("ok"):
+                        crud.record_run_step(
+                            run_id, "tool:create_item", json.dumps(res)
+                        )
+                        artifacts["created_item_ids"].append(res["item_id"])
+                        html = (
+                            f"<p>Created {res['type']} “{res['title']}” (id {res['item_id']}).</p>"
+                        )
+                        summary = f"Created {res['type']} #{res['item_id']}"
+                        crud.finish_run(run_id, html, summary, artifacts)
+                        return {"run_id": run_id, "html": html}
+                    else:
+                        crud.record_run_step(run_id, "error", json.dumps(res))
+                        html = f"<p>{res['error']}</p>"
+                        crud.finish_run(run_id, html, res["error"], artifacts)
+                        return {"run_id": run_id, "html": html}
 
-    # Should not reach here
-    intent_error(run_id, "unhandled_objective")
+                if intent["action"] == "update":
+                    target = intent.get("target", {})
+                    args: dict = {"fields": intent.get("fields", {})}
+                    if target.get("id") is not None:
+                        args["id"] = target["id"]
+                    else:
+                        if project_id is None and target.get("project_id") is None:
+                            intent_error(run_id, "missing_project_id")
+                            html = "<p>project_id required</p>"
+                            crud.finish_run(
+                                run_id, html, "project_id required", artifacts
+                            )
+                            return {"run_id": run_id, "html": html}
+                        args["lookup"] = {
+                            "type": target["type"],
+                            "title": target["title"],
+                            "project_id": target.get("project_id") or project_id,
+                        }
+                    res = await update_item_tool(args)
+                    if res.get("ok"):
+                        crud.record_run_step(
+                            run_id, "tool:update_item", json.dumps(res)
+                        )
+                        artifacts["updated_item_ids"].append(res["item_id"])
+                        html = f"<p>Updated item {res['item_id']}.</p>"
+                        summary = f"Updated item #{res['item_id']}"
+                        crud.finish_run(run_id, html, summary, artifacts)
+                        return {"run_id": run_id, "html": html}
+                    else:
+                        crud.record_run_step(run_id, "error", json.dumps(res))
+                        html = f"<p>{res['error']}</p>"
+                        crud.finish_run(run_id, html, res["error"], artifacts)
+                        return {"run_id": run_id, "html": html}
+
+                intent_error(run_id, "unhandled_objective")
+            else:
+                intent_error(run_id, "unhandled_objective")
+        except Exception:  # pragma: no cover - parser unavailable
+            pass
+
     await run_chat_tools(objective, project_id, run_id)
     run = crud.get_run(run_id)
     return {"run_id": run_id, "html": run.get("html")}

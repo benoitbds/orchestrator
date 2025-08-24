@@ -6,6 +6,11 @@ from orchestrator import crud
 from orchestrator.models import ProjectCreate, FeatureCreate, USCreate
 
 
+@pytest.fixture(autouse=True)
+def enable_parser(monkeypatch):
+    monkeypatch.setenv("INTENT_PARSER_ENABLED", "true")
+
+
 def reset_db():
     crud.init_db()
     conn = crud.get_db_connection()
