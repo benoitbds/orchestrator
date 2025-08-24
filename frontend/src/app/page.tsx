@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import { useProjects } from "@/context/ProjectContext";
 import { connectWS } from "@/lib/ws";
@@ -11,20 +11,30 @@ import StreamViewer from "@/components/StreamViewer";
 import HistoryPanel, { HistoryItem } from "@/components/HistoryPanel";
 import type { AgentTimelineStep } from "@/components/AgentTimeline";
 import BacklogPane from "@/components/BacklogPane";
-import { BacklogProvider } from "@/context/BacklogContext";
+import { BacklogProvider, useBacklog } from "@/context/BacklogContext";
 import { ProjectPanel } from "@/components/ProjectPanel";
 import RunsPanel from "@/components/RunsPanel";
 
 export default function Home() {
+  return (
+    <BacklogProvider>
+      <HomeContent />
+    </BacklogProvider>
+  );
+}
+
+function HomeContent() {
   const [objective, setObjective] = useState("");
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const viewerRef = useRef<any>(null);
   const { currentProject } = useProjects();
+  const { refreshItems } = useBacklog();
   const [runsRefreshKey, setRunsRefreshKey] = useState(0);
   const [steps, setSteps] = useState<AgentTimelineStep[]>([]);
 
-  const handleRun = async () => {
+  const handleRun = useCallback(async () => {
+    if (!currentProject) return;
     setIsLoading(true);
     setSteps([]);
     viewerRef.current?.clear?.();
@@ -32,68 +42,99 @@ export default function Home() {
     const resp = await http('/chat', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ objective: runObjective, project_id: currentProject?.id }),
+      body: JSON.stringify({ objective: runObjective, project_id: currentProject.id }),
     });
-    const data = await resp.json();
-    const runId = data.run_id;
+    const { run_id, html } = await resp.json();
     setRunsRefreshKey(k => k + 1);
 
-    // poll run result
-    const poll = async () => {
-      const r = await http(`/runs/${runId}`);
-      const data = await r.json();
-      if (data.status === "success") {
-        setHistory(h => [
-          ...h,
-          {
-            objective: runObjective,
-            html: data.html ?? "",
-            summary: data.summary,
-            timestamp: new Date().toLocaleString(),
-          },
-        ]);
-        setIsLoading(false);
-        setRunsRefreshKey(k => k + 1);
-      } else if (data.status === "failed") {
-        setIsLoading(false);
-        setRunsRefreshKey(k => k + 1);
-      } else {
-        setTimeout(poll, 1000);
-      }
-    };
-    poll();
+    if (html) {
+      viewerRef.current?.push({ node: 'write', state: { result: html } });
+      refreshItems();
+      setIsLoading(false);
+    }
 
-    // WebSocket streaming
+    let wsEvent = false;
     const ws = connectWS('/stream');
-    ws.onopen = () => ws.send(JSON.stringify({ run_id: runId }));
+    ws.onopen = () => ws.send(JSON.stringify({ run_id }));
     ws.onmessage = evt => {
-      const chunk = JSON.parse(evt.data);
-      if (chunk.node) {
+      wsEvent = true;
+      const msg = JSON.parse(evt.data);
+      if (msg.node) {
         let parsed: any;
         try {
-          parsed = chunk.content ? JSON.parse(chunk.content) : undefined;
+          parsed = msg.content ? JSON.parse(msg.content) : undefined;
         } catch {
-          parsed = chunk.content;
+          parsed = msg.content;
         }
-        viewerRef.current?.push({ node: chunk.node, state: parsed });
+        viewerRef.current?.push({ node: msg.node, state: parsed });
         setSteps(s => [
           ...s,
-          { runId: chunk.run_id, node: chunk.node, content: parsed, timestamp: chunk.timestamp },
+          { runId: msg.run_id, node: msg.node, content: parsed, timestamp: msg.timestamp },
         ]);
+      }
+
+      if (msg.status === 'done') {
+        ws.close();
+        http(`/runs/${run_id}`)
+          .then(r => r.json())
+          .then(run => {
+            viewerRef.current?.push({ node: 'write', state: { result: run.html || '' } });
+            setHistory(h => [
+              ...h,
+              {
+                objective: runObjective,
+                html: run.html || '',
+                summary: run.summary,
+                timestamp: new Date().toLocaleString(),
+              },
+            ]);
+            refreshItems();
+            setRunsRefreshKey(k => k + 1);
+            setIsLoading(false);
+          });
       }
     };
     ws.onclose = () => {
       setIsLoading(false);
     };
-  };
+
+    setTimeout(() => {
+      if (wsEvent) return;
+      const poll = async () => {
+        const r = await http(`/runs/${run_id}`);
+        const data = await r.json();
+        if (data.status === 'done') {
+          viewerRef.current?.push({ node: 'write', state: { result: data.html || '' } });
+          setHistory(h => [
+            ...h,
+            {
+              objective: runObjective,
+              html: data.html || '',
+              summary: data.summary,
+              timestamp: new Date().toLocaleString(),
+            },
+          ]);
+          refreshItems();
+          setRunsRefreshKey(k => k + 1);
+          setIsLoading(false);
+        } else if (data.status === 'failed') {
+          setIsLoading(false);
+          setRunsRefreshKey(k => k + 1);
+        } else {
+          setTimeout(poll, 1000);
+        }
+      };
+      poll();
+    }, 7000);
+  }, [currentProject, objective, refreshItems]);
 
   return (
-    <BacklogProvider>
+    <>
       <StatusBar />
       <div className="flex h-screen pt-8">
         {/* Panel de gestion des projets à gauche */}
         <ProjectPanel className="flex-shrink-0" />
-        
+
         {/* Contenu principal */}
         <main className="flex-1 flex flex-col gap-6 p-6 overflow-auto">
           <div className="max-w-3xl mx-auto w-full space-y-6">
@@ -127,6 +168,6 @@ export default function Home() {
           </div>
         </main>
       </div>
-    </BacklogProvider>
+    </>
   );
 }
