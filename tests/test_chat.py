@@ -5,6 +5,11 @@ from orchestrator import crud
 from orchestrator.models import ProjectCreate
 
 
+@pytest.fixture(autouse=True)
+def enable_parser(monkeypatch):
+    monkeypatch.setenv("INTENT_PARSER_ENABLED", "true")
+
+
 @pytest.mark.asyncio
 async def test_chat_creates_feature():
     crud.init_db()
