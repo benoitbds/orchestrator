@@ -21,5 +21,5 @@ def test_todo_e2e():
     exec_res = ExecResult(**out["exec_result"])
     assert exec_res.success, "Exécution du code échouée"
 
-    # un minimum de contenu “todo” dans le HTML généré
-    assert "todo" in out["render"]["html"].lower()
+    # HTML should include artifact summary
+    assert "created items" in out["render"]["html"].lower()
