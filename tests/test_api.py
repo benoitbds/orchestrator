@@ -97,7 +97,93 @@ async def test_ws_stream_existing_run_only_new_steps():
             msg = await ws.receive_json()
             assert msg["node"] == "after"
             done = await ws.receive_json()
-            assert done["status"] == "done" and done["run_id"] == run_id
+    assert done["status"] == "done" and done["run_id"] == run_id
+
+
+@pytest.mark.asyncio
+async def test_ws_stream_tool_steps(monkeypatch, tmp_path):
+    from uuid import uuid4
+    import types, json
+    from langchain_openai import ChatOpenAI
+    from orchestrator import stream as run_stream
+    from orchestrator.core_loop import run_chat_tools
+    from orchestrator.models import ProjectCreate
+
+    db = tmp_path / "db.sqlite"
+    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
+    crud.init_db()
+    crud.create_project(ProjectCreate(name="P", description=""))
+
+    calls = [
+        types.SimpleNamespace(
+            content="",
+            additional_kwargs={
+                "tool_calls": [
+                    {
+                        "id": "1",
+                        "type": "function",
+                        "function": {
+                            "name": "create_item",
+                            "arguments": json.dumps({
+                                "title": "Feat",
+                                "type": "Feature",
+                                "project_id": 1,
+                            }),
+                        },
+                    }
+                ]
+            },
+        ),
+        types.SimpleNamespace(
+            content="",
+            additional_kwargs={
+                "tool_calls": [
+                    {
+                        "id": "2",
+                        "type": "function",
+                        "function": {
+                            "name": "update_item",
+                            "arguments": json.dumps({"id": 1, "title": "Feat v2"}),
+                        },
+                    }
+                ]
+            },
+        ),
+        types.SimpleNamespace(content="done", additional_kwargs={}),
+    ]
+    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
+    monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages: calls.pop(0))
+
+    run_id = str(uuid4())
+    crud.create_run(run_id, "multi", 1)
+    run_stream.register(run_id, asyncio.get_event_loop())
+
+    async def runner():
+        await run_chat_tools("multi", 1, run_id)
+        run_stream.close(run_id)
+
+    task = asyncio.create_task(runner())
+
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        async with aconnect_ws("http://test/stream", ac) as ws:
+            await ws.send_json({"run_id": run_id})
+            steps = []
+            while True:
+                msg = await ws.receive_json()
+                if msg.get("status") == "done":
+                    break
+                steps.append(msg)
+
+    await task
+    nodes = [s["node"] for s in steps]
+    assert nodes == [
+        "tool:create_item:request",
+        "tool:create_item:response",
+        "tool:update_item:request",
+        "tool:update_item:response",
+    ]
+    timestamps = [s.get("timestamp") for s in steps]
+    assert all(timestamps) and timestamps == sorted(timestamps)
 
 
 @pytest.mark.asyncio

@@ -52,7 +52,8 @@ async def test_chat_creates_item(monkeypatch, tmp_path):
     run = crud.get_run(run_id)
     assert run["artifacts"]["created_item_ids"][0] > 0
     nodes = [s["node"] for s in run["steps"]]
-    assert "tool:create_item" in nodes
+    assert "tool:create_item:request" in nodes
+    assert "tool:create_item:response" in nodes
     items = crud.get_items(project_id=1)
     assert any(it.title == "Canal de vente" for it in items)
 
@@ -94,7 +95,8 @@ async def test_chat_updates_item(monkeypatch, tmp_path):
     run = crud.get_run(run_id)
     assert run["artifacts"]["updated_item_ids"][0] == feature.id
     nodes = [s["node"] for s in run["steps"]]
-    assert "tool:update_item" in nodes
+    assert "tool:update_item:request" in nodes
+    assert "tool:update_item:response" in nodes
     item = crud.get_item(feature.id)
     assert item.title == "Canal v2"
 
@@ -139,7 +141,8 @@ async def test_chat_max_tool_calls(monkeypatch, tmp_path):
     await run_chat_tools("loop", 1, run_id)
     run = crud.get_run(run_id)
     nodes = [s["node"] for s in run["steps"]]
-    assert nodes.count("tool:create_item") == 10
+    assert nodes.count("tool:create_item:request") == 10
+    assert nodes.count("tool:create_item:response") == 10
     assert "error" in nodes
     assert "max tool calls" in run["summary"].lower()
 
@@ -186,7 +189,8 @@ async def test_handler_error(monkeypatch, tmp_path):
     await run_chat_tools("bad parent", 1, run_id)
     run = crud.get_run(run_id)
     nodes = [s["node"] for s in run["steps"]]
-    assert "tool:create_item" in nodes
+    assert "tool:create_item:request" in nodes
+    assert "tool:create_item:response" in nodes
     assert "error" in nodes
     assert "invalid parent" in run["summary"].lower()
 
@@ -237,7 +241,8 @@ async def test_tool_timeout(monkeypatch, tmp_path):
     await run_chat_tools("slow", 1, run_id)
     run = crud.get_run(run_id)
     nodes = [s["node"] for s in run["steps"]]
-    assert "tool:create_item" in nodes
+    assert "tool:create_item:request" in nodes
+    assert "tool:create_item:response" in nodes
     assert "error" in nodes
     assert run["artifacts"]["created_item_ids"] == []
     assert any("timeout" in s["content"] for s in run["steps"] if s["node"] == "error")
@@ -287,5 +292,6 @@ async def test_consecutive_errors_stop(monkeypatch, tmp_path):
     await run_chat_tools("loop", 1, run_id)
     run = crud.get_run(run_id)
     nodes = [s["node"] for s in run["steps"]]
-    assert nodes.count("tool:create_item") == 3
+    assert nodes.count("tool:create_item:request") == 3
+    assert nodes.count("tool:create_item:response") == 3
     assert "consecutive" in run["summary"].lower()

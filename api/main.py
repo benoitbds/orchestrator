@@ -9,7 +9,7 @@ import os
 
 from orchestrator import crud
 from agents.tools import create_item_tool, update_item_tool
-from orchestrator.core_loop import run_chat_tools
+from orchestrator.core_loop import run_chat_tools, _sanitize
 from orchestrator.models import (
     ProjectCreate,
     BacklogItemCreate,
@@ -129,11 +129,23 @@ async def chat(payload: dict) -> dict:
                         args["parent"] = intent["parent"]
                     if intent.get("description"):
                         args["description"] = intent["description"]
+                    safe_args = _sanitize(args)
+                    crud.record_run_step(
+                        run_id,
+                        "tool:create_item:request",
+                        json.dumps({"name": "create_item", "args": safe_args}),
+                    )
                     res = await create_item_tool(args)
-                    if res.get("ok"):
-                        crud.record_run_step(
-                            run_id, "tool:create_item", json.dumps(res)
-                        )
+                    ok = res.get("ok")
+                    error = res.get("error")
+                    data = {k: v for k, v in res.items() if k not in {"ok", "error"}}
+                    safe_res = _sanitize(data)
+                    crud.record_run_step(
+                        run_id,
+                        "tool:create_item:response",
+                        json.dumps({"ok": ok, "result": safe_res, "error": error}),
+                    )
+                    if ok:
                         artifacts["created_item_ids"].append(res["item_id"])
                         html = (
                             f"<p>Created {res['type']} “{res['title']}” (id {res['item_id']}).</p>"
@@ -165,11 +177,23 @@ async def chat(payload: dict) -> dict:
                             "title": target["title"],
                             "project_id": target.get("project_id") or project_id,
                         }
+                    safe_args = _sanitize(args)
+                    crud.record_run_step(
+                        run_id,
+                        "tool:update_item:request",
+                        json.dumps({"name": "update_item", "args": safe_args}),
+                    )
                     res = await update_item_tool(args)
-                    if res.get("ok"):
-                        crud.record_run_step(
-                            run_id, "tool:update_item", json.dumps(res)
-                        )
+                    ok = res.get("ok")
+                    error = res.get("error")
+                    data = {k: v for k, v in res.items() if k not in {"ok", "error"}}
+                    safe_res = _sanitize(data)
+                    crud.record_run_step(
+                        run_id,
+                        "tool:update_item:response",
+                        json.dumps({"ok": ok, "result": safe_res, "error": error}),
+                    )
+                    if ok:
                         artifacts["updated_item_ids"].append(res["item_id"])
                         html = f"<p>Updated item {res['item_id']}.</p>"
                         summary = f"Updated item #{res['item_id']}"

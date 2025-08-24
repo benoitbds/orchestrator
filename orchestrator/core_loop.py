@@ -14,7 +14,6 @@ from langgraph.graph import StateGraph, END
 from agents.planner import make_plan, TOOL_SYSTEM_PROMPT
 from agents.schemas import ExecResult, Plan
 from agents.tools import TOOLS, HANDLERS
-from orchestrator import stream
 import threading
 from orchestrator import crud
 
@@ -199,12 +198,23 @@ async def run_chat_tools(
                 args = json.loads(tc["function"].get("arguments", "{}"))
             except json.JSONDecodeError:
                 args = {}
+            safe_args = _sanitize(args)
+            crud.record_run_step(
+                run_id,
+                f"tool:{name}:request",
+                json.dumps({"name": name, "args": safe_args}),
+            )
             result = await _run_tool(name, args)
-            payload = {"args": args, "result": result}
-            safe_payload = _sanitize(payload)
-            crud.record_run_step(run_id, f"tool:{name}", json.dumps(safe_payload))
-            stream.publish(run_id, {"node": f"tool:{name}", "payload": safe_payload})
-            if result.get("ok"):
+            ok = result.get("ok")
+            error = result.get("error")
+            data = {k: v for k, v in result.items() if k not in {"ok", "error"}}
+            safe_result = _sanitize(data)
+            crud.record_run_step(
+                run_id,
+                f"tool:{name}:response",
+                json.dumps({"ok": ok, "result": safe_result, "error": error}),
+            )
+            if ok:
                 consecutive_errors = 0
                 if name == "create_item":
                     artifacts["created_item_ids"].append(result["item_id"])
