@@ -12,6 +12,6 @@ class ChatOpenAI:
         _ = self._tools  # reference stored tools for type checkers
         class Resp:
             def __init__(self):
-                self.content = "stub"
+                self.content = "placeholder"
                 self.additional_kwargs = {}
         return Resp()
