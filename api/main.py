@@ -53,6 +53,7 @@ origins = [
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:9080",
+    "http://192.168.1.93:3000"
     # "*",  # uncomment for permissive dev CORS
 ]
 
