@@ -20,26 +20,21 @@ class _FakeChatWithTool:
         if self._calls == 1:
             return types.SimpleNamespace(
                 content="",
-                additional_kwargs={
-                    "tool_calls": [
-                        {
-                            "id": "1",
-                            "function": {
-                                "name": "create_item",
-                                "arguments": json.dumps(
-                                    {
-                                        "title": "t",
-                                        "type": "Epic",
-                                        "project_id": 1,
-                                        "secret": "sh",
-                                    }
-                                ),
-                            },
-                        }
-                    ]
-                },
+                tool_calls=[
+                    types.SimpleNamespace(
+                        id="1",
+                        name="create_item",
+                        args={
+                            "title": "t",
+                            "type": "Epic",
+                            "project_id": 1,
+                            "secret": "sh",
+                        },
+                    )
+                ],
+                additional_kwargs={},
             )
-        return types.SimpleNamespace(content="done", additional_kwargs={})
+        return types.SimpleNamespace(content="done", tool_calls=None, additional_kwargs={})
 
 
 class _FakeChatNoTool:

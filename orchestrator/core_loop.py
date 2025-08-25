@@ -214,15 +214,26 @@ async def run_chat_tools(
     consecutive_errors = 0
     for _ in range(max_tool_calls):
         rsp = model.invoke(messages)
-        tc = rsp.additional_kwargs.get("tool_calls")
-        logger.info("LLM raw content: %r", rsp.content)
-        logger.info("LLM tool_calls: %s", tc)
-        tool_calls = tc or []
+        # Prefer LangChain's attribute, fallback to OpenAI raw field
+        tool_calls = getattr(rsp, "tool_calls", None)
+        if not tool_calls and hasattr(rsp, "additional_kwargs"):
+            tool_calls = rsp.additional_kwargs.get("tool_calls")
+
+        logger.info("LLM raw content: %r", getattr(rsp, "content", None))
+        logger.info("LLM tool_calls: %s", tool_calls)
         if tool_calls:
-            tc = tool_calls[0]
-            name = tc["function"]["name"]
+            tc0 = tool_calls[0]
+            if isinstance(tc0, dict):
+                name = tc0["function"]["name"]
+                call_id = tc0.get("id")
+                raw_args = tc0["function"].get("arguments", "{}")
+            else:  # LangChain ToolCall object
+                name = getattr(tc0, "name", None)
+                call_id = getattr(tc0, "id", None)
+                raw_args = getattr(tc0, "args", {})
+
             try:
-                args = json.loads(tc["function"].get("arguments", "{}"))
+                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
             except json.JSONDecodeError:
                 args = {}
             safe_args = _sanitize(args)
@@ -287,13 +298,13 @@ async def run_chat_tools(
                     return {"html": html}
             messages.append(
                 ToolMessage(
-                    tool_call_id=tc["id"],
+                    tool_call_id=call_id or "tool_call_0",
                     content=json.dumps(result),
                     name=name,
                 )
             )
             continue
-        summary = rsp.content
+        summary = getattr(rsp, "content", "No tool call.")
         html = _build_html(summary, artifacts)
         crud.finish_run(run_id, html, summary, artifacts)
         ts = datetime.now(timezone.utc).isoformat()
