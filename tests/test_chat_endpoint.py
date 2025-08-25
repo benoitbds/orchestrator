@@ -81,3 +81,26 @@ async def test_chat_warns_if_not_done(monkeypatch, caplog):
     assert data["html"] == ""
     assert "finished with status" in caplog.text
 
+
+@pytest.mark.asyncio
+async def test_chat_registers_stream(monkeypatch):
+    """Endpoint registers stream so clients can attach."""
+
+    registered: dict[str, str] = {}
+
+    def fake_register(rid, loop):
+        registered["run_id"] = rid
+        return asyncio.Queue()
+
+    async def fake_runner(obj, project_id, run_id):
+        crud.finish_run(run_id, "<p>x</p>", "x", {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []})
+
+    monkeypatch.setattr("api.main.stream.register", fake_register)
+    monkeypatch.setattr("api.main.run_chat_tools", fake_runner)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post("/chat", json={"objective": "demo", "project_id": 1})
+    data = resp.json()
+
+    assert registered["run_id"] == data["run_id"]
+

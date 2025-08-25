@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
 
-from orchestrator import crud
+from orchestrator import crud, stream
 from orchestrator.core_loop import run_chat_tools
 from orchestrator.models import (
     ProjectCreate,
@@ -116,6 +116,7 @@ async def chat(payload: dict) -> dict:
 
     run_id = str(uuid4())
     crud.create_run(run_id, objective, project_id)
+    stream.register(run_id, asyncio.get_event_loop())
     crud.record_run_step(run_id, "plan", json.dumps({"objective": objective}))
 
     await run_chat_tools(objective, project_id, run_id)
