@@ -21,7 +21,7 @@ async def test_chat_returns_html(monkeypatch):
     def fake_invoke(self, messages):
         return types.SimpleNamespace(content="done", additional_kwargs={})
 
-    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
+    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools, **kwargs: self)
     monkeypatch.setattr(ChatOpenAI, "invoke", fake_invoke)
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -84,16 +84,24 @@ async def test_chat_warns_if_not_done(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_chat_registers_stream(monkeypatch):
-    """Endpoint registers stream so clients can attach."""
+    """Endpoint registers stream before launching agent so clients can attach."""
 
     registered: dict[str, str] = {}
+    calls: list[str] = []
 
     def fake_register(rid, loop):
+        calls.append("register")
         registered["run_id"] = rid
         return asyncio.Queue()
 
     async def fake_runner(obj, project_id, run_id):
-        crud.finish_run(run_id, "<p>x</p>", "x", {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []})
+        calls.append("run")
+        crud.finish_run(
+            run_id,
+            "<p>x</p>",
+            "x",
+            {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []},
+        )
 
     monkeypatch.setattr("api.main.stream.register", fake_register)
     monkeypatch.setattr("api.main.run_chat_tools", fake_runner)
@@ -103,4 +111,5 @@ async def test_chat_registers_stream(monkeypatch):
     data = resp.json()
 
     assert registered["run_id"] == data["run_id"]
+    assert calls == ["register", "run"]
 
