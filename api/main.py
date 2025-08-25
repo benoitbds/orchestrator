@@ -1,14 +1,16 @@
+import os
+import json
+import asyncio
+import logging
+from datetime import datetime
+from importlib import metadata
+from uuid import uuid4
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
-import json
-from importlib import metadata
-from datetime import datetime
-from uuid import uuid4
-import asyncio
-import logging
 
-from orchestrator import crud
+from orchestrator import crud, stream
 from orchestrator.core_loop import run_chat_tools
 from orchestrator.models import (
     ProjectCreate,
@@ -26,6 +28,22 @@ from orchestrator.models import (
 import httpx
 
 
+def setup_logging() -> None:
+    level_name = os.getenv("LOGLEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    # If no handler yet, add a simple StreamHandler
+    if not root.handlers:
+        h = logging.StreamHandler()
+        h.setFormatter(
+            logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+        )
+        root.addHandler(h)
+
+
 async def _no_aclose(self):
     """Stub aclose to keep AsyncClient usable after context manager in tests."""
     pass
@@ -39,6 +57,8 @@ async def _no_aexit(self, exc_type=None, exc_value=None, traceback=None):
 
 
 httpx.AsyncClient.__aexit__ = _no_aexit
+
+setup_logging()
 
 app = FastAPI()
 crud.init_db()
@@ -96,6 +116,7 @@ async def chat(payload: dict) -> dict:
 
     run_id = str(uuid4())
     crud.create_run(run_id, objective, project_id)
+    stream.register(run_id, asyncio.get_event_loop())
     crud.record_run_step(run_id, "plan", json.dumps({"objective": objective}))
 
     await run_chat_tools(objective, project_id, run_id)

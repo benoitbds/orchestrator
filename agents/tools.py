@@ -1,6 +1,7 @@
 """LLM tool specifications and handlers for backlog management."""
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, Callable, Awaitable, List
 
 from collections import Counter, defaultdict
@@ -673,5 +674,25 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
     "summarize_project": summarize_project_tool,
     "bulk_create_features": bulk_create_features_tool,
 }
+
+def _validate_exports() -> None:
+    """Ensure tool specs and handlers align and are coroutine functions."""
+    if not isinstance(TOOLS, list) or not TOOLS:
+        raise RuntimeError("TOOLS must be a non-empty list")
+    for spec in TOOLS:
+        name = None
+        if isinstance(spec, dict):
+            name = spec.get("name") or (spec.get("function") or {}).get("name")
+        if not name:
+            raise RuntimeError("Each tool spec must include a name")
+        handler = HANDLERS.get(name)
+        if handler is None:
+            raise RuntimeError(f"No handler registered for tool '{name}'")
+        if not asyncio.iscoroutinefunction(handler):
+            raise RuntimeError(f"Handler for '{name}' must be async")
+
+
+_validate_exports()
+
 
 __all__ = ["TOOLS", "HANDLERS"]
