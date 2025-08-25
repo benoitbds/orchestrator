@@ -223,19 +223,20 @@ async def run_chat_tools(
         logger.info("LLM tool_calls: %s", tool_calls)
         if tool_calls:
             tc0 = tool_calls[0]
-            if isinstance(tc0, dict):
+            # LangChain ToolCall object ?
+            if hasattr(tc0, "name") and hasattr(tc0, "args"):
+                name = tc0.name
+                call_id = getattr(tc0, "id", "tool_call_0")
+                args = tc0.args
+            else:
+                # OpenAI dict shape
                 name = tc0["function"]["name"]
-                call_id = tc0.get("id")
+                call_id = tc0.get("id", "tool_call_0")
                 raw_args = tc0["function"].get("arguments", "{}")
-            else:  # LangChain ToolCall object
-                name = getattr(tc0, "name", None)
-                call_id = getattr(tc0, "id", None)
-                raw_args = getattr(tc0, "args", {})
-
-            try:
-                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-            except json.JSONDecodeError:
-                args = {}
+                try:
+                    args = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    args = {}
             safe_args = _sanitize(args)
             logger.info("DISPATCH tool=%s args=%s", name, safe_args)
             step = crud.record_run_step(
@@ -298,7 +299,7 @@ async def run_chat_tools(
                     return {"html": html}
             messages.append(
                 ToolMessage(
-                    tool_call_id=call_id or "tool_call_0",
+                    tool_call_id=call_id,
                     content=json.dumps(result),
                     name=name,
                 )
