@@ -161,8 +161,8 @@ def create_run(run_id: str, objective: str, project_id: int | None) -> None:
     conn.close()
 
 
-def record_run_step(run_id: str, node: str, content: str) -> dict:
-    """Append a step entry for a run and broadcast it."""
+def record_run_step(run_id: str, node: str, content: str, broadcast: bool = True) -> dict:
+    """Append a step entry for a run and optionally broadcast it."""
     if not run_id or not node:
         raise ValueError("run_id and node are required")
     conn = get_db_connection()
@@ -189,9 +189,9 @@ def record_run_step(run_id: str, node: str, content: str) -> dict:
         "order": next_order,
         "timestamp": timestamp,
     }
-    from . import stream
-
-    stream.publish(run_id, step)
+    if broadcast:
+        from . import stream
+        stream.publish(run_id, step)
     return step
 
 
