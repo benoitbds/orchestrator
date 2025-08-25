@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import json
 import asyncio
+from datetime import datetime, timezone
 from typing import List, Optional, Any
 from uuid import uuid4
 
@@ -195,9 +196,14 @@ async def run_chat_tools(
             name = t.get("name") or (t.get("function") or {}).get("name")
         tool_names.append(name)
     logger.info("TOOLS loaded: %s", tool_names)
+    # Yield briefly so websocket clients can attach before tools execute
+    await asyncio.sleep(0.05)
 
     model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    model = model.bind_tools(TOOLS, tool_choice="auto")
+    try:
+        model = model.bind_tools(TOOLS, tool_choice="auto")
+    except TypeError:  # pragma: no cover - fallback for patched models
+        model = model.bind_tools(TOOLS)
     logger.info("Model bound to %d tools.", len(TOOLS))
     messages = [
         SystemMessage(content=TOOL_SYSTEM_PROMPT),
@@ -224,21 +230,30 @@ async def run_chat_tools(
                 args = {}
             safe_args = _sanitize(args)
             logger.info("DISPATCH tool=%s args=%s", name, safe_args)
-            crud.record_run_step(
+            step = crud.record_run_step(
                 run_id,
                 f"tool:{name}:request",
                 json.dumps({"name": name, "args": safe_args}),
+                broadcast=False,
             )
-            stream.publish(run_id, {"node": f"tool:{name}:request", "args": safe_args})
+            stream.publish(
+                run_id,
+                {
+                    "node": f"tool:{name}:request",
+                    "args": safe_args,
+                    "timestamp": step["timestamp"],
+                },
+            )
             result = await _run_tool(name, args)
             ok = result.get("ok")
             error = result.get("error")
             data = {k: v for k, v in result.items() if k not in {"ok", "error"}}
             safe_result = _sanitize(data)
-            crud.record_run_step(
+            step = crud.record_run_step(
                 run_id,
                 f"tool:{name}:response",
                 json.dumps({"ok": ok, "result": safe_result, "error": error}),
+                broadcast=False,
             )
             stream.publish(
                 run_id,
@@ -247,6 +262,7 @@ async def run_chat_tools(
                     "ok": ok,
                     "result": safe_result,
                     "error": error,
+                    "timestamp": step["timestamp"],
                 },
             )
             if ok:
@@ -259,13 +275,16 @@ async def run_chat_tools(
                     artifacts["deleted_item_ids"].append(result["item_id"])
             else:
                 consecutive_errors += 1
-                crud.record_run_step(run_id, "error", result.get("error", "error"))
+                crud.record_run_step(
+                    run_id, "error", result.get("error", "error"), broadcast=False
+                )
                 if consecutive_errors >= 3:
                     summary = "Too many consecutive tool errors"
-                    crud.record_run_step(run_id, "error", summary)
+                    crud.record_run_step(run_id, "error", summary, broadcast=False)
                     html = _build_html(summary, artifacts)
                     crud.finish_run(run_id, html, summary, artifacts)
-                    stream.publish(run_id, {"node": "write", "summary": summary})
+                    ts = datetime.now(timezone.utc).isoformat()
+                    stream.publish(run_id, {"node": "write", "summary": summary, "timestamp": ts})
                     stream.close(run_id)
                     stream.discard(run_id)
                     return {"html": html}
@@ -280,15 +299,17 @@ async def run_chat_tools(
         summary = rsp.content
         html = _build_html(summary, artifacts)
         crud.finish_run(run_id, html, summary, artifacts)
-        stream.publish(run_id, {"node": "write", "summary": summary})
+        ts = datetime.now(timezone.utc).isoformat()
+        stream.publish(run_id, {"node": "write", "summary": summary, "timestamp": ts})
         stream.close(run_id)
         stream.discard(run_id)
         return {"html": html}
-    crud.record_run_step(run_id, "error", "max tool calls exceeded")
+    crud.record_run_step(run_id, "error", "max tool calls exceeded", broadcast=False)
     summary = "Max tool calls exceeded"
     html = _build_html(summary, artifacts)
     crud.finish_run(run_id, html, summary, artifacts)
-    stream.publish(run_id, {"node": "write", "summary": summary})
+    ts = datetime.now(timezone.utc).isoformat()
+    stream.publish(run_id, {"node": "write", "summary": summary, "timestamp": ts})
     stream.close(run_id)
     stream.discard(run_id)
     return {"html": html}

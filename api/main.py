@@ -12,6 +12,7 @@ from api.ws import router as ws_router
 
 from orchestrator import crud, stream
 from orchestrator.core_loop import run_chat_tools
+from agents import writer
 from orchestrator.models import (
     ProjectCreate,
     BacklogItemCreate,

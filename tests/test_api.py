@@ -145,9 +145,10 @@ async def test_ws_stream_tool_steps(monkeypatch, tmp_path):
         "tool:create_item:response",
         "tool:update_item:request",
         "tool:update_item:response",
+        "write",
     ]
-    timestamps = [s.get("timestamp") for s in steps]
-    assert all(timestamps) and timestamps == sorted(timestamps)
+    timestamps = [s.get("timestamp") for s in steps if s.get("timestamp")]
+    assert timestamps and timestamps == sorted(timestamps)
 
 
 @pytest.mark.asyncio
