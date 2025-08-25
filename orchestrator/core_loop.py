@@ -9,6 +9,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ConfigDict
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 
 from agents.planner import make_plan, TOOL_SYSTEM_PROMPT
@@ -196,11 +197,11 @@ async def run_chat_tools(
     logger.info("TOOLS loaded: %s", tool_names)
 
     model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    model = model.bind_tools(TOOLS)
+    model = model.bind_tools(TOOLS, tool_choice="auto")
     logger.info("Model bound to %d tools.", len(TOOLS))
-    messages: list[dict[str, str]] = [
-        {"role": "system", "content": TOOL_SYSTEM_PROMPT},
-        {"role": "user", "content": objective},
+    messages = [
+        SystemMessage(content=TOOL_SYSTEM_PROMPT),
+        HumanMessage(content=objective),
     ]
     artifacts: dict[str, list[int]] = {
         "created_item_ids": [],
@@ -269,7 +270,11 @@ async def run_chat_tools(
                     stream.discard(run_id)
                     return {"html": html}
             messages.append(
-                {"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)}
+                ToolMessage(
+                    tool_call_id=tc["id"],
+                    content=json.dumps(result),
+                    name=name,
+                )
             )
             continue
         summary = rsp.content

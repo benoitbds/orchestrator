@@ -12,7 +12,7 @@ class _FakeChatWithTool:
     def __init__(self, *args, **kwargs):
         self._calls = 0
 
-    def bind_tools(self, tools):
+    def bind_tools(self, tools, **kwargs):
         return self
 
     def invoke(self, messages):
@@ -46,7 +46,7 @@ class _FakeChatNoTool:
     def __init__(self, *args, **kwargs):
         pass
 
-    def bind_tools(self, tools):
+    def bind_tools(self, tools, **kwargs):
         return self
 
     def invoke(self, messages):
