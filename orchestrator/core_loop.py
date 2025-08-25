@@ -10,10 +10,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ConfigDict
 from langchain_openai import ChatOpenAI
-try:  # Prefer public schema import when available
-    from langchain.schema import SystemMessage, HumanMessage, ToolMessage
-except ImportError:  # pragma: no cover - fallback for older installs
-    from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 
 from agents.planner import make_plan, TOOL_SYSTEM_PROMPT
@@ -203,7 +200,7 @@ async def run_chat_tools(
     await asyncio.sleep(0.05)
 
     model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    model = model.bind_tools(TOOLS, tool_choice="auto")
+    model = model.bind_tools(TOOLS)
     logger.info("Model bound to %d tools.", len(TOOLS))
     messages = [
         SystemMessage(content=TOOL_SYSTEM_PROMPT),
