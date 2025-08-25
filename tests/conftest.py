@@ -13,7 +13,7 @@ os.environ.setdefault("OPENAI_API_KEY", "sk-test")
 @pytest.fixture(autouse=True)
 def patch_graph(monkeypatch):
     """
-    Remplace orchestrator.core_loop.graph par une version stub :
+    Remplace orchestrator.core_loop.graph par une version simplifiée :
     - invoke(...)  → dict minimal {"render": {...}}
     - astream(...) → yield un seul chunk {"plan": {...}}
     """
@@ -33,16 +33,14 @@ def patch_graph(monkeypatch):
         for name in steps:
             crud.record_run_step(state.run_id, name, f"{name} done")
         summary = "Exécution réussie ✅"
+        artifacts = {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []}
+        html = cl._build_html(summary, artifacts)
         return {
-            "render": {
-                "html": "<p>todo stub</p>",
-                "summary": summary,
-                "artifacts": []
-            },
+            "render": {"html": html, "summary": summary, "artifacts": artifacts},
             "result": summary,
             "exec_result": {
                 "success": True,
-                "stdout": "stub\n",
+                "stdout": "done\n",
                 "stderr": "",
                 "artifacts": []
             },
