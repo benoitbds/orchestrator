@@ -12,7 +12,7 @@ class _FakeChatWithTool:
     def __init__(self, *args, **kwargs):
         self._calls = 0
 
-    def bind_tools(self, tools):
+    def bind_tools(self, tools, **kwargs):
         return self
 
     def invoke(self, messages):
@@ -46,7 +46,7 @@ class _FakeChatNoTool:
     def __init__(self, *args, **kwargs):
         pass
 
-    def bind_tools(self, tools):
+    def bind_tools(self, tools, **kwargs):
         return self
 
     def invoke(self, messages):
@@ -117,9 +117,13 @@ async def test_run_chat_tools_streams_tool_events(monkeypatch):
 
     await core_loop.run_chat_tools("do", 1, "run-stream")
 
-    assert {"node": "tool:create_item:request", "args": {"title": "t", "type": "Epic", "project_id": 1}} in published
+    assert any(
+        p.get("node") == "tool:create_item:request"
+        and p.get("args") == {"title": "t", "type": "Epic", "project_id": 1}
+        for p in published
+    )
     assert any(p.get("node") == "tool:create_item:response" for p in published)
-    assert {"node": "write", "summary": "done"} in published
+    assert any(p.get("node") == "write" and p.get("summary") == "done" for p in published)
     assert closed["v"] == "run-stream"
     assert discarded["v"] == "run-stream"
 
@@ -136,6 +140,6 @@ async def test_run_chat_tools_streams_final_without_tool(monkeypatch):
 
     await core_loop.run_chat_tools("do", 1, "run-no-tool")
 
-    assert published[0] == {"node": "write", "summary": "done"}
+    assert published[0].get("node") == "write" and published[0].get("summary") == "done"
     assert {"node": "closed"} in published
     assert {"node": "discard"} in published

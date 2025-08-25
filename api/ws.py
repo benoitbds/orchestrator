@@ -35,11 +35,20 @@ async def stream_chat(ws: WebSocket):
                 await close_ws(ws, code=4404, reason="unknown run")
                 return
             # discard existing queued steps so only fresh ones are sent
+            drained_done = False
             try:
                 while True:
-                    queue.get_nowait()
+                    item = queue.get_nowait()
+                    if item is None:
+                        drained_done = True
+                        break
             except asyncio.QueueEmpty:
                 pass
+            if drained_done:
+                await ws.send_json({"status": "done", "run_id": run_id})
+                stream.discard(run_id)
+                await close_ws(ws, code=1000)
+                return
         else:
             if not objective:
                 await close_ws(ws, code=1008, reason="objective required")
