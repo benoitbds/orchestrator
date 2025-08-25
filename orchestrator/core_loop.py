@@ -17,6 +17,10 @@ from agents.tools import TOOLS, HANDLERS
 import threading
 from orchestrator import crud
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
 
@@ -177,12 +181,19 @@ async def run_chat_tools(
     max_tool_calls: int = 10,
 ) -> dict:
     """Run a function-calling loop with the LLM."""
-    import os, logging
-    logger = logging.getLogger(__name__)
+    import os
+
     logger.info("FULL-AGENT MODE: starting run_chat_tools(project_id=%s)", project_id)
     logger.info("OPENAI_API_KEY set: %s", bool(os.getenv("OPENAI_API_KEY")))
     from agents.tools import TOOLS, HANDLERS  # noqa: F401
-    logger.info("TOOLS loaded: %s", [t["name"] for t in TOOLS])
+    # TOOLS is a list of tool schemas. Each must have a predictable name field:
+    tool_names = []
+    for t in TOOLS:
+        name = None
+        if isinstance(t, dict):
+            name = t.get("name") or (t.get("function") or {}).get("name")
+        tool_names.append(name)
+    logger.info("TOOLS loaded: %s", tool_names)
 
     model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     model = model.bind_tools(TOOLS)
