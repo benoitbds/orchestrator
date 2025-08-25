@@ -27,8 +27,6 @@ async def stream_chat(ws: WebSocket):
         run_id = payload.get("run_id")
         objective = payload.get("objective")
         project_id = payload.get("project_id")
-        loop = asyncio.get_event_loop()
-
         if run_id:
             queue = stream.get(run_id)
             if queue is None:
@@ -55,7 +53,7 @@ async def stream_chat(ws: WebSocket):
                 return
             run_id = str(uuid4())
             crud.create_run(run_id, objective, project_id)
-            queue = stream.register(run_id, loop)
+            queue = stream.register(run_id)
             state = LoopState(
                 objective=objective,
                 project_id=project_id,
