@@ -94,4 +94,23 @@ describe('handleRun', () => {
     await waitFor(() => expect(push).toHaveBeenLastCalledWith({ node: 'write', state: { result: '<p>w</p>' } }));
     expect(refreshItems).toHaveBeenCalled();
   });
+
+  it('polls when websocket is silent', async () => {
+    vi.useFakeTimers();
+    http
+      .mockResolvedValueOnce({ json: async () => ({ run_id: 4, html: '' }) })
+      .mockResolvedValueOnce({ json: async () => ({ status: 'done', html: '<p>p</p>', summary: 's' }) });
+    render(<Home />);
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText('Votre objectif…'), { target: { value: 'test' } });
+      fireEvent.click(screen.getByText('Lancer'));
+    });
+    ws.onopen?.();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7000);
+    });
+    expect(push).toHaveBeenLastCalledWith({ node: 'write', state: { result: '<p>p</p>' } });
+    expect(ws.close).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
 });

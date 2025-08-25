@@ -55,10 +55,14 @@ function HomeContent() {
 
     let wsEvent = false;
     const ws = connectWS('/stream');
-    ws.onopen = () => ws.send(JSON.stringify({ run_id }));
+    ws.onopen = () => {
+      console.log('WS open', { run_id });
+      ws.send(JSON.stringify({ run_id }));
+    };
     ws.onmessage = evt => {
       wsEvent = true;
       const msg = JSON.parse(evt.data);
+      console.log('WS message', msg);
       if (msg.node) {
         let parsed: any;
         try {
@@ -104,6 +108,7 @@ function HomeContent() {
         const r = await http(`/runs/${run_id}`);
         const data = await r.json();
         if (data.status === 'done') {
+          ws.close();
           viewerRef.current?.push({ node: 'write', state: { result: data.html || '' } });
           setHistory(h => [
             ...h,
@@ -118,6 +123,7 @@ function HomeContent() {
           setRunsRefreshKey(k => k + 1);
           setIsLoading(false);
         } else if (data.status === 'failed') {
+          ws.close();
           setIsLoading(false);
           setRunsRefreshKey(k => k + 1);
         } else {
