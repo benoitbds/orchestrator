@@ -15,7 +15,7 @@ from agents.planner import make_plan, TOOL_SYSTEM_PROMPT
 from agents.schemas import ExecResult, Plan
 from agents.tools import TOOLS, HANDLERS
 import threading
-from orchestrator import crud
+from orchestrator import crud, stream
 
 import logging
 
@@ -228,6 +228,7 @@ async def run_chat_tools(
                 f"tool:{name}:request",
                 json.dumps({"name": name, "args": safe_args}),
             )
+            stream.publish(run_id, {"node": f"tool:{name}:request", "args": safe_args})
             result = await _run_tool(name, args)
             ok = result.get("ok")
             error = result.get("error")
@@ -237,6 +238,15 @@ async def run_chat_tools(
                 run_id,
                 f"tool:{name}:response",
                 json.dumps({"ok": ok, "result": safe_result, "error": error}),
+            )
+            stream.publish(
+                run_id,
+                {
+                    "node": f"tool:{name}:response",
+                    "ok": ok,
+                    "result": safe_result,
+                    "error": error,
+                },
             )
             if ok:
                 consecutive_errors = 0
@@ -254,6 +264,9 @@ async def run_chat_tools(
                     crud.record_run_step(run_id, "error", summary)
                     html = _build_html(summary, artifacts)
                     crud.finish_run(run_id, html, summary, artifacts)
+                    stream.publish(run_id, {"node": "write", "summary": summary})
+                    stream.close(run_id)
+                    stream.discard(run_id)
                     return {"html": html}
             messages.append(
                 {"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)}
@@ -262,11 +275,17 @@ async def run_chat_tools(
         summary = rsp.content
         html = _build_html(summary, artifacts)
         crud.finish_run(run_id, html, summary, artifacts)
+        stream.publish(run_id, {"node": "write", "summary": summary})
+        stream.close(run_id)
+        stream.discard(run_id)
         return {"html": html}
     crud.record_run_step(run_id, "error", "max tool calls exceeded")
     summary = "Max tool calls exceeded"
     html = _build_html(summary, artifacts)
     crud.finish_run(run_id, html, summary, artifacts)
+    stream.publish(run_id, {"node": "write", "summary": summary})
+    stream.close(run_id)
+    stream.discard(run_id)
     return {"html": html}
 
 

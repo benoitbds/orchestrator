@@ -91,3 +91,51 @@ async def test_run_chat_tools_logs_api_key_missing(monkeypatch, caplog):
     caplog.set_level("INFO")
     await core_loop.run_chat_tools("do", 1, "run3")
     assert "OPENAI_API_KEY set: False" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_chat_tools_streams_tool_events(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatWithTool)
+
+    async def fake_run_tool(name, args):
+        return {"ok": True, "item_id": 1}
+
+    monkeypatch.setattr(core_loop, "_run_tool", fake_run_tool)
+
+    published: list[dict] = []
+
+    def fake_publish(run_id, chunk):
+        published.append(chunk)
+
+    closed = {}
+    discarded = {}
+
+    monkeypatch.setattr(core_loop.stream, "publish", fake_publish)
+    monkeypatch.setattr(core_loop.stream, "close", lambda rid: closed.setdefault("v", rid))
+    monkeypatch.setattr(core_loop.stream, "discard", lambda rid: discarded.setdefault("v", rid))
+
+    await core_loop.run_chat_tools("do", 1, "run-stream")
+
+    assert {"node": "tool:create_item:request", "args": {"title": "t", "type": "Epic", "project_id": 1}} in published
+    assert any(p.get("node") == "tool:create_item:response" for p in published)
+    assert {"node": "write", "summary": "done"} in published
+    assert closed["v"] == "run-stream"
+    assert discarded["v"] == "run-stream"
+
+
+@pytest.mark.asyncio
+async def test_run_chat_tools_streams_final_without_tool(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatNoTool)
+
+    published: list[dict] = []
+    monkeypatch.setattr(core_loop.stream, "publish", lambda rid, chunk: published.append(chunk))
+    monkeypatch.setattr(core_loop.stream, "close", lambda rid: published.append({"node": "closed"}))
+    monkeypatch.setattr(core_loop.stream, "discard", lambda rid: published.append({"node": "discard"}))
+
+    await core_loop.run_chat_tools("do", 1, "run-no-tool")
+
+    assert published[0] == {"node": "write", "summary": "done"}
+    assert {"node": "closed"} in published
+    assert {"node": "discard"} in published
