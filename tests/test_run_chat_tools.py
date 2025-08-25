@@ -48,6 +48,63 @@ class _FakeChatNoTool:
         return types.SimpleNamespace(content="done", additional_kwargs={})
 
 
+class _FakeChatDictTool:
+    def __init__(self, *args, **kwargs):
+        self._calls = 0
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    def invoke(self, messages):
+        self._calls += 1
+        if self._calls == 1:
+            return types.SimpleNamespace(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "1",
+                        "function": {
+                            "name": "create_item",
+                            "arguments": json.dumps({
+                                "title": "t",
+                                "type": "Epic",
+                                "project_id": 1,
+                                "secret": "sh",
+                            }),
+                        },
+                    }
+                ],
+                additional_kwargs={},
+            )
+        return types.SimpleNamespace(content="done", tool_calls=None, additional_kwargs={})
+
+
+class _FakeChatInvalidArgs:
+    def __init__(self, *args, **kwargs):
+        self._calls = 0
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    def invoke(self, messages):
+        self._calls += 1
+        if self._calls == 1:
+            return types.SimpleNamespace(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "1",
+                        "function": {
+                            "name": "create_item",
+                            "arguments": "{not json",
+                        },
+                    }
+                ],
+                additional_kwargs={},
+            )
+        return types.SimpleNamespace(content="done", tool_calls=None, additional_kwargs={})
+
+
 @pytest.mark.asyncio
 async def test_run_chat_tools_logs_tool_execution(monkeypatch, caplog):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -86,6 +143,42 @@ async def test_run_chat_tools_logs_api_key_missing(monkeypatch, caplog):
     caplog.set_level("INFO")
     await core_loop.run_chat_tools("do", 1, "run3")
     assert "OPENAI_API_KEY set: False" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_chat_tools_handles_dict_tool_call(monkeypatch, caplog):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatDictTool)
+
+    async def fake_run_tool(name, args):
+        assert isinstance(args, dict)
+        assert args["title"] == "t"
+        return {"ok": True, "item_id": 1}
+
+    monkeypatch.setattr(core_loop, "_run_tool", fake_run_tool)
+
+    caplog.set_level("INFO")
+    result = await core_loop.run_chat_tools("do", 1, "run-dict")
+    assert result["html"]
+    assert "DISPATCH tool=create_item" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_chat_tools_handles_invalid_json_args(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatInvalidArgs)
+
+    captured: dict = {}
+
+    async def fake_run_tool(name, args):
+        captured["args"] = args
+        return {"ok": True, "item_id": 1}
+
+    monkeypatch.setattr(core_loop, "_run_tool", fake_run_tool)
+
+    result = await core_loop.run_chat_tools("do", 1, "run-invalid")
+    assert result["html"]
+    assert captured["args"] == {}
 
 
 @pytest.mark.asyncio
