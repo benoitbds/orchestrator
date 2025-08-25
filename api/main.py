@@ -117,7 +117,8 @@ async def chat(payload: dict) -> dict:
 
     run_id = str(uuid4())
     crud.create_run(run_id, objective, project_id)
-    stream.register(run_id, asyncio.get_event_loop())
+    # Register the run before launching the agent so clients can stream
+    stream.register(run_id)
     crud.record_run_step(run_id, "plan", json.dumps({"objective": objective}))
 
     await run_chat_tools(objective, project_id, run_id)

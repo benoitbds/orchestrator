@@ -5,8 +5,15 @@ from typing import Dict, Tuple
 _streams: Dict[str, Tuple[asyncio.Queue, asyncio.AbstractEventLoop]] = {}
 
 
-def register(run_id: str, loop: asyncio.AbstractEventLoop) -> asyncio.Queue:
-    """Create a queue for a run and remember its event loop."""
+def register(run_id: str, loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Queue:
+    """Create a queue for a run and remember its event loop.
+
+    The loop parameter is optional and defaults to the current event loop.
+    This makes registration simpler for callers that are already running
+    inside the desired loop.
+    """
+    if loop is None:
+        loop = asyncio.get_event_loop()
     q: asyncio.Queue = asyncio.Queue()
     _streams[run_id] = (q, loop)
     return q
