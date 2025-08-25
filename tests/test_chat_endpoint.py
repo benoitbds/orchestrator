@@ -89,7 +89,7 @@ async def test_chat_registers_stream(monkeypatch):
     registered: dict[str, str] = {}
     calls: list[str] = []
 
-    def fake_register(rid, loop):
+    def fake_register(rid, loop=None):
         calls.append("register")
         registered["run_id"] = rid
         return asyncio.Queue()
