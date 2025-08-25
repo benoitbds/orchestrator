@@ -20,6 +20,33 @@ async def test_create_item_tool(tmp_path, monkeypatch):
     assert res["ok"] is True
     assert res["item_id"] > 0
 
+
+@pytest.mark.asyncio
+async def test_create_item_tool_roundtrip(tmp_path, monkeypatch):
+    """Ensure items created via the tool are persisted via CRUD layer."""
+    db = tmp_path / "db.sqlite"
+    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
+    crud.init_db()
+    project = crud.create_project(ProjectCreate(name="Proj", description=""))
+    epic = crud.create_item(
+        EpicCreate(title="Epic1", description="", project_id=project.id, parent_id=None)
+    )
+    res = await create_item_tool(
+        {
+            "title": "Feature test",
+            "type": "Feature",
+            "project_id": project.id,
+            "parent_id": epic.id,
+        }
+    )
+    assert res["ok"] is True
+    item_id = res["item_id"]
+    created = crud.get_item(item_id)
+    assert created.title == "Feature test"
+    assert created.type == "Feature"
+    assert created.project_id == project.id
+    assert created.parent_id == epic.id
+
 @pytest.mark.asyncio
 async def test_update_item_tool_and_invalid_parent(tmp_path, monkeypatch):
     db = tmp_path / "db.sqlite"
