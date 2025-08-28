@@ -232,3 +232,71 @@ async def test_run_chat_tools_streams_final_without_tool(monkeypatch):
     assert published[0].get("node") == "write" and published[0].get("summary") == "done"
     assert {"node": "closed"} in published
     assert {"node": "discard"} in published
+
+
+class _FakeChatBigArgs:
+    def __init__(self, *args, **kwargs):
+        self._calls = 0
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    def invoke(self, messages):
+        self._calls += 1
+        if self._calls == 1:
+            return types.SimpleNamespace(
+                content="",
+                tool_calls=[
+                    types.SimpleNamespace(
+                        id="1",
+                        name="create_item",
+                        args={"text": "x" * 200},
+                    )
+                ],
+                additional_kwargs={},
+            )
+        return types.SimpleNamespace(content="done", tool_calls=None, additional_kwargs={})
+
+
+@pytest.mark.asyncio
+async def test_run_chat_tools_aborts_on_tool_error(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    fake_chat = _FakeChatWithTool()
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: fake_chat)
+
+    async def fake_run_tool(name, args):
+        return {"ok": False, "error": "boom"}
+
+    monkeypatch.setattr(core_loop, "_run_tool", fake_run_tool)
+
+    run_id = "run-error"
+    crud.create_run(run_id, "do", 1)
+    result = await core_loop.run_chat_tools("do", 1, run_id)
+    assert "boom" in result["html"]
+    assert fake_chat._calls == 1
+    run = crud.get_run(run_id)
+    assert "boom" in run["summary"]
+
+
+@pytest.mark.asyncio
+async def test_run_chat_tools_limits_tool_arg_tokens(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    fake_chat = _FakeChatBigArgs()
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: fake_chat)
+    monkeypatch.setattr(core_loop, "MAX_TOOL_ARG_TOKENS", 5)
+
+    called = {}
+
+    async def fake_run_tool(name, args):
+        called["hit"] = True
+        return {"ok": True, "item_id": 1}
+
+    monkeypatch.setattr(core_loop, "_run_tool", fake_run_tool)
+
+    run_id = "run-big-args"
+    crud.create_run(run_id, "do", 1)
+    result = await core_loop.run_chat_tools("do", 1, run_id)
+    assert "arguments too long" in result["html"]
+    assert "hit" not in called
+    run = crud.get_run(run_id)
+    assert "arguments too long" in run["summary"]

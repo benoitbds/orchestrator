@@ -38,6 +38,19 @@ def _sanitize(obj: Any) -> Any:
         return [_sanitize(v) for v in obj]
     return obj
 
+MAX_TOOL_ARG_TOKENS = 1000
+
+
+def _count_tokens(obj: Any) -> int:
+    """Approximate token count for serialized arguments."""
+    try:
+        import tiktoken
+
+        enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(json.dumps(obj)))
+    except Exception:
+        return len(json.dumps(obj)) // 4
+
 # ---------- Mini-mémoire SQLite ----------
 class Memory:
     def __init__(self, db_path: str = "orchestrator.db"):
@@ -218,7 +231,6 @@ async def run_chat_tools(
         "updated_item_ids": [],
         "deleted_item_ids": [],
     }
-    consecutive_errors = 0
     for _ in range(max_tool_calls):
         rsp = model.invoke(messages)
         # Prefer LangChain's attribute, fallback to OpenAI raw field
@@ -260,7 +272,14 @@ async def run_chat_tools(
                     "timestamp": step["timestamp"],
                 },
             )
-            result = await _run_tool(name, args)
+            token_count = _count_tokens(args)
+            if token_count > MAX_TOOL_ARG_TOKENS:
+                result = {
+                    "ok": False,
+                    "error": f"tool arguments too long ({token_count} tokens > {MAX_TOOL_ARG_TOKENS})",
+                }
+            else:
+                result = await _run_tool(name, args)
             ok = result.get("ok")
             error = result.get("error")
             data = {k: v for k, v in result.items() if k not in {"ok", "error"}}
@@ -282,37 +301,30 @@ async def run_chat_tools(
                 },
             )
             if ok:
-                consecutive_errors = 0
                 if name == "create_item":
                     artifacts["created_item_ids"].append(result["item_id"])
                 elif name == "update_item":
                     artifacts["updated_item_ids"].append(result["item_id"])
                 elif name == "delete_item":
                     artifacts["deleted_item_ids"].append(result["item_id"])
-            else:
-                consecutive_errors += 1
-                crud.record_run_step(
-                    run_id, "error", result.get("error", "error"), broadcast=False
+                messages.append(
+                    ToolMessage(
+                        tool_call_id=call_id,
+                        content=json.dumps(result),
+                        name=name,
+                    )
                 )
-                if consecutive_errors >= 3:
-                    summary = "Too many consecutive tool errors"
-                    crud.record_run_step(run_id, "error", summary, broadcast=False)
-                    html = _build_html(summary, artifacts)
-                    crud.finish_run(run_id, html, summary, artifacts)
-                    ts = datetime.now(timezone.utc).isoformat()
-                    stream.publish(run_id, {"node": "write", "summary": summary, "timestamp": ts})
-                    stream.close(run_id)
-                    stream.discard(run_id)
-                    return {"html": html}
-            messages.append(
-                ToolMessage(
-                    tool_call_id=call_id,
-                    content=json.dumps(result),
-                    name=name,
-                )
-            )
-            continue
-        summary = getattr(rsp, "content", "No tool call.")
+                continue
+            summary = f"Tool {name} failed: {error}" if error else f"Tool {name} failed"
+            crud.record_run_step(run_id, "error", summary, broadcast=False)
+            html = _build_html(summary, artifacts)
+            crud.finish_run(run_id, html, summary, artifacts)
+            ts = datetime.now(timezone.utc).isoformat()
+            stream.publish(run_id, {"node": "write", "summary": summary, "timestamp": ts})
+            stream.close(run_id)
+            stream.discard(run_id)
+            return {"html": html}
+        summary = getattr(rsp, "content", "") or ""
         html = _build_html(summary, artifacts)
         crud.finish_run(run_id, html, summary, artifacts)
         ts = datetime.now(timezone.utc).isoformat()
