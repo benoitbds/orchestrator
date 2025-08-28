@@ -15,7 +15,7 @@ from langgraph.graph import StateGraph, END
 
 from agents.planner import make_plan, TOOL_SYSTEM_PROMPT
 from agents.schemas import ExecResult, Plan
-from agents.tools import TOOLS, HANDLERS
+from agents.tools import HANDLERS
 import threading
 from orchestrator import crud, stream
 
@@ -187,15 +187,22 @@ async def run_chat_tools(
 
     logger.info("FULL-AGENT MODE: starting run_chat_tools(project_id=%s)", project_id)
     logger.info("OPENAI_API_KEY set: %s", bool(os.getenv("OPENAI_API_KEY")))
-    from agents.tools import TOOLS, HANDLERS  # noqa: F401
-    # TOOLS is a list of tool schemas. Each must have a predictable name field:
-    tool_names = []
-    for t in TOOLS:
-        name = None
-        if isinstance(t, dict):
-            name = t.get("name") or (t.get("function") or {}).get("name")
-        tool_names.append(name)
-    logger.info("TOOLS loaded: %s", tool_names)
+    from agents.tools import TOOLS as LC_TOOLS, HANDLERS
+
+    def _tool_debug_list(tools):
+        try:
+            return [getattr(t, "name", None) for t in tools]
+        except Exception:
+            return [type(t).__name__ for t in tools]
+
+    def _tool_debug_types(tools):
+        return [type(t).__name__ for t in tools]
+
+    tool_names = _tool_debug_list(LC_TOOLS)
+    tool_types = _tool_debug_types(LC_TOOLS)
+    logger.info("TOOLS types: %s", tool_types)
+    logger.info("TOOLS names: %s", tool_names)
+    TOOLS = LC_TOOLS
     # Yield briefly so websocket clients can attach before tools execute
     await asyncio.sleep(0.05)
 
