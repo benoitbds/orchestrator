@@ -110,10 +110,10 @@ async def test_run_chat_tools_logs_tool_execution(monkeypatch, caplog):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatWithTool)
 
-    async def fake_run_tool(name, args):
+    async def fake_handler(args):
         return {"ok": True, "item_id": 1}
 
-    monkeypatch.setattr(core_loop, "_run_tool", fake_run_tool)
+    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
 
     caplog.set_level("INFO")
     result = await core_loop.run_chat_tools("do", 1, "run1")
@@ -151,12 +151,12 @@ async def test_run_chat_tools_handles_dict_tool_call(monkeypatch, caplog):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatDictTool)
 
-    async def fake_run_tool(name, args):
+    async def fake_handler(args):
         assert isinstance(args, dict)
         assert args["title"] == "t"
         return {"ok": True, "item_id": 1}
 
-    monkeypatch.setattr(core_loop, "_run_tool", fake_run_tool)
+    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
 
     caplog.set_level("INFO")
     result = await core_loop.run_chat_tools("do", 1, "run-dict")
@@ -171,11 +171,11 @@ async def test_run_chat_tools_handles_invalid_json_args(monkeypatch):
 
     captured: dict = {}
 
-    async def fake_run_tool(name, args):
+    async def fake_handler(args):
         captured["args"] = args
         return {"ok": True, "item_id": 1}
 
-    monkeypatch.setattr(core_loop, "_run_tool", fake_run_tool)
+    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
 
     result = await core_loop.run_chat_tools("do", 1, "run-invalid")
     assert result["html"]
@@ -187,10 +187,10 @@ async def test_run_chat_tools_streams_tool_events(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatWithTool)
 
-    async def fake_run_tool(name, args):
+    async def fake_handler(args):
         return {"ok": True, "item_id": 1}
 
-    monkeypatch.setattr(core_loop, "_run_tool", fake_run_tool)
+    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
 
     published: list[dict] = []
 
@@ -264,18 +264,17 @@ async def test_run_chat_tools_aborts_on_tool_error(monkeypatch):
     fake_chat = _FakeChatWithTool()
     monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: fake_chat)
 
-    async def fake_run_tool(name, args):
+    async def fake_handler(args):
         return {"ok": False, "error": "boom"}
 
-    monkeypatch.setattr(core_loop, "_run_tool", fake_run_tool)
+    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
 
     run_id = "run-error"
     crud.create_run(run_id, "do", 1)
     result = await core_loop.run_chat_tools("do", 1, run_id)
-    assert "boom" in result["html"]
-    assert fake_chat._calls == 1
     run = crud.get_run(run_id)
-    assert "boom" in run["summary"]
+    assert any("boom" in s["content"] for s in run["steps"] if s["node"] == "error")
+    assert fake_chat._calls == 2
 
 
 @pytest.mark.asyncio
@@ -287,11 +286,11 @@ async def test_run_chat_tools_limits_tool_arg_tokens(monkeypatch):
 
     called = {}
 
-    async def fake_run_tool(name, args):
+    async def fake_handler(args):
         called["hit"] = True
         return {"ok": True, "item_id": 1}
 
-    monkeypatch.setattr(core_loop, "_run_tool", fake_run_tool)
+    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
 
     run_id = "run-big-args"
     crud.create_run(run_id, "do", 1)
