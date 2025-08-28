@@ -1,6 +1,7 @@
 import pytest
 import asyncio
 import types
+import json
 from httpx import AsyncClient
 from httpx_ws import aconnect_ws, WebSocketDisconnect
 from httpx_ws.transport import ASGIWebSocketTransport
@@ -77,28 +78,50 @@ async def test_ws_stream_tool_steps(monkeypatch, tmp_path):
     crud.init_db()
     crud.create_project(ProjectCreate(name="P", description=""))
 
-    class _Executor:
-        def __init__(self, agent, tools, verbose, max_iterations, handle_parsing_errors):
-            self.tools = {t.name: t for t in tools}
-            self.calls = [
-                {"name": "create_item", "args": {"title": "Feat", "type": "Feature"}},
-                {"name": "update_item", "args": {"id": 1, "title": "Feat v2"}},
-            ]
+    class ToolCall(dict):
+        def __getattr__(self, item):
+            return self[item]
 
-        async def ainvoke(self, inputs, config):
-            run_id = config["configurable"]["run_id"]
-            project_id = config["configurable"]["project_id"]
-            for call in self.calls:
-                kwargs = dict(call["args"])
-                kwargs.setdefault("project_id", project_id)
-                kwargs["run_id"] = run_id
-                await self.tools[call["name"]].coroutine(**kwargs)
-            return {"output": "done"}
+    class FakeLLM:
+        def __init__(self, responses):
+            self.responses = responses
+            self.calls = 0
 
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: object())
-    import langchain.agents as agents_mod
-    monkeypatch.setattr(agents_mod, "create_tool_calling_agent", lambda llm, tools, prompt: object())
-    monkeypatch.setattr(agents_mod, "AgentExecutor", _Executor)
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            res = self.responses[self.calls]
+            self.calls += 1
+            return res
+
+    ai_calls = [
+        ToolCall(name="create_item", args={}, id="0"),
+        ToolCall(name="update_item", args={"id": 1}, id="1"),
+    ]
+    responses = [
+        types.SimpleNamespace(content="", tool_calls=[ai_calls[0]]),
+        types.SimpleNamespace(content="", tool_calls=[ai_calls[1]]),
+        types.SimpleNamespace(content="done", tool_calls=[]),
+    ]
+
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
+
+    async def fake_create(args):
+        rid = args["run_id"]
+        core_loop.stream.publish(rid, {"node": "tool:create_item:request"})
+        core_loop.stream.publish(rid, {"node": "tool:create_item:response"})
+        return json.dumps({"ok": True, "item_id": 1})
+
+    async def fake_update(args):
+        rid = args["run_id"]
+        core_loop.stream.publish(rid, {"node": "tool:update_item:request"})
+        core_loop.stream.publish(rid, {"node": "tool:update_item:response"})
+        return json.dumps({"ok": True})
+
+    create_tool = types.SimpleNamespace(name="create_item", ainvoke=fake_create)
+    update_tool = types.SimpleNamespace(name="update_item", ainvoke=fake_update)
+    monkeypatch.setattr(core_loop, "LC_TOOLS", [create_tool, update_tool])
 
     run_id = str(uuid4())
     crud.create_run(run_id, "multi", 1)
