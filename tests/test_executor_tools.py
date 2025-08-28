@@ -23,7 +23,7 @@ class FakeLLM:
     def bind_tools(self, tools):
         return self
 
-    async def ainvoke(self, messages):
+    def invoke(self, messages):
         res = self.responses[self.calls]
         self.calls += 1
         return res
