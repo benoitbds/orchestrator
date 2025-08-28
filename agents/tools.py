@@ -10,6 +10,14 @@ from orchestrator import stream  # assume stream.register/publish/close exist
 import json
 import asyncio
 
+# Hook global (très simple): si run_id absent des kwargs, essaie de le lire depuis contexte global
+_CURRENT_RUN_ID: str | None = None
+
+
+def set_current_run(run_id: str):  # appelé par run_chat_tools avant l'exec
+    global _CURRENT_RUN_ID
+    _CURRENT_RUN_ID = run_id
+
 # ---------- Schemas Pydantic v2 ----------
 class CreateItemArgs(BaseModel):
     type: Literal["Epic","Capability","Feature","US","UC"]
@@ -93,7 +101,9 @@ async def _exec(name: str, run_id: str, args: dict):
 # Déclarer des StructuredTool ASYNC (args_schema = Pydantic v2)
 def _mk_tool(name: str, desc: str, schema: type[BaseModel]):
     async def _tool(**kwargs):
-        run_id = kwargs.pop("run_id")  # <- on l’injecte via l’agent
+        run_id = kwargs.pop("run_id", None) or _CURRENT_RUN_ID
+        if not run_id:
+            run_id = "unknown"
         return await _exec(name, run_id, kwargs)
     return StructuredTool.from_function(
         name=name,

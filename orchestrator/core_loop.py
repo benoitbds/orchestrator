@@ -177,7 +177,7 @@ async def run_chat_tools(
     import os
     from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
     from langchain.agents import AgentExecutor, create_tool_calling_agent
-    from agents.tools import TOOLS
+    from agents.tools import TOOLS, set_current_run
     from agents.planner import TOOL_SYSTEM_PROMPT
 
     logger.info("FULL-AGENT MODE: starting run_chat_tools(project_id=%s)", project_id)
@@ -202,6 +202,7 @@ async def run_chat_tools(
 
     inputs = {"input": objective}
     config = {"configurable": {"run_id": run_id, "project_id": project_id}}
+    set_current_run(run_id)
 
     try:
         result = await executor.ainvoke(inputs, config=config)
