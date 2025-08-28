@@ -2,7 +2,6 @@
 from __future__ import annotations
 import sqlite3
 import json
-import asyncio
 from datetime import datetime, timezone
 from typing import List, Optional, Any
 from uuid import uuid4
@@ -10,12 +9,10 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ConfigDict
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 
 from agents.planner import make_plan, TOOL_SYSTEM_PROMPT
 from agents.schemas import ExecResult, Plan
-from agents.tools import HANDLERS
 import threading
 from orchestrator import crud, stream
 
@@ -38,18 +35,6 @@ def _sanitize(obj: Any) -> Any:
         return [_sanitize(v) for v in obj]
     return obj
 
-MAX_TOOL_ARG_TOKENS = 1000
-
-
-def _count_tokens(obj: Any) -> int:
-    """Approximate token count for serialized arguments."""
-    try:
-        import tiktoken
-
-        enc = tiktoken.get_encoding("cl100k_base")
-        return len(enc.encode(json.dumps(obj)))
-    except Exception:
-        return len(json.dumps(obj)) // 4
 
 # ---------- Mini-mémoire SQLite ----------
 class Memory:
@@ -177,179 +162,61 @@ def _build_html(summary: str, artifacts: dict[str, list[int]]) -> str:
     )
 
 
-async def _run_tool(name: str, args: dict, run_id: str | None = None) -> dict:
-    """Execute a StructuredTool by name.
-
-    The StructuredTool itself handles logging and streaming. This helper merely
-    locates the tool and returns its parsed JSON result. `run_id` is forwarded so
-    tools can attribute their steps."""
-    import agents.tools as tool_mod
-    try:
-        res = await tool_mod._exec(name, run_id or "", args)
-        return json.loads(res) if isinstance(res, str) else res
-    except Exception as exc:  # pragma: no cover - defensive
-        return {"ok": False, "error": str(exc)}
-
-
 async def run_chat_tools(
     objective: str,
     project_id: int | None,
     run_id: str,
     max_tool_calls: int = 10,
 ) -> dict:
-    """Run a function-calling loop with the LLM."""
+    """Execute a LangChain tool-calling agent against our StructuredTools.
+
+    The agent is configured to always prefer tool use when helpful. We forward
+    ``run_id`` and ``project_id`` via the ``config`` mechanism so every tool call
+    receives these values automatically.
+    """
     import os
+    from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+    from langchain.agents import AgentExecutor, create_tool_calling_agent
+    from agents.tools import TOOLS
+    from agents.planner import TOOL_SYSTEM_PROMPT
 
     logger.info("FULL-AGENT MODE: starting run_chat_tools(project_id=%s)", project_id)
     logger.info("OPENAI_API_KEY set: %s", bool(os.getenv("OPENAI_API_KEY")))
-    from agents.tools import TOOLS as LC_TOOLS, HANDLERS
+    logger.info("TOOLS names: %s", [getattr(t, "name", None) for t in TOOLS])
 
-    def _tool_debug_list(tools):
-        try:
-            return [getattr(t, "name", None) for t in tools]
-        except Exception:
-            return [type(t).__name__ for t in tools]
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", TOOL_SYSTEM_PROMPT + "\nYou can use tools. Always operate on project_id if provided."),
+        ("human", "{input}"),
+        MessagesPlaceholder("agent_scratchpad"),
+    ])
 
-    def _tool_debug_types(tools):
-        return [type(t).__name__ for t in tools]
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    agent = create_tool_calling_agent(llm, TOOLS, prompt)
+    executor = AgentExecutor(
+        agent=agent,
+        tools=TOOLS,
+        verbose=False,
+        max_iterations=max_tool_calls,
+        handle_parsing_errors=True,
+    )
 
-    tool_names = _tool_debug_list(LC_TOOLS)
-    tool_types = _tool_debug_types(LC_TOOLS)
-    logger.info("TOOLS types: %s", tool_types)
-    logger.info("TOOLS names: %s", tool_names)
-    TOOLS = LC_TOOLS
-    # Yield briefly so websocket clients can attach before tools execute
-    await asyncio.sleep(0.05)
+    inputs = {"input": objective}
+    config = {"configurable": {"run_id": run_id, "project_id": project_id}}
 
-    model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    model = model.bind_tools(TOOLS)
-    logger.info("Model bound to %d tools.", len(TOOLS))
-    messages = [
-        SystemMessage(content=TOOL_SYSTEM_PROMPT),
-        HumanMessage(content=objective),
-    ]
-    artifacts: dict[str, list[int]] = {
-        "created_item_ids": [],
-        "updated_item_ids": [],
-        "deleted_item_ids": [],
-    }
-    consecutive_errors = 0
-    for _ in range(max_tool_calls):
-        rsp = model.invoke(messages)
-        tool_calls = getattr(rsp, "tool_calls", None)
-        if not tool_calls and hasattr(rsp, "additional_kwargs"):
-            tool_calls = rsp.additional_kwargs.get("tool_calls")
-
-        logger.info("LLM raw content: %r", getattr(rsp, "content", None))
-        logger.info("LLM tool_calls: %s", tool_calls)
-        if tool_calls:
-            tc0 = tool_calls[0]
-            if hasattr(tc0, "name") and hasattr(tc0, "args"):
-                name = tc0.name
-                call_id = getattr(tc0, "id", "tool_call_0")
-                args = tc0.args
-            else:
-                name = tc0["function"]["name"]
-                call_id = tc0.get("id", "tool_call_0")
-                raw_args = tc0["function"].get("arguments", "{}")
-                try:
-                    args = json.loads(raw_args)
-                except json.JSONDecodeError:
-                    args = {}
-            safe_args = _sanitize(args)
-            logger.info("DISPATCH tool=%s args=%s", name, safe_args)
-            token_count = _count_tokens(args)
-            if token_count > MAX_TOOL_ARG_TOKENS:
-                step = crud.record_run_step(
-                    run_id,
-                    f"tool:{name}:request",
-                    json.dumps({"name": name, "args": safe_args}),
-                    broadcast=False,
-                )
-                stream.publish(
-                    run_id,
-                    {
-                        "node": f"tool:{name}:request",
-                        "args": safe_args,
-                        "timestamp": step["timestamp"],
-                    },
-                )
-                err = f"tool arguments too long ({token_count} tokens > {MAX_TOOL_ARG_TOKENS})"
-                step = crud.record_run_step(
-                    run_id,
-                    f"tool:{name}:response",
-                    json.dumps({"ok": False, "result": {}, "error": err}),
-                    broadcast=False,
-                )
-                stream.publish(
-                    run_id,
-                    {
-                        "node": f"tool:{name}:response",
-                        "ok": False,
-                        "result": {},
-                        "error": err,
-                        "timestamp": step["timestamp"],
-                    },
-                )
-                summary = f"Tool {name} failed: {err}"
-                crud.record_run_step(run_id, "error", summary, broadcast=False)
-                html = _build_html(summary, artifacts)
-                crud.finish_run(run_id, html, summary, artifacts)
-                ts = datetime.now(timezone.utc).isoformat()
-                stream.publish(run_id, {"node": "write", "summary": summary, "timestamp": ts})
-                stream.close(run_id)
-                stream.discard(run_id)
-                return {"html": html}
-            else:
-                result = await _run_tool(name, args, run_id)
-
-            ok = result.get("ok")
-            error = result.get("error")
-            messages.append(
-                ToolMessage(
-                    tool_call_id=call_id,
-                    content=json.dumps(result),
-                    name=name,
-                )
-            )
-            if ok:
-                consecutive_errors = 0
-                if name == "create_item":
-                    artifacts["created_item_ids"].append(result["item_id"])
-                elif name == "update_item":
-                    artifacts["updated_item_ids"].append(result["item_id"])
-                elif name == "delete_item":
-                    artifacts["deleted_item_ids"].append(result["item_id"])
-                continue
-
-            consecutive_errors += 1
-            summary = f"Tool {name} failed: {error}" if error else f"Tool {name} failed"
-            crud.record_run_step(run_id, "error", summary, broadcast=False)
-            if consecutive_errors >= 3:
-                summary = "Consecutive tool errors"
-                html = _build_html(summary, artifacts)
-                crud.finish_run(run_id, html, summary, artifacts)
-                ts = datetime.now(timezone.utc).isoformat()
-                stream.publish(run_id, {"node": "write", "summary": summary, "timestamp": ts})
-                stream.close(run_id)
-                stream.discard(run_id)
-                return {"html": html}
-            continue
-
-        summary = getattr(rsp, "content", "") or ""
-        html = _build_html(summary, artifacts)
-        crud.finish_run(run_id, html, summary, artifacts)
-        ts = datetime.now(timezone.utc).isoformat()
-        stream.publish(run_id, {"node": "write", "summary": summary, "timestamp": ts})
-        stream.close(run_id)
-        stream.discard(run_id)
+    try:
+        result = await executor.ainvoke(inputs, config=config)
+    except Exception as e:  # pragma: no cover - defensive
+        summary = f"Agent error: {e}"
+        html = _build_html(summary, {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []})
+        crud.record_run_step(run_id, "error", summary)
+        crud.finish_run(run_id, html, summary, {})
         return {"html": html}
-    crud.record_run_step(run_id, "error", "max tool calls exceeded", broadcast=False)
-    summary = "Max tool calls exceeded"
+
+    summary = result.get("output", "") or "Done."
+    artifacts = {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []}
+    stream.publish(run_id, {"node": "write", "summary": summary})
     html = _build_html(summary, artifacts)
     crud.finish_run(run_id, html, summary, artifacts)
-    ts = datetime.now(timezone.utc).isoformat()
-    stream.publish(run_id, {"node": "write", "summary": summary, "timestamp": ts})
     stream.close(run_id)
     stream.discard(run_id)
     return {"html": html}

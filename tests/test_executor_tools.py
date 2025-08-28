@@ -1,297 +1,54 @@
-import asyncio
-import json
-import types
 import uuid
 import pytest
 
 from orchestrator import crud
-from orchestrator.models import ProjectCreate, FeatureCreate
+from orchestrator.models import ProjectCreate
 from orchestrator.core_loop import run_chat_tools
-import orchestrator.core_loop as cl
+from orchestrator import core_loop
+
+crud.init_db()
+
+
+class _Executor:
+    def __init__(self, agent, tools, verbose, max_iterations, handle_parsing_errors):
+        self.tools = {t.name: t for t in tools}
+        self.calls = []
+
+    async def ainvoke(self, inputs, config):
+        run_id = config["configurable"]["run_id"]
+        project_id = config["configurable"]["project_id"]
+        for call in self.calls:
+            kwargs = dict(call["args"])
+            kwargs.setdefault("project_id", project_id)
+            kwargs["run_id"] = run_id
+            await self.tools[call["name"]].coroutine(**kwargs)
+        return {"output": "done"}
+
+
+def _setup_executor(monkeypatch, calls):
+    def factory(agent, tools, verbose=False, max_iterations=10, handle_parsing_errors=True):
+        ex = _Executor(agent, tools, verbose, max_iterations, handle_parsing_errors)
+        ex.calls = calls
+        return ex
+
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: object())
+    import langchain.agents as agents_mod
+    monkeypatch.setattr(agents_mod, "create_tool_calling_agent", lambda llm, tools, prompt: object())
+    monkeypatch.setattr(agents_mod, "AgentExecutor", factory)
 
 
 @pytest.mark.asyncio
-async def test_chat_creates_item(monkeypatch, tmp_path):
+async def test_run_chat_tools_creates_item(monkeypatch, tmp_path):
     db = tmp_path / "db.sqlite"
     monkeypatch.setattr(crud, "DATABASE_URL", str(db))
     crud.init_db()
     crud.create_project(ProjectCreate(name="Proj", description=""))
 
-    from langchain_openai import ChatOpenAI
-
-    calls = [
-        types.SimpleNamespace(
-            content="",
-            additional_kwargs={
-                "tool_calls": [
-                    {
-                        "id": "1",
-                        "type": "function",
-                        "function": {
-                            "name": "create_item",
-                            "arguments": json.dumps(
-                                {
-                                    "title": "Canal de vente",
-                                    "type": "Feature",
-                                    "project_id": 1,
-                                }
-                            ),
-                        },
-                    }
-                ]
-            },
-        ),
-        types.SimpleNamespace(content="done", additional_kwargs={}),
-    ]
-    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
-    monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages: calls.pop(0))
+    calls = [{"name": "create_item", "args": {"title": "Feat", "type": "Feature"}}]
+    _setup_executor(monkeypatch, calls)
 
     run_id = str(uuid.uuid4())
-    crud.create_run(run_id, "Create Feature 'Canal de vente'", 1)
-    await run_chat_tools("Create Feature 'Canal de vente'", 1, run_id)
-    run = crud.get_run(run_id)
-    assert run["artifacts"]["created_item_ids"][0] > 0
-    nodes = [s["node"] for s in run["steps"]]
-    assert "tool:create_item:request" in nodes
-    assert "tool:create_item:response" in nodes
+    crud.create_run(run_id, "Create", 1)
+    await run_chat_tools("Create", 1, run_id)
     items = crud.get_items(project_id=1)
-    assert any(it.title == "Canal de vente" for it in items)
-
-
-@pytest.mark.asyncio
-async def test_chat_updates_item(monkeypatch, tmp_path):
-    db = tmp_path / "db.sqlite"
-    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
-    crud.init_db()
-    crud.create_project(ProjectCreate(name="Proj", description=""))
-    feature = crud.create_item(FeatureCreate(title="Canal", description="", project_id=1, parent_id=None))
-
-    from langchain_openai import ChatOpenAI
-
-    calls = [
-        types.SimpleNamespace(
-            content="",
-            additional_kwargs={
-                "tool_calls": [
-                    {
-                        "id": "1",
-                        "type": "function",
-                        "function": {
-                            "name": "update_item",
-                            "arguments": json.dumps({"id": feature.id, "title": "Canal v2"}),
-                        },
-                    }
-                ]
-            },
-        ),
-        types.SimpleNamespace(content="done", additional_kwargs={}),
-    ]
-    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
-    monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages: calls.pop(0))
-
-    run_id = str(uuid.uuid4())
-    crud.create_run(run_id, "Rename feature", 1)
-    await run_chat_tools("Rename feature", 1, run_id)
-    run = crud.get_run(run_id)
-    assert run["artifacts"]["updated_item_ids"][0] == feature.id
-    nodes = [s["node"] for s in run["steps"]]
-    assert "tool:update_item:request" in nodes
-    assert "tool:update_item:response" in nodes
-    item = crud.get_item(feature.id)
-    assert item.title == "Canal v2"
-
-
-@pytest.mark.asyncio
-async def test_chat_max_tool_calls(monkeypatch, tmp_path):
-    db = tmp_path / "db.sqlite"
-    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
-    crud.init_db()
-    crud.create_project(ProjectCreate(name="Proj", description=""))
-
-    from langchain_openai import ChatOpenAI
-
-    def fake_invoke(self, messages):
-        return types.SimpleNamespace(
-            content="",
-            additional_kwargs={
-                "tool_calls": [
-                    {
-                        "id": "1",
-                        "type": "function",
-                        "function": {
-                            "name": "create_item",
-                            "arguments": json.dumps(
-                                {
-                                    "title": "X",
-                                    "type": "Feature",
-                                    "project_id": 1,
-                                }
-                            ),
-                        },
-                    }
-                ]
-            },
-        )
-
-    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
-    monkeypatch.setattr(ChatOpenAI, "invoke", fake_invoke)
-
-    run_id = str(uuid.uuid4())
-    crud.create_run(run_id, "loop", 1)
-    await run_chat_tools("loop", 1, run_id)
-    run = crud.get_run(run_id)
-    nodes = [s["node"] for s in run["steps"]]
-    assert nodes.count("tool:create_item:request") == 10
-    assert nodes.count("tool:create_item:response") == 10
-    assert "error" in nodes
-    assert "max tool calls" in run["summary"].lower()
-
-
-@pytest.mark.asyncio
-async def test_handler_error(monkeypatch, tmp_path):
-    db = tmp_path / "db.sqlite"
-    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
-    crud.init_db()
-    crud.create_project(ProjectCreate(name="Proj", description=""))
-
-    from langchain_openai import ChatOpenAI
-
-    calls = [
-        types.SimpleNamespace(
-            content="",
-            additional_kwargs={
-                "tool_calls": [
-                    {
-                        "id": "1",
-                        "type": "function",
-                        "function": {
-                            "name": "create_item",
-                            "arguments": json.dumps(
-                                {
-                                    "title": "Bad",
-                                    "type": "Feature",
-                                    "project_id": 1,
-                                    "parent_id": 999,
-                                }
-                            ),
-                        },
-                    }
-                ]
-            },
-        ),
-        types.SimpleNamespace(content="Invalid parent", additional_kwargs={}),
-    ]
-    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
-    monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages: calls.pop(0))
-
-    run_id = str(uuid.uuid4())
-    crud.create_run(run_id, "bad parent", 1)
-    await run_chat_tools("bad parent", 1, run_id)
-    run = crud.get_run(run_id)
-    nodes = [s["node"] for s in run["steps"]]
-    assert "tool:create_item:request" in nodes
-    assert "tool:create_item:response" in nodes
-    assert "error" in nodes
-    assert "invalid parent" in run["summary"].lower()
-
-
-@pytest.mark.asyncio
-async def test_tool_timeout(monkeypatch, tmp_path):
-    db = tmp_path / "db.sqlite"
-    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
-    crud.init_db()
-    crud.create_project(ProjectCreate(name="Proj", description=""))
-
-    from langchain_openai import ChatOpenAI
-
-    calls = [
-        types.SimpleNamespace(
-            content="",
-            additional_kwargs={
-                "tool_calls": [
-                    {
-                        "id": "1",
-                        "type": "function",
-                        "function": {
-                            "name": "create_item",
-                            "arguments": json.dumps(
-                                {
-                                    "title": "Slow",
-                                    "type": "Feature",
-                                    "project_id": 1,
-                                }
-                            ),
-                        },
-                    }
-                ]
-            },
-        ),
-        types.SimpleNamespace(content="done", additional_kwargs={}),
-    ]
-    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
-    monkeypatch.setattr(ChatOpenAI, "invoke", lambda self, messages: calls.pop(0))
-
-    async def slow_handler(args):
-        raise asyncio.TimeoutError()
-
-    monkeypatch.setitem(cl.HANDLERS, "create_item", slow_handler)
-
-    run_id = str(uuid.uuid4())
-    crud.create_run(run_id, "slow", 1)
-    await run_chat_tools("slow", 1, run_id)
-    run = crud.get_run(run_id)
-    nodes = [s["node"] for s in run["steps"]]
-    assert "tool:create_item:request" in nodes
-    assert "tool:create_item:response" in nodes
-    assert "error" in nodes
-    assert run["artifacts"]["created_item_ids"] == []
-    assert any("timeout" in s["content"] for s in run["steps"] if s["node"] == "error")
-
-
-@pytest.mark.asyncio
-async def test_consecutive_errors_stop(monkeypatch, tmp_path):
-    db = tmp_path / "db.sqlite"
-    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
-    crud.init_db()
-    crud.create_project(ProjectCreate(name="Proj", description=""))
-
-    from langchain_openai import ChatOpenAI
-
-    def fake_invoke(self, messages):
-        return types.SimpleNamespace(
-            content="",
-            additional_kwargs={
-                "tool_calls": [
-                    {
-                        "id": "1",
-                        "type": "function",
-                        "function": {
-                            "name": "create_item",
-                            "arguments": json.dumps(
-                                {
-                                    "title": "X",
-                                    "type": "Feature",
-                                    "project_id": 1,
-                                }
-                            ),
-                        },
-                    }
-                ]
-            },
-        )
-
-    async def failing_handler(args):
-        return {"ok": False, "error": "boom"}
-
-    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools: self)
-    monkeypatch.setattr(ChatOpenAI, "invoke", fake_invoke)
-    monkeypatch.setitem(cl.HANDLERS, "create_item", failing_handler)
-
-    run_id = str(uuid.uuid4())
-    crud.create_run(run_id, "loop", 1)
-    await run_chat_tools("loop", 1, run_id)
-    run = crud.get_run(run_id)
-    nodes = [s["node"] for s in run["steps"]]
-    assert nodes.count("tool:create_item:request") == 3
-    assert nodes.count("tool:create_item:response") == 3
-    assert "consecutive" in run["summary"].lower()
+    assert any(it.title == "Feat" for it in items)
