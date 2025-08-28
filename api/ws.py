@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
-from orchestrator.core_loop import graph, LoopState, Memory
+from orchestrator.core_loop import run_chat_tools
 from orchestrator import crud, stream
 
 router = APIRouter()
@@ -54,23 +54,11 @@ async def stream_chat(ws: WebSocket):
             run_id = str(uuid4())
             crud.create_run(run_id, objective, project_id)
             queue = stream.register(run_id)
-            state = LoopState(
-                objective=objective,
-                project_id=project_id,
-                run_id=run_id,
-                mem_obj=Memory(),
-            )
             await ws.send_json({"run_id": run_id, "status": "started"})
 
             async def runner() -> None:
                 try:
-                    async for _ in graph.astream(state):
-                        pass
-                    render = getattr(state, "render", None) or {
-                        "html": "",
-                        "summary": "",
-                    }
-                    crud.finish_run(run_id, render.get("html", ""), render.get("summary", ""))
+                    await run_chat_tools(objective, project_id, run_id)
                 except Exception as exc:  # pragma: no cover - unexpected errors
                     crud.finish_run(run_id, "", str(exc))
                 finally:
