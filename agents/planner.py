@@ -11,7 +11,7 @@ class PydanticOutputParser:
     def parse(self, text: str) -> Any:
         return self.model.model_validate_json(text)
 
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
+llm = ChatOpenAI(model="gpt-5", temperature=0.2)
 parser = PydanticOutputParser(Plan)
 
 def make_plan(objective: str) -> Plan:

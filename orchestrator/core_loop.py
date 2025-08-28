@@ -35,7 +35,7 @@ async def run_chat_tools(objective: str, project_id: int | None, run_id: str, ma
     logger.info("TOOLS names: %s", [getattr(t, "name", None) for t in LC_TOOLS])
 
     # 1) Prépare le modèle + binding outils (LangChain)
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    llm = ChatOpenAI(model="gpt-5", temperature=0)
     llm = llm.bind_tools(LC_TOOLS)
 
     # 2) Historique messages

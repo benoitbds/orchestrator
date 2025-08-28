@@ -43,7 +43,7 @@ def render_exec(exec_result: ExecResult, objective: str) -> RenderResult:
 # Agent de génération de propositions de features pour un épic
 load_dotenv()
 
-llm_feature = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
+llm_feature = ChatOpenAI(model="gpt-5", temperature=0.2)
 feature_parser = PydanticOutputParser(pydantic_object=FeatureProposals)
 
 SYSTEM_FEATURE_PROMPT = (
