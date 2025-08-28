@@ -1,4 +1,5 @@
 import uuid
+import types
 import pytest
 
 from orchestrator import crud
@@ -9,32 +10,23 @@ from orchestrator import core_loop
 crud.init_db()
 
 
-class _Executor:
-    def __init__(self, agent, tools, verbose, max_iterations, handle_parsing_errors):
-        self.tools = {t.name: t for t in tools}
-        self.calls = []
-
-    async def ainvoke(self, inputs, config):
-        run_id = config["configurable"]["run_id"]
-        project_id = config["configurable"]["project_id"]
-        for call in self.calls:
-            kwargs = dict(call["args"])
-            kwargs.setdefault("project_id", project_id)
-            kwargs["run_id"] = run_id
-            await self.tools[call["name"]].coroutine(**kwargs)
-        return {"output": "done"}
+class ToolCall(dict):
+    def __getattr__(self, item):
+        return self[item]
 
 
-def _setup_executor(monkeypatch, calls):
-    def factory(agent, tools, verbose=False, max_iterations=10, handle_parsing_errors=True):
-        ex = _Executor(agent, tools, verbose, max_iterations, handle_parsing_errors)
-        ex.calls = calls
-        return ex
+class FakeLLM:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = 0
 
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: object())
-    import langchain.agents as agents_mod
-    monkeypatch.setattr(agents_mod, "create_tool_calling_agent", lambda llm, tools, prompt: object())
-    monkeypatch.setattr(agents_mod, "AgentExecutor", factory)
+    def bind_tools(self, tools):
+        return self
+
+    async def ainvoke(self, messages):
+        res = self.responses[self.calls]
+        self.calls += 1
+        return res
 
 
 @pytest.mark.asyncio
@@ -44,8 +36,9 @@ async def test_run_chat_tools_creates_item(monkeypatch, tmp_path):
     crud.init_db()
     crud.create_project(ProjectCreate(name="Proj", description=""))
 
-    calls = [{"name": "create_item", "args": {"title": "Feat", "type": "Feature"}}]
-    _setup_executor(monkeypatch, calls)
+    ai_call = ToolCall(name="create_item", args={"title": "Feat", "type": "Feature"}, id="0")
+    responses = [types.SimpleNamespace(content="", tool_calls=[ai_call]), types.SimpleNamespace(content="done", tool_calls=[])]
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
 
     run_id = str(uuid.uuid4())
     crud.create_run(run_id, "Create", 1)

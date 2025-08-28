@@ -2,6 +2,7 @@
 from __future__ import annotations
 import sqlite3
 import json
+import os
 from datetime import datetime, timezone
 from typing import List, Optional, Any
 from uuid import uuid4
@@ -10,9 +11,11 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ConfigDict
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
 
 from agents.planner import make_plan, TOOL_SYSTEM_PROMPT
 from agents.schemas import ExecResult, Plan
+from agents.tools import TOOLS as LC_TOOLS  # StructuredTool list (async funcs)
 import threading
 from orchestrator import crud, stream
 
@@ -168,58 +171,97 @@ async def run_chat_tools(
     run_id: str,
     max_tool_calls: int = 10,
 ) -> dict:
-    """Execute a LangChain tool-calling agent against our StructuredTools.
-
-    The agent is configured to always prefer tool use when helpful. We forward
-    ``run_id`` and ``project_id`` via the ``config`` mechanism so every tool call
-    receives these values automatically.
-    """
-    import os
-    from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-    from langchain.agents import AgentExecutor, create_tool_calling_agent
-    from agents.tools import TOOLS, set_current_run
-    from agents.planner import TOOL_SYSTEM_PROMPT
-
     logger.info("FULL-AGENT MODE: starting run_chat_tools(project_id=%s)", project_id)
     logger.info("OPENAI_API_KEY set: %s", bool(os.getenv("OPENAI_API_KEY")))
-    logger.info("TOOLS names: %s", [getattr(t, "name", None) for t in TOOLS])
+    logger.info("TOOLS names: %s", [getattr(t, "name", None) for t in LC_TOOLS])
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", TOOL_SYSTEM_PROMPT + "\nYou can use tools. Always operate on project_id if provided."),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ])
-
+    # 1) Prepare model and bind tools
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    agent = create_tool_calling_agent(llm, TOOLS, prompt)
-    executor = AgentExecutor(
-        agent=agent,
-        tools=TOOLS,
-        verbose=False,
-        max_iterations=max_tool_calls,
-        handle_parsing_errors=True,
-    )
+    llm = llm.bind_tools(LC_TOOLS)
 
-    inputs = {"input": objective}
-    config = {"configurable": {"run_id": run_id, "project_id": project_id}}
-    set_current_run(run_id)
+    # 2) Message history
+    messages: list = [
+        SystemMessage(content=TOOL_SYSTEM_PROMPT + "\nIf the user asks to create/update/delete/move/list/get/summarize, you MUST call a tool."),
+        HumanMessage(content=objective if project_id is None else f"{objective}\n\nproject_id={project_id}"),
+    ]
 
-    try:
-        result = await executor.ainvoke(inputs, config=config)
-    except Exception as e:  # pragma: no cover - defensive
-        summary = f"Agent error: {e}"
-        html = _build_html(summary, {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []})
-        crud.record_run_step(run_id, "error", summary)
-        crud.finish_run(run_id, html, summary, {})
+    artifacts: dict[str, list[int]] = {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []}
+    consecutive_errors = 0
+
+    for _ in range(max_tool_calls):
+        rsp: AIMessage = await llm.ainvoke(messages)
+        logger.info("AIMessage content: %r", getattr(rsp, "content", None))
+        logger.info("AIMessage tool_calls: %s", getattr(rsp, "tool_calls", None))
+
+        tcs = getattr(rsp, "tool_calls", None) or []
+        if tcs:
+            for tc in tcs:
+                name = getattr(tc, "name", None)
+                args = getattr(tc, "args", {}) or {}
+                call_id = getattr(tc, "id", "tool_call_0")
+
+                if "run_id" not in args:
+                    args["run_id"] = run_id
+                if project_id is not None and "project_id" not in args:
+                    args["project_id"] = project_id
+
+                tool = next((t for t in LC_TOOLS if getattr(t, "name", None) == name), None)
+                if tool is None:
+                    err = f"Unknown tool requested: {name}"
+                    crud.record_run_step(run_id, "error", err)
+                    summary = err
+                    html = _build_html(summary, artifacts)
+                    crud.finish_run(run_id, html, summary, artifacts)
+                    stream.publish(run_id, {"node": "write", "summary": summary})
+                    stream.close(run_id); stream.discard(run_id)
+                    return {"html": html}
+
+                try:
+                    result_str = await tool.ainvoke(args)
+                except Exception as e:
+                    result_str = json.dumps({"ok": False, "error": str(e)})
+
+                try:
+                    result = json.loads(result_str)
+                except Exception:
+                    result = {"ok": True, "raw": result_str}
+
+                ok = bool(result.get("ok", True))
+                if ok:
+                    consecutive_errors = 0
+                    if name == "create_item" and "item_id" in result:
+                        artifacts["created_item_ids"].append(result["item_id"])
+                    elif name == "update_item" and "item_id" in result:
+                        artifacts["updated_item_ids"].append(result["item_id"])
+                    elif name == "delete_item" and "item_id" in result:
+                        artifacts["deleted_item_ids"].append(result["item_id"])
+                else:
+                    consecutive_errors += 1
+                    if consecutive_errors >= 3:
+                        summary = "Too many consecutive tool errors"
+                        crud.record_run_step(run_id, "error", summary)
+                        html = _build_html(summary, artifacts)
+                        crud.finish_run(run_id, html, summary, artifacts)
+                        stream.publish(run_id, {"node": "write", "summary": summary})
+                        stream.close(run_id); stream.discard(run_id)
+                        return {"html": html}
+
+                messages.append(ToolMessage(tool_call_id=call_id, content=result_str, name=name))
+            continue
+
+        summary = rsp.content or "No tool call."
+        html = _build_html(summary, artifacts)
+        crud.finish_run(run_id, html, summary, artifacts)
+        stream.publish(run_id, {"node":"write","summary": summary})
+        stream.close(run_id); stream.discard(run_id)
         return {"html": html}
 
-    summary = result.get("output", "") or "Done."
-    artifacts = {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []}
-    stream.publish(run_id, {"node": "write", "summary": summary})
+    summary = "Max tool calls exceeded"
     html = _build_html(summary, artifacts)
+    crud.record_run_step(run_id, "error", summary)
     crud.finish_run(run_id, html, summary, artifacts)
-    stream.close(run_id)
-    stream.discard(run_id)
+    stream.publish(run_id, {"node":"write","summary": summary})
+    stream.close(run_id); stream.discard(run_id)
     return {"html": html}
 
 

@@ -1,4 +1,5 @@
 import types
+import json
 import pytest
 
 from orchestrator import core_loop, crud
@@ -6,42 +7,44 @@ from orchestrator import core_loop, crud
 crud.init_db()
 
 
-class _FakeExecutor:
-    def __init__(self, agent, tools, verbose, max_iterations, handle_parsing_errors):
-        self.tools = tools
-
-    async def ainvoke(self, inputs, config):
-        run_id = config["configurable"]["run_id"]
-        project_id = config["configurable"]["project_id"]
-        await self.tools[0].coroutine(run_id=run_id, project_id=project_id)
-        return {"output": "done"}
+class ToolCall(dict):
+    def __getattr__(self, item):
+        return self[item]
 
 
-class _ErrorExecutor:
-    def __init__(self, *a, **k):
-        pass
+class FakeLLM:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = 0
 
-    async def ainvoke(self, inputs, config):
-        raise RuntimeError("boom")
+    def bind_tools(self, tools):
+        return self
+
+    async def ainvoke(self, messages):
+        res = self.responses[self.calls]
+        self.calls += 1
+        return res
 
 
 @pytest.mark.asyncio
-async def test_run_chat_tools_injects_ids(monkeypatch):
+async def test_run_chat_tools_injects_ids(monkeypatch, tmp_path):
     captured = {}
 
-    async def fake_tool(run_id: str, project_id: int | None = None):
-        captured["run_id"] = run_id
-        captured["project_id"] = project_id
-        return "ok"
+    async def fake_tool(args):
+        captured.update(args)
+        return json.dumps({"ok": True})
 
-    tool = types.SimpleNamespace(name="t", coroutine=fake_tool)
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: object())
-    import langchain.agents as agents_mod
-    monkeypatch.setattr(agents_mod, "create_tool_calling_agent", lambda llm, tools, prompt: object())
-    monkeypatch.setattr(agents_mod, "AgentExecutor", _FakeExecutor)
-    import agents.tools as tool_mod
-    monkeypatch.setattr(tool_mod, "TOOLS", [tool])
+    tool = types.SimpleNamespace(name="t", ainvoke=fake_tool)
+    ai_call = ToolCall(name="t", args={}, id="0")
+    responses = [
+        types.SimpleNamespace(content="", tool_calls=[ai_call]),
+        types.SimpleNamespace(content="done", tool_calls=[]),
+    ]
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
+    monkeypatch.setattr(core_loop, "LC_TOOLS", [tool])
+
+    monkeypatch.setattr(crud, "DATABASE_URL", str(tmp_path / "db.sqlite"))
+    crud.init_db()
 
     run_id = "run-inject"
     crud.create_run(run_id, "obj", 1)
@@ -50,37 +53,32 @@ async def test_run_chat_tools_injects_ids(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_chat_tools_handles_error(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: object())
-    import langchain.agents as agents_mod
-    monkeypatch.setattr(agents_mod, "create_tool_calling_agent", lambda llm, tools, prompt: object())
-    monkeypatch.setattr(agents_mod, "AgentExecutor", _ErrorExecutor)
-    import agents.tools as tool_mod
-    monkeypatch.setattr(tool_mod, "TOOLS", [])
+async def test_run_chat_tools_handles_unknown_tool(monkeypatch, tmp_path):
+    ai_call = ToolCall(name="unknown", args={}, id="0")
+    responses = [types.SimpleNamespace(content="", tool_calls=[ai_call])]
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
+    monkeypatch.setattr(core_loop, "LC_TOOLS", [])
+
+    monkeypatch.setattr(crud, "DATABASE_URL", str(tmp_path / "db.sqlite"))
+    crud.init_db()
 
     run_id = "run-err"
     crud.create_run(run_id, "obj", 1)
     result = await core_loop.run_chat_tools("obj", 1, run_id)
-    assert "Agent error" in result["html"]
+    assert "Unknown tool" in result["html"]
 
 
 @pytest.mark.asyncio
-async def test_run_chat_tools_returns_summary(monkeypatch):
-    class _SummaryExecutor(_FakeExecutor):
-        async def ainvoke(self, inputs, config):
-            return {"output": "all good"}
-
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: object())
-    import langchain.agents as agents_mod
-    monkeypatch.setattr(agents_mod, "create_tool_calling_agent", lambda llm, tools, prompt: object())
-    monkeypatch.setattr(agents_mod, "AgentExecutor", _SummaryExecutor)
-    import agents.tools as tool_mod
-    monkeypatch.setattr(tool_mod, "TOOLS", [])
+async def test_run_chat_tools_returns_summary(monkeypatch, tmp_path):
+    responses = [types.SimpleNamespace(content="all good", tool_calls=[])]
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
+    monkeypatch.setattr(core_loop, "LC_TOOLS", [])
 
     published = {}
     monkeypatch.setattr(core_loop.stream, "publish", lambda rid, msg: published.setdefault("m", msg))
+
+    monkeypatch.setattr(crud, "DATABASE_URL", str(tmp_path / "db.sqlite"))
+    crud.init_db()
 
     run_id = "run-sum"
     crud.create_run(run_id, "obj", 1)
@@ -90,30 +88,20 @@ async def test_run_chat_tools_returns_summary(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_chat_tools_sets_current_run(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: object())
-    import langchain.agents as agents_mod
-    monkeypatch.setattr(agents_mod, "create_tool_calling_agent", lambda llm, tools, prompt: object())
+async def test_run_chat_tools_stops_after_errors(monkeypatch, tmp_path):
+    async def failing_tool(args):
+        return json.dumps({"ok": False})
 
-    class _Exec:
-        def __init__(self, *a, **k):
-            pass
+    tool = types.SimpleNamespace(name="t", ainvoke=failing_tool)
+    ai_call = ToolCall(name="t", args={}, id="0")
+    responses = [types.SimpleNamespace(content="", tool_calls=[ai_call]) for _ in range(3)]
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
+    monkeypatch.setattr(core_loop, "LC_TOOLS", [tool])
 
-        async def ainvoke(self, inputs, config):
-            return {"output": "ok"}
+    monkeypatch.setattr(crud, "DATABASE_URL", str(tmp_path / "db.sqlite"))
+    crud.init_db()
 
-    monkeypatch.setattr(agents_mod, "AgentExecutor", _Exec)
-    import agents.tools as tool_mod
-    called = {}
-
-    def fake_set_current_run(rid):
-        called["rid"] = rid
-
-    monkeypatch.setattr(tool_mod, "set_current_run", fake_set_current_run)
-    monkeypatch.setattr(tool_mod, "TOOLS", [])
-
-    run_id = "run-hook"
+    run_id = "run-fail"
     crud.create_run(run_id, "obj", 1)
-    await core_loop.run_chat_tools("obj", 1, run_id)
-    assert called["rid"] == run_id
+    result = await core_loop.run_chat_tools("obj", 1, run_id)
+    assert "Too many consecutive tool errors" in result["html"]
