@@ -120,7 +120,8 @@ async def test_run_chat_tools_logs_tool_execution(monkeypatch, caplog):
     assert result["html"]
     assert "FULL-AGENT MODE: starting run_chat_tools(project_id=1)" in caplog.text
     assert "OPENAI_API_KEY set: True" in caplog.text
-    assert "TOOLS loaded:" in caplog.text
+    assert "TOOLS types:" in caplog.text
+    assert "TOOLS names:" in caplog.text
     assert "Model bound to" in caplog.text
     assert "LLM tool_calls:" in caplog.text
     assert "DISPATCH tool=create_item" in caplog.text
