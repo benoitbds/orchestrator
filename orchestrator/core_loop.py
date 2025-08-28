@@ -48,7 +48,9 @@ async def run_chat_tools(objective: str, project_id: int | None, run_id: str, ma
     consecutive_errors = 0
 
     for _ in range(max_tool_calls):
-        rsp: AIMessage = await llm.ainvoke(messages)
+        # ChatOpenAI fournit uniquement une API synchrone. Exécuter l'appel dans un
+        # thread permet de ne pas bloquer la boucle d'événements.
+        rsp: AIMessage = await asyncio.to_thread(llm.invoke, messages)
         logger.info("AIMessage content: %r", getattr(rsp, "content", None))
         logger.info("AIMessage tool_calls: %s", getattr(rsp, "tool_calls", None))
 
