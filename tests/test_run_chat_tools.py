@@ -87,3 +87,33 @@ async def test_run_chat_tools_returns_summary(monkeypatch):
     out = await core_loop.run_chat_tools("obj", 1, run_id)
     assert "all good" in out["html"]
     assert published["m"] == {"node": "write", "summary": "all good"}
+
+
+@pytest.mark.asyncio
+async def test_run_chat_tools_sets_current_run(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: object())
+    import langchain.agents as agents_mod
+    monkeypatch.setattr(agents_mod, "create_tool_calling_agent", lambda llm, tools, prompt: object())
+
+    class _Exec:
+        def __init__(self, *a, **k):
+            pass
+
+        async def ainvoke(self, inputs, config):
+            return {"output": "ok"}
+
+    monkeypatch.setattr(agents_mod, "AgentExecutor", _Exec)
+    import agents.tools as tool_mod
+    called = {}
+
+    def fake_set_current_run(rid):
+        called["rid"] = rid
+
+    monkeypatch.setattr(tool_mod, "set_current_run", fake_set_current_run)
+    monkeypatch.setattr(tool_mod, "TOOLS", [])
+
+    run_id = "run-hook"
+    crud.create_run(run_id, "obj", 1)
+    await core_loop.run_chat_tools("obj", 1, run_id)
+    assert called["rid"] == run_id
