@@ -1,32 +1,22 @@
 """Structured tool specifications exposed to LLMs."""
 
-from typing import Literal, Optional, List
+from typing import Optional, Literal, List, Dict
 
-from langchain_core.tools import StructuredTool
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 
-from .handlers import (
-    create_item_tool,
-    update_item_tool,
-    find_item_tool,
-    get_item_tool,
-    list_items_tool,
-    delete_item_tool,
-    move_item_tool,
-    summarize_project_tool,
-    bulk_create_features_tool,
-)
+try:  # LangChain 0.2.x
+    from langchain.tools import StructuredTool
+except Exception:  # pragma: no cover - fallback for older versions
+    from langchain_core.tools import StructuredTool
 
 
-# ==== Schemas d'arguments ====
+# --- Pydantic v2 arg schemas ---
 class CreateItemArgs(BaseModel):
-    type: Literal["Epic", "Capability", "Feature", "US", "UC"] = Field(
-        ..., description="Item type"
-    )
-    title: str = Field(..., description="Item title")
-    project_id: int = Field(..., description="Project ID")
-    parent_id: Optional[int] = Field(None, description="Parent item ID if any")
-    description: Optional[str] = Field(None, description="Optional description")
+    type: Literal["Epic", "Capability", "Feature", "US", "UC"]
+    title: str
+    project_id: int
+    parent_id: Optional[int] = None
+    description: Optional[str] = None
 
 
 class UpdateItemArgs(BaseModel):
@@ -76,85 +66,99 @@ class SummarizeProjectArgs(BaseModel):
 class BulkCreateFeaturesArgs(BaseModel):
     project_id: int
     parent_id: int
-    items: List[dict] = Field(
+    items: List[Dict[str, Optional[str]]] = Field(
         ..., description='List of {"title": str, "description": Optional[str]}'
     )
 
 
-# ==== Déclarations de tools (pour function-calling uniquement) ====
-# La fonction lambda n'est jamais exécutée (on utilise HANDLERS côté serveur).
-create_item_lc = StructuredTool.from_function(
+def _noop(**kwargs) -> str:  # jamais exécuté
+    return "noop"
+
+
+# --- Déclarations des tools (BaseTool) ---
+create_item_decl = StructuredTool.from_function(
     name="create_item",
-    description="Create a backlog item (Epic/Capability/Feature/US/UC). Avoid duplicates under the same parent.",
-    func=lambda **kwargs: "noop",
+    description="Create a backlog item (Epic/Capability/Feature/US/UC). Avoid duplicates under same parent.",
+    func=_noop,
     args_schema=CreateItemArgs,
 )
-update_item_lc = StructuredTool.from_function(
+update_item_decl = StructuredTool.from_function(
     name="update_item",
     description="Update fields of an existing item by ID.",
-    func=lambda **kwargs: "noop",
+    func=_noop,
     args_schema=UpdateItemArgs,
 )
-find_item_lc = StructuredTool.from_function(
+find_item_decl = StructuredTool.from_function(
     name="find_item",
     description="Find items by project/type/query for disambiguation.",
-    func=lambda **kwargs: "noop",
+    func=_noop,
     args_schema=FindItemArgs,
 )
-get_item_lc = StructuredTool.from_function(
+get_item_decl = StructuredTool.from_function(
     name="get_item",
     description="Get a single item by ID or by (type,title,project_id).",
-    func=lambda **kwargs: "noop",
+    func=_noop,
     args_schema=GetItemArgs,
 )
-list_items_lc = StructuredTool.from_function(
+list_items_decl = StructuredTool.from_function(
     name="list_items",
-    description="List items within a project, optionally filter by type/query.",
-    func=lambda **kwargs: "noop",
+    description="List items in a project; filter by type/query.",
+    func=_noop,
     args_schema=ListItemsArgs,
 )
-delete_item_lc = StructuredTool.from_function(
+delete_item_decl = StructuredTool.from_function(
     name="delete_item",
-    description="Delete an item (and descendants).",
-    func=lambda **kwargs: "noop",
+    description="Delete an item and its descendants.",
+    func=_noop,
     args_schema=DeleteItemArgs,
 )
-move_item_lc = StructuredTool.from_function(
+move_item_decl = StructuredTool.from_function(
     name="move_item",
-    description="Reparent an item to a new parent (hierarchy rules enforced).",
-    func=lambda **kwargs: "noop",
+    description="Reparent an item (hierarchy enforced).",
+    func=_noop,
     args_schema=MoveItemArgs,
 )
-summarize_project_lc = StructuredTool.from_function(
+summarize_project_decl = StructuredTool.from_function(
     name="summarize_project",
-    description="Summarize the project tree (counts and structure).",
-    func=lambda **kwargs: "noop",
+    description="Summarize the project tree and counts.",
+    func=_noop,
     args_schema=SummarizeProjectArgs,
 )
-bulk_create_features_lc = StructuredTool.from_function(
+bulk_create_features_decl = StructuredTool.from_function(
     name="bulk_create_features",
-    description="Create multiple Features under a given parent, skipping duplicates.",
-    func=lambda **kwargs: "noop",
+    description="Create multiple Features under a parent; skip duplicates.",
+    func=_noop,
     args_schema=BulkCreateFeaturesArgs,
 )
 
 
-# ==== Liste des tools exposés à LangChain ====
-TOOLS = [
-    create_item_lc,
-    update_item_lc,
-    find_item_lc,
-    get_item_lc,
-    list_items_lc,
-    delete_item_lc,
-    move_item_lc,
-    summarize_project_lc,
-    bulk_create_features_lc,
+TOOLS: List[StructuredTool] = [
+    create_item_decl,
+    update_item_decl,
+    find_item_decl,
+    get_item_decl,
+    list_items_decl,
+    delete_item_decl,
+    move_item_decl,
+    summarize_project_decl,
+    bulk_create_features_decl,
 ]
 
 
-# ==== HANDLERS réels (exécutés par notre boucle outils) ====
-# (ce mapping existait déjà chez toi)
+# --- Handlers réels (exécution serveur) ---
+from .handlers import (  # noqa: E402
+    create_item_tool,
+    update_item_tool,
+    find_item_tool,
+    get_item_tool,
+    list_items_tool,
+    delete_item_tool,
+    move_item_tool,
+    summarize_project_tool,
+    bulk_create_features_tool,
+)
+
+
 HANDLERS = {
     "create_item": create_item_tool,
     "update_item": update_item_tool,
