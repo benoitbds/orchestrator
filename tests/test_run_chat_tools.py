@@ -1,6 +1,4 @@
-import json
 import types
-
 import pytest
 
 from orchestrator import core_loop, crud
@@ -8,294 +6,84 @@ from orchestrator import core_loop, crud
 crud.init_db()
 
 
-class _FakeChatWithTool:
-    def __init__(self, *args, **kwargs):
-        self._calls = 0
+class _FakeExecutor:
+    def __init__(self, agent, tools, verbose, max_iterations, handle_parsing_errors):
+        self.tools = tools
 
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-    def invoke(self, messages):
-        self._calls += 1
-        if self._calls == 1:
-            return types.SimpleNamespace(
-                content="",
-                tool_calls=[
-                    types.SimpleNamespace(
-                        id="1",
-                        name="create_item",
-                        args={
-                            "title": "t",
-                            "type": "Epic",
-                            "project_id": 1,
-                            "secret": "sh",
-                        },
-                    )
-                ],
-                additional_kwargs={},
-            )
-        return types.SimpleNamespace(content="done", tool_calls=None, additional_kwargs={})
+    async def ainvoke(self, inputs, config):
+        run_id = config["configurable"]["run_id"]
+        project_id = config["configurable"]["project_id"]
+        await self.tools[0].coroutine(run_id=run_id, project_id=project_id)
+        return {"output": "done"}
 
 
-class _FakeChatNoTool:
-    def __init__(self, *args, **kwargs):
+class _ErrorExecutor:
+    def __init__(self, *a, **k):
         pass
 
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-    def invoke(self, messages):
-        return types.SimpleNamespace(content="done", additional_kwargs={})
-
-
-class _FakeChatDictTool:
-    def __init__(self, *args, **kwargs):
-        self._calls = 0
-
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-    def invoke(self, messages):
-        self._calls += 1
-        if self._calls == 1:
-            return types.SimpleNamespace(
-                content="",
-                tool_calls=[
-                    {
-                        "id": "1",
-                        "function": {
-                            "name": "create_item",
-                            "arguments": json.dumps({
-                                "title": "t",
-                                "type": "Epic",
-                                "project_id": 1,
-                                "secret": "sh",
-                            }),
-                        },
-                    }
-                ],
-                additional_kwargs={},
-            )
-        return types.SimpleNamespace(content="done", tool_calls=None, additional_kwargs={})
-
-
-class _FakeChatInvalidArgs:
-    def __init__(self, *args, **kwargs):
-        self._calls = 0
-
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-    def invoke(self, messages):
-        self._calls += 1
-        if self._calls == 1:
-            return types.SimpleNamespace(
-                content="",
-                tool_calls=[
-                    {
-                        "id": "1",
-                        "function": {
-                            "name": "create_item",
-                            "arguments": "{not json",
-                        },
-                    }
-                ],
-                additional_kwargs={},
-            )
-        return types.SimpleNamespace(content="done", tool_calls=None, additional_kwargs={})
+    async def ainvoke(self, inputs, config):
+        raise RuntimeError("boom")
 
 
 @pytest.mark.asyncio
-async def test_run_chat_tools_logs_tool_execution(monkeypatch, caplog):
+async def test_run_chat_tools_injects_ids(monkeypatch):
+    captured = {}
+
+    async def fake_tool(run_id: str, project_id: int | None = None):
+        captured["run_id"] = run_id
+        captured["project_id"] = project_id
+        return "ok"
+
+    tool = types.SimpleNamespace(name="t", coroutine=fake_tool)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatWithTool)
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: object())
+    import langchain.agents as agents_mod
+    monkeypatch.setattr(agents_mod, "create_tool_calling_agent", lambda llm, tools, prompt: object())
+    monkeypatch.setattr(agents_mod, "AgentExecutor", _FakeExecutor)
+    import agents.tools as tool_mod
+    monkeypatch.setattr(tool_mod, "TOOLS", [tool])
 
-    async def fake_handler(args):
-        return {"ok": True, "item_id": 1}
-
-    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
-
-    caplog.set_level("INFO")
-    result = await core_loop.run_chat_tools("do", 1, "run1")
-    assert result["html"]
-    assert "FULL-AGENT MODE: starting run_chat_tools(project_id=1)" in caplog.text
-    assert "OPENAI_API_KEY set: True" in caplog.text
-    assert "TOOLS types:" in caplog.text
-    assert "TOOLS names:" in caplog.text
-    assert "Model bound to" in caplog.text
-    assert "LLM tool_calls:" in caplog.text
-    assert "DISPATCH tool=create_item" in caplog.text
+    run_id = "run-inject"
+    crud.create_run(run_id, "obj", 1)
+    await core_loop.run_chat_tools("obj", 1, run_id)
+    assert captured == {"run_id": run_id, "project_id": 1}
 
 
 @pytest.mark.asyncio
-async def test_run_chat_tools_logs_final_only(monkeypatch, caplog):
+async def test_run_chat_tools_handles_error(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatNoTool)
-    caplog.set_level("INFO")
-    result = await core_loop.run_chat_tools("do", 1, "run2")
-    assert result["html"]
-    assert "LLM tool_calls: None" in caplog.text
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: object())
+    import langchain.agents as agents_mod
+    monkeypatch.setattr(agents_mod, "create_tool_calling_agent", lambda llm, tools, prompt: object())
+    monkeypatch.setattr(agents_mod, "AgentExecutor", _ErrorExecutor)
+    import agents.tools as tool_mod
+    monkeypatch.setattr(tool_mod, "TOOLS", [])
+
+    run_id = "run-err"
+    crud.create_run(run_id, "obj", 1)
+    result = await core_loop.run_chat_tools("obj", 1, run_id)
+    assert "Agent error" in result["html"]
 
 
 @pytest.mark.asyncio
-async def test_run_chat_tools_logs_api_key_missing(monkeypatch, caplog):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatNoTool)
-    caplog.set_level("INFO")
-    await core_loop.run_chat_tools("do", 1, "run3")
-    assert "OPENAI_API_KEY set: False" in caplog.text
+async def test_run_chat_tools_returns_summary(monkeypatch):
+    class _SummaryExecutor(_FakeExecutor):
+        async def ainvoke(self, inputs, config):
+            return {"output": "all good"}
 
-
-@pytest.mark.asyncio
-async def test_run_chat_tools_handles_dict_tool_call(monkeypatch, caplog):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatDictTool)
+    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: object())
+    import langchain.agents as agents_mod
+    monkeypatch.setattr(agents_mod, "create_tool_calling_agent", lambda llm, tools, prompt: object())
+    monkeypatch.setattr(agents_mod, "AgentExecutor", _SummaryExecutor)
+    import agents.tools as tool_mod
+    monkeypatch.setattr(tool_mod, "TOOLS", [])
 
-    async def fake_handler(args):
-        assert isinstance(args, dict)
-        assert args["title"] == "t"
-        return {"ok": True, "item_id": 1}
+    published = {}
+    monkeypatch.setattr(core_loop.stream, "publish", lambda rid, msg: published.setdefault("m", msg))
 
-    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
-
-    caplog.set_level("INFO")
-    result = await core_loop.run_chat_tools("do", 1, "run-dict")
-    assert result["html"]
-    assert "DISPATCH tool=create_item" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_run_chat_tools_handles_invalid_json_args(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatInvalidArgs)
-
-    captured: dict = {}
-
-    async def fake_handler(args):
-        captured["args"] = args
-        return {"ok": True, "item_id": 1}
-
-    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
-
-    result = await core_loop.run_chat_tools("do", 1, "run-invalid")
-    assert result["html"]
-    assert captured["args"] == {}
-
-
-@pytest.mark.asyncio
-async def test_run_chat_tools_streams_tool_events(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatWithTool)
-
-    async def fake_handler(args):
-        return {"ok": True, "item_id": 1}
-
-    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
-
-    published: list[dict] = []
-
-    def fake_publish(run_id, chunk):
-        published.append(chunk)
-
-    closed = {}
-    discarded = {}
-
-    monkeypatch.setattr(core_loop.stream, "publish", fake_publish)
-    monkeypatch.setattr(core_loop.stream, "close", lambda rid: closed.setdefault("v", rid))
-    monkeypatch.setattr(core_loop.stream, "discard", lambda rid: discarded.setdefault("v", rid))
-
-    await core_loop.run_chat_tools("do", 1, "run-stream")
-
-    assert any(
-        p.get("node") == "tool:create_item:request"
-        and p.get("args") == {"title": "t", "type": "Epic", "project_id": 1}
-        for p in published
-    )
-    assert any(p.get("node") == "tool:create_item:response" for p in published)
-    assert any(p.get("node") == "write" and p.get("summary") == "done" for p in published)
-    assert closed["v"] == "run-stream"
-    assert discarded["v"] == "run-stream"
-
-
-@pytest.mark.asyncio
-async def test_run_chat_tools_streams_final_without_tool(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(core_loop, "ChatOpenAI", _FakeChatNoTool)
-
-    published: list[dict] = []
-    monkeypatch.setattr(core_loop.stream, "publish", lambda rid, chunk: published.append(chunk))
-    monkeypatch.setattr(core_loop.stream, "close", lambda rid: published.append({"node": "closed"}))
-    monkeypatch.setattr(core_loop.stream, "discard", lambda rid: published.append({"node": "discard"}))
-
-    await core_loop.run_chat_tools("do", 1, "run-no-tool")
-
-    assert published[0].get("node") == "write" and published[0].get("summary") == "done"
-    assert {"node": "closed"} in published
-    assert {"node": "discard"} in published
-
-
-class _FakeChatBigArgs:
-    def __init__(self, *args, **kwargs):
-        self._calls = 0
-
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-    def invoke(self, messages):
-        self._calls += 1
-        if self._calls == 1:
-            return types.SimpleNamespace(
-                content="",
-                tool_calls=[
-                    types.SimpleNamespace(
-                        id="1",
-                        name="create_item",
-                        args={"text": "x" * 200},
-                    )
-                ],
-                additional_kwargs={},
-            )
-        return types.SimpleNamespace(content="done", tool_calls=None, additional_kwargs={})
-
-
-@pytest.mark.asyncio
-async def test_run_chat_tools_aborts_on_tool_error(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    fake_chat = _FakeChatWithTool()
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: fake_chat)
-
-    async def fake_handler(args):
-        return {"ok": False, "error": "boom"}
-
-    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
-
-    run_id = "run-error"
-    crud.create_run(run_id, "do", 1)
-    result = await core_loop.run_chat_tools("do", 1, run_id)
-    run = crud.get_run(run_id)
-    assert any("boom" in s["content"] for s in run["steps"] if s["node"] == "error")
-    assert fake_chat._calls == 2
-
-
-@pytest.mark.asyncio
-async def test_run_chat_tools_limits_tool_arg_tokens(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    fake_chat = _FakeChatBigArgs()
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: fake_chat)
-    monkeypatch.setattr(core_loop, "MAX_TOOL_ARG_TOKENS", 5)
-
-    called = {}
-
-    async def fake_handler(args):
-        called["hit"] = True
-        return {"ok": True, "item_id": 1}
-
-    monkeypatch.setitem(core_loop.HANDLERS, "create_item", fake_handler)
-
-    run_id = "run-big-args"
-    crud.create_run(run_id, "do", 1)
-    result = await core_loop.run_chat_tools("do", 1, run_id)
-    assert "arguments too long" in result["html"]
-    assert "hit" not in called
-    run = crud.get_run(run_id)
-    assert "arguments too long" in run["summary"]
+    run_id = "run-sum"
+    crud.create_run(run_id, "obj", 1)
+    out = await core_loop.run_chat_tools("obj", 1, run_id)
+    assert "all good" in out["html"]
+    assert published["m"] == {"node": "write", "summary": "all good"}

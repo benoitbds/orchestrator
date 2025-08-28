@@ -16,19 +16,17 @@ transport = ASGITransport(app=app)
 @pytest.mark.asyncio
 async def test_chat_returns_html(monkeypatch):
     """Run completes immediately and returns HTML."""
-    from langchain_openai import ChatOpenAI
+    async def fake_runner(obj, project_id, run_id):
+        crud.finish_run(run_id, "<p>done</p>", "done", {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []})
+        return {"html": "<p>done</p>"}
 
-    def fake_invoke(self, messages):
-        return types.SimpleNamespace(content="done", additional_kwargs={})
-
-    monkeypatch.setattr(ChatOpenAI, "bind_tools", lambda self, tools, **kwargs: self)
-    monkeypatch.setattr(ChatOpenAI, "invoke", fake_invoke)
+    monkeypatch.setattr("api.main.run_chat_tools", fake_runner)
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.post("/chat", json={"objective": "demo", "project_id": 1})
     data = resp.json()
     assert resp.status_code == 200
-    assert data["run_id"] and data["html"]
+    assert data["run_id"] and data["html"] == "<p>done</p>"
     run = crud.get_run(data["run_id"])
     assert run["status"] == "done"
 
