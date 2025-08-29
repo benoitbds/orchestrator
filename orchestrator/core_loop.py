@@ -33,6 +33,25 @@ def _build_html(summary: str, artifacts: dict[str, list[int]]) -> str:
         f"<p>{summary}</p>"
     )
 
+def _build_clean_summary(summary: str, artifacts: dict[str, list[int]]) -> str:
+    """Build a clean summary without HTML formatting for better display."""
+    def fmt(ids: list[int]) -> str:
+        return ", ".join(map(str, ids)) if ids else "none"
+    
+    parts = []
+    if artifacts['created_item_ids']:
+        parts.append(f"Created items: {fmt(artifacts['created_item_ids'])}")
+    if artifacts['updated_item_ids']:
+        parts.append(f"Updated items: {fmt(artifacts['updated_item_ids'])}")
+    if artifacts['deleted_item_ids']:
+        parts.append(f"Deleted items: {fmt(artifacts['deleted_item_ids'])}")
+    
+    if parts:
+        artifacts_summary = ". ".join(parts) + "."
+        return f"{artifacts_summary} {summary}".strip()
+    
+    return summary
+
 async def run_chat_tools(objective: str, project_id: int | None, run_id: str, max_tool_calls: int = 10) -> dict:
     logger.info("FULL-AGENT MODE: starting run_chat_tools(project_id=%s, run_id=%s)", project_id, run_id)
     logger.info("OPENAI_API_KEY set: %s", bool(os.getenv("OPENAI_API_KEY")))
@@ -109,8 +128,9 @@ Current project_id: {project_id if project_id else 'Not specified'}
             logger.error("LLM invoke failed: %s", str(e), exc_info=True)
             summary = f"LLM invoke failed: {str(e)}"
             html = _build_html(summary, artifacts)
-            crud.finish_run(run_id, html, summary, artifacts)
-            stream.publish(run_id, {"node": "write", "summary": summary})
+            clean_summary = _build_clean_summary(summary, artifacts)
+            crud.finish_run(run_id, html, clean_summary, artifacts)
+            stream.publish(run_id, {"node": "write", "summary": clean_summary})
             stream.close(run_id); stream.discard(run_id)
             return {"html": html}
 
@@ -152,8 +172,9 @@ Current project_id: {project_id if project_id else 'Not specified'}
                     crud.record_run_step(run_id, "error", err)
                     summary = err
                     html = _build_html(summary, artifacts)
-                    crud.finish_run(run_id, html, summary, artifacts)
-                    stream.publish(run_id, {"node": "write", "summary": summary})
+                    clean_summary = _build_clean_summary(summary, artifacts)
+                    crud.finish_run(run_id, html, clean_summary, artifacts)
+                    stream.publish(run_id, {"node": "write", "summary": clean_summary})
                     stream.close(run_id); stream.discard(run_id)
                     return {"html": html}
 
@@ -188,8 +209,9 @@ Current project_id: {project_id if project_id else 'Not specified'}
                         summary = "Too many consecutive tool errors"
                         crud.record_run_step(run_id, "error", summary)
                         html = _build_html(summary, artifacts)
-                        crud.finish_run(run_id, html, summary, artifacts)
-                        stream.publish(run_id, {"node": "write", "summary": summary})
+                        clean_summary = _build_clean_summary(summary, artifacts)
+                        crud.finish_run(run_id, html, clean_summary, artifacts)
+                        stream.publish(run_id, {"node": "write", "summary": clean_summary})
                         stream.close(run_id); stream.discard(run_id)
                         return {"html": html}
 
@@ -210,16 +232,18 @@ Current project_id: {project_id if project_id else 'Not specified'}
             summary = response_content
             
         html = _build_html(summary, artifacts)
-        crud.finish_run(run_id, html, summary, artifacts)
-        stream.publish(run_id, {"node":"write","summary": summary})
+        clean_summary = _build_clean_summary(summary, artifacts)
+        crud.finish_run(run_id, html, clean_summary, artifacts)
+        stream.publish(run_id, {"node":"write","summary": clean_summary})
         stream.close(run_id); stream.discard(run_id)
         return {"html": html}
 
     # Si on sort par dépassement
     summary = "Max tool calls exceeded"
     html = _build_html(summary, artifacts)
+    clean_summary = _build_clean_summary(summary, artifacts)
     crud.record_run_step(run_id, "error", summary)
-    crud.finish_run(run_id, html, summary, artifacts)
-    stream.publish(run_id, {"node":"write","summary": summary})
+    crud.finish_run(run_id, html, clean_summary, artifacts)
+    stream.publish(run_id, {"node":"write","summary": clean_summary})
     stream.close(run_id); stream.discard(run_id)
     return {"html": html}

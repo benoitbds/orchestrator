@@ -8,12 +8,12 @@ import StatusBar from "@/components/StatusBar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StreamViewer from "@/components/StreamViewer";
-import HistoryPanel, { HistoryItem } from "@/components/HistoryPanel";
 import type { AgentTimelineStep } from "@/components/AgentTimeline";
 import BacklogPane from "@/components/BacklogPane";
+import AgentHistory from "@/components/AgentHistory";
 import { BacklogProvider, useBacklog } from "@/context/BacklogContext";
 import { ProjectPanel } from "@/components/ProjectPanel";
-import RunsPanel from "@/components/RunsPanel";
+import { mutate } from 'swr';
 
 export default function Home() {
   return (
@@ -25,12 +25,29 @@ export default function Home() {
 
 function HomeContent() {
   const [objective, setObjective] = useState("");
-  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const viewerRef = useRef<any>(null);
+  const historyRef = useRef<any>(null);
   const { currentProject } = useProjects();
   const { refreshItems } = useBacklog();
-  const [runsRefreshKey, setRunsRefreshKey] = useState(0);
+
+  // Function to refresh all backlog related data
+  const refreshAllBacklogData = useCallback(async () => {
+    if (currentProject) {
+      // Refresh BacklogContext data
+      await refreshItems();
+      
+      // Also refresh SWR cache used by individual components
+      await mutate(`/items?project_id=${currentProject.id}`);
+      
+      // Refresh agent history using ref
+      if (historyRef.current?.refreshHistory) {
+        historyRef.current.refreshHistory();
+      }
+      
+      console.log('Backlog data and agent history refreshed after agent operation');
+    }
+  }, [currentProject, refreshItems]);
   const [steps, setSteps] = useState<AgentTimelineStep[]>([]);
 
   const handleRun = useCallback(async () => {
@@ -45,11 +62,10 @@ function HomeContent() {
       body: JSON.stringify({ objective: runObjective, project_id: currentProject.id }),
     });
     const { run_id, html } = await resp.json();
-    setRunsRefreshKey(k => k + 1);
 
     if (html) {
       viewerRef.current?.push({ node: 'write', state: { result: html } });
-      refreshItems();
+      await refreshAllBacklogData();
       setIsLoading(false);
     }
 
@@ -75,25 +91,21 @@ function HomeContent() {
           ...s,
           { runId: msg.run_id, node: msg.node, content: parsed, timestamp: msg.timestamp },
         ]);
+        
+        // Refresh backlog data when tool operations complete successfully
+        if (msg.node && msg.node.includes('tool:') && msg.node.includes(':response') && parsed?.ok) {
+          console.log('Tool operation completed successfully, refreshing backlog data');
+          refreshAllBacklogData().catch(console.error);
+        }
       }
 
       if (msg.status === 'done') {
         ws.close();
         http(`/runs/${run_id}`)
           .then(r => r.json())
-          .then(run => {
+          .then(async run => {
             viewerRef.current?.push({ node: 'write', state: { result: run.html || '' } });
-            setHistory(h => [
-              ...h,
-              {
-                objective: runObjective,
-                html: run.html || '',
-                summary: run.summary,
-                timestamp: new Date().toLocaleString(),
-              },
-            ]);
-            refreshItems();
-            setRunsRefreshKey(k => k + 1);
+            await refreshAllBacklogData();
             setIsLoading(false);
           });
       }
@@ -110,29 +122,18 @@ function HomeContent() {
         if (data.status === 'done') {
           ws.close();
           viewerRef.current?.push({ node: 'write', state: { result: data.html || '' } });
-          setHistory(h => [
-            ...h,
-            {
-              objective: runObjective,
-              html: data.html || '',
-              summary: data.summary,
-              timestamp: new Date().toLocaleString(),
-            },
-          ]);
-          refreshItems();
-          setRunsRefreshKey(k => k + 1);
+          await refreshAllBacklogData();
           setIsLoading(false);
         } else if (data.status === 'failed') {
           ws.close();
           setIsLoading(false);
-          setRunsRefreshKey(k => k + 1);
         } else {
           setTimeout(poll, 1000);
         }
       };
       poll();
     }, 7000);
-  }, [currentProject, objective, refreshItems]);
+  }, [currentProject, objective, refreshAllBacklogData]);
 
   return (
     <>
@@ -169,8 +170,7 @@ function HomeContent() {
 
             <BacklogPane />
 
-            <HistoryPanel history={history} />
-            <RunsPanel refreshKey={runsRefreshKey} />
+            <AgentHistory ref={historyRef} />
           </div>
         </main>
       </div>
