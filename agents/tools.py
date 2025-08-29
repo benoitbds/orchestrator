@@ -1,5 +1,6 @@
 from typing import Optional, Literal, List, Dict, Any
 from pydantic import BaseModel, Field
+import logging
 try:
     from langchain.tools import StructuredTool
 except Exception:  # pragma: no cover - fallback for older versions
@@ -10,6 +11,8 @@ from orchestrator import stream  # assume stream.register/publish/close exist
 import json
 import asyncio
 
+logger = logging.getLogger(__name__)
+
 # Hook global (très simple): si run_id absent des kwargs, essaie de le lire depuis contexte global
 _CURRENT_RUN_ID: str | None = None
 
@@ -17,6 +20,7 @@ _CURRENT_RUN_ID: str | None = None
 def set_current_run(run_id: str):  # appelé par run_chat_tools avant l'exec
     global _CURRENT_RUN_ID
     _CURRENT_RUN_ID = run_id
+    logger.info("Set current run ID: %s", run_id)
 
 # ---------- Schemas Pydantic v2 ----------
 class CreateItemArgs(BaseModel):
@@ -83,34 +87,64 @@ def _sanitize(obj: Any) -> Any:
 
 # Chaque tool wrapper reçoit **run_id** dans le kwargs (injecté par l’agent, voir plus bas)
 async def _exec(name: str, run_id: str, args: dict):
+    logger.info("Executing tool '%s' with args: %s (run_id: %s)", name, args, run_id)
     safe_args = _sanitize(args or {})
     crud.record_run_step(run_id, f"tool:{name}:request", json.dumps({"name": name, "args": safe_args}), broadcast=False)
     stream.publish(run_id, {"node": f"tool:{name}:request", "args": safe_args})
-    handler = HANDLERS[name]
+    
+    handler = HANDLERS.get(name)
+    if not handler:
+        error_msg = f"No handler found for tool '{name}'"
+        logger.error(error_msg)
+        return json.dumps({"ok": False, "error": error_msg})
+    
     try:
+        logger.debug("Calling handler for tool '%s'", name)
         res = await asyncio.wait_for(handler(args), timeout=12)
+        logger.debug("Tool '%s' returned: %s", name, res)
     except asyncio.TimeoutError:
+        logger.error("Tool '%s' timed out", name)
         res = {"ok": False, "error": "timeout"}
+    except Exception as e:
+        logger.error("Tool '%s' failed with exception: %s", name, str(e), exc_info=True)
+        res = {"ok": False, "error": f"Tool execution failed: {str(e)}"}
+    
     data = {k: v for k, v in res.items() if k not in {"ok","error"}}
     safe_res = _sanitize(data)
     crud.record_run_step(run_id, f"tool:{name}:response", json.dumps({"ok": res.get("ok"), "result": safe_res, "error": res.get("error")}), broadcast=False)
     stream.publish(run_id, {"node": f"tool:{name}:response", "ok": res.get("ok"), "result": safe_res, "error": res.get("error")})
     # Renvoie une **string** (LC attend du texte des tools)
-    return json.dumps(res)
+    result_json = json.dumps(res)
+    logger.info("Tool '%s' execution completed, returning: %s", name, result_json)
+    return result_json
 
 # Déclarer des StructuredTool ASYNC (args_schema = Pydantic v2)
 def _mk_tool(name: str, desc: str, schema: type[BaseModel]):
     async def _tool(**kwargs):
+        logger.debug("Tool '%s' called with kwargs: %s", name, kwargs)
         run_id = kwargs.pop("run_id", None) or _CURRENT_RUN_ID
         if not run_id:
+            logger.warning("No run_id provided for tool '%s', using 'unknown'", name)
             run_id = "unknown"
+        logger.debug("Tool '%s' using run_id: %s", name, run_id)
         return await _exec(name, run_id, kwargs)
-    return StructuredTool.from_function(
+    
+    tool = StructuredTool.from_function(
         name=name,
         description=desc,
         coroutine=_tool,      # <- coroutine async
         args_schema=schema,
     )
+    logger.info("Created tool '%s' with schema: %s", name, schema.__name__)
+    
+    # Log tool schema details for debugging
+    try:
+        schema_dict = schema.model_json_schema()
+        logger.debug("Tool '%s' schema details: %s", name, schema_dict)
+    except Exception as e:
+        logger.warning("Could not serialize schema for tool '%s': %s", name, e)
+        
+    return tool
 
 TOOLS = [
     _mk_tool("create_item", "Create a backlog item (Epic/Capability/Feature/US/UC). Avoid duplicates under the same parent.", CreateItemArgs),
