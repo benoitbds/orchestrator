@@ -79,13 +79,13 @@ origins = [
     "http://localhost:9080",
     "http://192.168.1.93:3000",
     "http://192.168.1.93:8000",
-    "*"  # permissive dev CORS for cross-network access
 ]
 
-# Autorise l’origine du front (dev localhost:3000/5173)
+# Allow configured origins and fall back to accepting any HTTP(S) origin for dev
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
