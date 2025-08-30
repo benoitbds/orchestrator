@@ -1,6 +1,7 @@
 "use client";
 import { useState } from 'react';
 import { useProjects } from '@/context/ProjectContext';
+import { useBacklog } from '@/context/BacklogContext';
 import { Button } from '@/components/ui/button';
 import { ItemDialog } from './ItemDialog';
 import { BacklogItem } from '@/models/backlogItem';
@@ -10,6 +11,7 @@ import { BacklogViewTabs } from '@/components/BacklogViewTabs';
 
 export default function BacklogPane() {
   const { currentProject } = useProjects();
+  const { refreshItems } = useBacklog();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<BacklogItem | undefined>(undefined);
 
@@ -46,7 +48,15 @@ export default function BacklogPane() {
       const result = await response.json();
       console.log('Save successful:', result); // Debug log
       
-      mutate(`/items?project_id=${currentProject?.id}`);
+      // Refresh both SWR cache and BacklogContext
+      await Promise.all([
+        mutate(`/items?project_id=${currentProject?.id}`),
+        refreshItems(),
+        // Trigger a small delay to ensure backend data is consistent
+        new Promise(resolve => setTimeout(resolve, 100))
+      ]);
+      
+      setIsDialogOpen(false);
     } catch (error) {
       console.error('Save error:', error);
       alert(`Erreur: ${error.message}`);

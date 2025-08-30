@@ -5,6 +5,10 @@ import logging
 from datetime import datetime
 from importlib import metadata
 from uuid import uuid4
+from dotenv import load_dotenv
+
+# Load environment variables first
+load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,8 +77,9 @@ origins = [
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:9080",
-    "http://192.168.1.93:3000"
-    # "*",  # uncomment for permissive dev CORS
+    "http://192.168.1.93:3000",
+    "http://192.168.1.93:8000",
+    "*"  # permissive dev CORS for cross-network access
 ]
 
 # Autorise l’origine du front (dev localhost:3000/5173)

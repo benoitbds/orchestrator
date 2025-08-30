@@ -2,10 +2,14 @@
 from __future__ import annotations
 from html import escape
 from textwrap import dedent
+import os
 from .schemas import ExecResult, RenderResult, FeatureProposal, FeatureProposals
 from dotenv import load_dotenv
 from langchain.output_parsers import PydanticOutputParser
 from langchain_openai import ChatOpenAI
+
+# Load environment variables
+load_dotenv()
 
 def render_exec(exec_result: ExecResult, objective: str) -> RenderResult:
     """Transforme ExecResult + objectif en bloc HTML & résumé court."""
@@ -43,7 +47,7 @@ def render_exec(exec_result: ExecResult, objective: str) -> RenderResult:
 # Agent de génération de propositions de features pour un épic
 load_dotenv()
 
-llm_feature = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
+llm_feature = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4"), temperature=0.2)
 feature_parser = PydanticOutputParser(pydantic_object=FeatureProposals)
 
 SYSTEM_FEATURE_PROMPT = (

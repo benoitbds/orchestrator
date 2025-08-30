@@ -1,0 +1,107 @@
+INFO:     Will watch for changes in these directories: ['/home/baq/Dev/orchestrator']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [257064] using WatchFiles
+INFO:     Started server process [257208]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:44334 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55994 - "GET /ping HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52342 - "POST /chat HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 409, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
+    await super().__call__(scope, receive, send)
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/applications.py", line 113, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/routing.py", line 78, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/starlette/routing.py", line 75, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/fastapi/routing.py", line 302, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/baq/.cache/pypoetry/virtualenvs/orchestrator-QPKBjdYs-py3.12/lib/python3.12/site-packages/fastapi/routing.py", line 213, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/baq/Dev/orchestrator/api/main.py", line 74, in chat
+    return {"run_id": run_id, **final["render"]}
+                                ~~~~~^^^^^^^^^^
+KeyError: 'render'
+WARNING:  WatchFiles detected changes in 'api/main.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [257208]
+INFO:     Started server process [257458]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:48032 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51338 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35072 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57714 - "GET /projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57714 - "GET /runs?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57714 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57732 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57718 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36134 - "WebSocket /stream" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:39288 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47100 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47104 - "GET /projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47104 - "GET /runs?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47106 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47120 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46978 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35592 - "GET /projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35592 - "GET /runs?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35600 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35612 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51310 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38816 - "GET /projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38816 - "GET /runs?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38820 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38822 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39550 - "OPTIONS /projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39562 - "POST /projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39576 - "GET /api/items?project_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39562 - "GET /projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39562 - "GET /runs?project_id=2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39550 - "GET /api/items?project_id=2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39590 - "GET /api/items?project_id=2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40110 - "POST /api/items HTTP/1.1" 201 Created
+INFO:     127.0.0.1:40116 - "GET /api/items?project_id=2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45416 - "POST /api/items HTTP/1.1" 201 Created
+INFO:     127.0.0.1:45422 - "GET /api/items?project_id=2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56750 - "GET /api/items?project_id=2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56760 - "GET /api/items?project_id=2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56776 - "GET /api/items?project_id=2 HTTP/1.1" 200 OK

@@ -58,49 +58,150 @@ interface BacklogDiagramProps {
   onEdit: (item: BacklogItem) => void;
 }
 
-function calculateStarLayout(tree: TreeNode[], centerX: number, centerY: number): NodePosition[] {
+function calculateWebLayout(tree: TreeNode[], centerX: number, centerY: number): NodePosition[] {
   const positions: NodePosition[] = [];
   
-  // Fonction récursive pour calculer les positions en étoile
-  const calculatePositions = (nodes: TreeNode[], parentX: number, parentY: number, level: number, parentAngle = 0, parentRadius = 0) => {
-    if (!nodes || nodes.length === 0) return;
-    
-    const radius = level === 0 ? 0 : Math.max(120, parentRadius + 100 + level * 80);
-    const angleStep = level === 0 ? 0 : (2 * Math.PI) / nodes.length;
-    const startAngle = parentAngle - (angleStep * (nodes.length - 1)) / 2;
-    
-    nodes.forEach((node, index) => {
-      let x, y, angle;
+  // First, flatten all nodes to get total count and create lookup
+  const allNodes: TreeNode[] = [];
+  const nodeDepth = new Map<number, number>();
+  const nodeRelations = new Map<number, number[]>();
+  
+  const flattenNodes = (nodes: TreeNode[], depth: number = 0, parentId?: number) => {
+    nodes.forEach(node => {
+      allNodes.push(node);
+      nodeDepth.set(node.id, depth);
       
-      if (level === 0) {
-        // Nœud central
-        x = centerX;
-        y = centerY;
-        angle = 0;
-      } else {
-        // Nœuds satellites
-        angle = startAngle + index * angleStep;
-        x = parentX + Math.cos(angle) * radius;
-        y = parentY + Math.sin(angle) * radius;
+      // Track relations for better web connectivity
+      if (parentId) {
+        if (!nodeRelations.has(parentId)) {
+          nodeRelations.set(parentId, []);
+        }
+        nodeRelations.get(parentId)!.push(node.id);
       }
       
-      positions.push({
-        x,
-        y,
-        item: node,
-        level,
-        angle,
-        radius,
-      });
-      
-      // Récursion pour les enfants
       if (node.children && node.children.length > 0) {
-        calculatePositions(node.children as TreeNode[], x, y, level + 1, angle, radius);
+        flattenNodes(node.children as TreeNode[], depth + 1, node.id);
       }
     });
   };
   
-  calculatePositions(tree, centerX, centerY, 0);
+  flattenNodes(tree);
+  
+  if (allNodes.length === 0) return positions;
+  
+  // Calculate positions using a web/network layout
+  const calculateWebPositions = () => {
+    const maxDepth = Math.max(...Array.from(nodeDepth.values()));
+    const layers = Array.from({length: maxDepth + 1}, () => []);
+    
+    // Group nodes by depth level
+    allNodes.forEach(node => {
+      const depth = nodeDepth.get(node.id) || 0;
+      layers[depth].push(node);
+    });
+    
+    // Position nodes in concentric circles with better distribution
+    layers.forEach((layerNodes, depth) => {
+      if (layerNodes.length === 0) return;
+      
+      const layerRadius = depth === 0 ? 0 : Math.min(300, 80 + depth * 100);
+      const angleStep = layerNodes.length === 1 ? 0 : (2 * Math.PI) / layerNodes.length;
+      
+      // Add some randomness to avoid perfect alignment
+      const angleOffset = depth * Math.PI / 6; // Offset each layer
+      
+      layerNodes.forEach((node, index) => {
+        let x, y, angle;
+        
+        if (depth === 0 && layerNodes.length === 1) {
+          // Single root node at center
+          x = centerX;
+          y = centerY;
+          angle = 0;
+        } else {
+          // Distribute nodes around the circle
+          angle = angleOffset + index * angleStep;
+          
+          // Add small random offset for more organic web look
+          const randomOffset = (Math.random() - 0.5) * 40;
+          const actualRadius = layerRadius + randomOffset;
+          
+          x = centerX + Math.cos(angle) * actualRadius;
+          y = centerY + Math.sin(angle) * actualRadius;
+        }
+        
+        positions.push({
+          x,
+          y,
+          item: node,
+          level: depth,
+          angle,
+          radius: layerRadius,
+        });
+      });
+    });
+    
+    // Apply force-directed adjustments for better web appearance
+    applyForceDirectedLayout();
+  };
+  
+  // Simple force-directed algorithm to improve node positioning
+  const applyForceDirectedLayout = () => {
+    const iterations = 20;
+    const repulsionForce = 1000;
+    const attractionForce = 0.1;
+    const dampening = 0.8;
+    
+    for (let i = 0; i < iterations; i++) {
+      positions.forEach(pos1 => {
+        let forceX = 0;
+        let forceY = 0;
+        
+        // Repulsion between all nodes
+        positions.forEach(pos2 => {
+          if (pos1.item.id === pos2.item.id) return;
+          
+          const dx = pos1.x - pos2.x;
+          const dy = pos1.y - pos2.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          
+          if (distance > 0 && distance < 200) {
+            const force = repulsionForce / (distance * distance);
+            forceX += (dx / distance) * force;
+            forceY += (dy / distance) * force;
+          }
+        });
+        
+        // Attraction to parent/children
+        const hasParent = pos1.item.parent_id;
+        if (hasParent) {
+          const parent = positions.find(p => p.item.id === pos1.item.parent_id);
+          if (parent) {
+            const dx = parent.x - pos1.x;
+            const dy = parent.y - pos1.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance > 100) { // Only attract if too far
+              forceX += dx * attractionForce;
+              forceY += dy * attractionForce;
+            }
+          }
+        }
+        
+        // Apply forces with dampening (except for root nodes)
+        if (pos1.level > 0) {
+          pos1.x += forceX * dampening;
+          pos1.y += forceY * dampening;
+          
+          // Keep within bounds
+          pos1.x = Math.max(50, Math.min(750, pos1.x));
+          pos1.y = Math.max(50, Math.min(550, pos1.y));
+        }
+      });
+    }
+  };
+  
+  calculateWebPositions();
   return positions;
 }
 
@@ -150,7 +251,7 @@ export function BacklogDiagram({ projectId, onEdit }: BacklogDiagramProps) {
 
   const positions = useMemo(() => {
     if (!tree || tree.length === 0) return [];
-    return calculateStarLayout(tree, 400, 300);
+    return calculateWebLayout(tree, 400, 300);
   }, [tree]);
 
   // Gestion des événements souris
@@ -283,7 +384,7 @@ export function BacklogDiagram({ projectId, onEdit }: BacklogDiagramProps) {
         <g 
           transform={`translate(${diagram.panX}, ${diagram.panY}) scale(${diagram.zoom}) rotate(${diagram.rotation}, 400, 300)`}
         >
-          {/* Lignes de connexion */}
+          {/* Lignes de connexion principales (parent-enfant) */}
           {positions.map((pos) => {
             if (pos.level === 0) return null;
             const parent = positions.find(p => 
@@ -291,19 +392,62 @@ export function BacklogDiagram({ projectId, onEdit }: BacklogDiagramProps) {
             );
             if (!parent) return null;
 
+            const isHighlighted = diagram.hoveredNode?.id === pos.item.id || diagram.hoveredNode?.id === parent.item.id;
+            
             return (
-              <line
-                key={`line-${pos.item.id}`}
-                x1={parent.x}
-                y1={parent.y}
-                x2={pos.x}
-                y2={pos.y}
-                stroke={diagram.hoveredNode?.id === pos.item.id ? "#4f46e5" : "#cbd5e1"}
-                strokeWidth={diagram.hoveredNode?.id === pos.item.id ? "3" : "2"}
-                strokeDasharray={pos.item.generated_by_ai ? "5,5" : "none"}
-                className="transition-all duration-200"
-              />
+              <g key={`connection-${pos.item.id}`}>
+                {/* Main connection line */}
+                <line
+                  x1={parent.x}
+                  y1={parent.y}
+                  x2={pos.x}
+                  y2={pos.y}
+                  stroke={isHighlighted ? "#4f46e5" : "#cbd5e1"}
+                  strokeWidth={isHighlighted ? "3" : "2"}
+                  strokeDasharray={pos.item.generated_by_ai ? "5,5" : "none"}
+                  className="transition-all duration-200"
+                  opacity={isHighlighted ? 1 : 0.6}
+                />
+                
+                {/* Connection indicator dot */}
+                <circle
+                  cx={parent.x + (pos.x - parent.x) * 0.5}
+                  cy={parent.y + (pos.y - parent.y) * 0.5}
+                  r="2"
+                  fill={isHighlighted ? "#4f46e5" : "#94a3b8"}
+                  className="transition-all duration-200"
+                  opacity={isHighlighted ? 1 : 0.4}
+                />
+              </g>
             );
+          })}
+          
+          {/* Additional web connections for related items */}
+          {positions.map((pos1) => {
+            return positions.filter(pos2 => 
+              pos1.item.id !== pos2.item.id && 
+              pos1.level === pos2.level && 
+              Math.abs(pos1.x - pos2.x) < 150 && 
+              Math.abs(pos1.y - pos2.y) < 150
+            ).map((pos2) => {
+              const distance = Math.sqrt((pos1.x - pos2.x) ** 2 + (pos1.y - pos2.y) ** 2);
+              const isHighlighted = diagram.hoveredNode?.id === pos1.item.id || diagram.hoveredNode?.id === pos2.item.id;
+              
+              return (
+                <line
+                  key={`web-${pos1.item.id}-${pos2.item.id}`}
+                  x1={pos1.x}
+                  y1={pos1.y}
+                  x2={pos2.x}
+                  y2={pos2.y}
+                  stroke={isHighlighted ? "#8b5cf6" : "#e2e8f0"}
+                  strokeWidth={isHighlighted ? "2" : "1"}
+                  strokeDasharray="2,4"
+                  opacity={isHighlighted ? 0.8 : 0.2}
+                  className="transition-all duration-200"
+                />
+              );
+            });
           })}
 
           {/* Nœuds */}
@@ -446,6 +590,7 @@ export function BacklogDiagram({ projectId, onEdit }: BacklogDiagramProps) {
       )}
 
       {/* Légende */}
+      {/* Légende */}
       <div className="absolute bottom-4 right-4 bg-white/95 p-3 rounded-lg shadow-lg border z-10">
         <h4 className="text-xs font-semibold mb-2 text-gray-700">Légende</h4>
         <div className="grid grid-cols-1 gap-1 text-xs">
@@ -468,6 +613,16 @@ export function BacklogDiagram({ projectId, onEdit }: BacklogDiagramProps) {
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
             <span>UC</span>
+          </div>
+          <div className="mt-2 pt-2 border-t border-gray-200">
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-4 h-0 border-t-2 border-gray-400"></div>
+              <span>Hiérarchie</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0 border-t border-gray-300 border-dashed"></div>
+              <span>Relations</span>
+            </div>
           </div>
         </div>
       </div>
