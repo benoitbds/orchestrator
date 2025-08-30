@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import { http } from '@/lib/api';
 
 interface ChatComposerProps {
-  onSend: (objective: string, runId: string) => void;
+  onSend: (objective: string, runId?: string) => void | Promise<void>;
   isSending?: boolean;
   projectId?: number;
   disabled?: boolean;
@@ -36,27 +36,40 @@ export function ChatComposer({ onSend, isSending = false, projectId, disabled }:
     setIsSubmitting(true);
 
     try {
-      const response = await http('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          objective: trimmedObjective, 
-          project_id: projectId 
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || 'Failed to start chat');
-      }
-
-      const { run_id } = await response.json();
+      // Check if onSend handles the API call itself (new interface)
+      const result = onSend(trimmedObjective);
       
-      if (!run_id) {
-        throw new Error('No run ID received');
+      // If it returns a promise, wait for it
+      if (result && typeof result.then === 'function') {
+        await result;
+      } else {
+        // Old interface - make API call ourselves
+        const response = await http('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            objective: trimmedObjective, 
+            project_id: projectId 
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || 'Failed to start chat');
+        }
+
+        const { run_id } = await response.json();
+        
+        if (!run_id) {
+          throw new Error('No run ID received');
+        }
+
+        // For backward compatibility, call onSend with runId
+        if (typeof onSend === 'function') {
+          onSend(trimmedObjective, run_id);
+        }
       }
 
-      onSend(trimmedObjective, run_id);
       setObjective('');
       
       // Reset textarea height

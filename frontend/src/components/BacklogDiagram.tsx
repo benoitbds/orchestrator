@@ -458,7 +458,7 @@ export function BacklogDiagram({ projectId, onEdit }: BacklogDiagramProps) {
             const scale = isHovered ? 1.1 : isSelected ? 1.05 : 1;
 
             return (
-              <g key={pos.item.id}>
+              <g key={pos.item.id} data-item-id={pos.item.id}>
                 {/* Forme du nœud */}
                 {pos.item.type === 'US' || pos.item.type === 'UC' ? (
                   <circle

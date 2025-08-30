@@ -117,6 +117,7 @@ function Item({ item, onEdit, level = 0, collapsed, toggle, onDragStart, onDrop 
         className={`flex items-center gap-2 p-2 rounded-md hover:bg-gray-100 cursor-pointer`}
         style={{ paddingLeft: `${level * 20 + 8}px` }}
         title={getTooltipContent()}
+        data-item-id={item.id}
       >
         {hasChildren && (
           <button

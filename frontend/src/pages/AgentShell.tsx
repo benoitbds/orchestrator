@@ -6,14 +6,11 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useProjects } from '@/context/ProjectContext';
 import { useRunsStore } from '@/stores/useRunsStore';
-import { useAgentStream } from '@/hooks/useAgentStream';
-import { ChatFeed } from '@/components/agent/ChatFeed';
-import { ChatComposer } from '@/components/agent/ChatComposer';
-import { AgentLog } from '@/components/agent/AgentLog';
-import { BacklogPanel } from '@/components/backlog/BacklogPanel';
-import { mutate } from 'swr';
 import { useBacklog } from '@/context/BacklogContext';
+import { mutate } from 'swr';
 import { cn } from '@/lib/utils';
+import { BacklogPanel } from '@/components/backlog/BacklogPanel';
+import { AgentArea } from '@/components/agent/AgentArea';
 
 interface Message {
   id: string;
@@ -24,62 +21,13 @@ interface Message {
   status?: 'sending' | 'completed' | 'failed';
 }
 
-export function AgentLayout() {
-  const [messages, setMessages] = useState<Message[]>([]);
+export function AgentShell() {
   const [highlightItemId, setHighlightItemId] = useState<number>();
-  const [activeTab, setActiveTab] = useState("chat");
+  const [activeTab, setActiveTab] = useState("backlog");
 
   const { projects, currentProject, setCurrentProject } = useProjects();
   const { refreshItems } = useBacklog();
-  const { currentRunId, startRun, isRunning, getCurrentRun } = useRunsStore();
-
-  // WebSocket connection
-  useAgentStream(currentRunId, {
-    onFinish: async (summary) => {
-      // Update the agent message with final content
-      setMessages(prev => prev.map(msg => 
-        msg.runId === currentRunId 
-          ? { ...msg, content: summary, status: 'completed' as const }
-          : msg
-      ));
-
-      // Refresh backlog data
-      if (currentProject) {
-        await refreshItems();
-        await mutate(`/items?project_id=${currentProject.id}`);
-      }
-    },
-    onError: (error) => {
-      setMessages(prev => prev.map(msg => 
-        msg.runId === currentRunId 
-          ? { ...msg, content: `Error: ${error}`, status: 'failed' as const }
-          : msg
-      ));
-    }
-  });
-
-  const handleSend = (objective: string, runId: string) => {
-    // Add user message
-    const userMessage: Message = {
-      id: `user-${Date.now()}`,
-      type: 'user',
-      content: objective,
-      timestamp: Date.now(),
-    };
-
-    // Add placeholder agent message
-    const agentMessage: Message = {
-      id: `agent-${Date.now()}`,
-      type: 'agent',
-      content: 'Processing your request...',
-      timestamp: Date.now(),
-      runId,
-      status: 'sending',
-    };
-
-    setMessages(prev => [...prev, userMessage, agentMessage]);
-    startRun(runId);
-  };
+  const { getCurrentRun } = useRunsStore();
 
   const handleProjectChange = (projectId: string) => {
     const project = projects.find(p => p.id.toString() === projectId);
@@ -94,6 +42,12 @@ export function AgentLayout() {
       return <Badge variant="secondary" className="animate-pulse">Running</Badge>;
     }
     return <Badge variant="outline">Idle</Badge>;
+  };
+
+  const handleItemHighlight = (itemId: number) => {
+    setHighlightItemId(itemId);
+    // Brief highlight that fades after 2 seconds
+    setTimeout(() => setHighlightItemId(undefined), 2000);
   };
 
   // Mobile breakpoint check
@@ -138,19 +92,14 @@ export function AgentLayout() {
           </div>
         </header>
 
-        {/* Mobile Tabs */}
+        {/* Mobile Tabs - Only 2 tabs now */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
-          <TabsList className="grid w-full grid-cols-3 rounded-none">
-            <TabsTrigger value="chat">Chat</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-2 rounded-none">
             <TabsTrigger value="backlog">Backlog</TabsTrigger>
-            <TabsTrigger value="log">Journal</TabsTrigger>
+            <TabsTrigger value="agent">Agent</TabsTrigger>
           </TabsList>
 
           <div className="flex-1 flex flex-col overflow-hidden">
-            <TabsContent value="chat" className="flex-1 flex flex-col m-0">
-              <ChatFeed messages={messages} />
-            </TabsContent>
-
             <TabsContent value="backlog" className="flex-1 m-0">
               <BacklogPanel 
                 highlightItemId={highlightItemId}
@@ -158,28 +107,23 @@ export function AgentLayout() {
               />
             </TabsContent>
 
-            <TabsContent value="log" className="flex-1 m-0">
-              <AgentLog />
+            <TabsContent value="agent" className="flex-1 flex flex-col m-0">
+              <AgentArea 
+                onItemHighlight={handleItemHighlight}
+                onBacklogRefresh={refreshItems}
+                currentProject={currentProject}
+              />
             </TabsContent>
-          </div>
-
-          {/* Mobile Composer - always visible */}
-          <div className="border-t">
-            <ChatComposer
-              onSend={handleSend}
-              isSending={isRunning()}
-              projectId={currentProject?.id}
-            />
           </div>
         </Tabs>
       </div>
     );
   }
 
-  // Desktop Layout
+  // Desktop 2-Pane Layout
   return (
     <div className="flex flex-col h-screen bg-background">
-      {/* Desktop Header */}
+      {/* Desktop Header - Remove ASCII, keep minimal */}
       <header className="border-b p-4">
         <div className="container max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -212,29 +156,23 @@ export function AgentLayout() {
         </div>
       </header>
 
-      {/* Desktop 3-Pane Layout */}
+      {/* Desktop 2-Pane Layout */}
       <div className="flex-1 grid grid-cols-12 gap-4 p-4 container max-w-7xl mx-auto overflow-hidden">
-        {/* Left Panel - Backlog */}
-        <div className="col-span-3 border rounded-2xl overflow-hidden shadow-sm">
+        {/* Left Panel - Backlog (unchanged) */}
+        <div className="col-span-4 md:col-span-12 border rounded-2xl overflow-hidden shadow-sm">
           <BacklogPanel 
             highlightItemId={highlightItemId}
             onItemClick={setHighlightItemId}
           />
         </div>
 
-        {/* Center Panel - Chat */}
-        <div className="col-span-6 border rounded-2xl overflow-hidden shadow-sm flex flex-col">
-          <ChatFeed messages={messages} />
-          <ChatComposer
-            onSend={handleSend}
-            isSending={isRunning()}
-            projectId={currentProject?.id}
+        {/* Right Panel - Agent Area (Chat + Log merged) */}
+        <div className="col-span-8 md:col-span-12 border rounded-2xl overflow-hidden shadow-sm">
+          <AgentArea 
+            onItemHighlight={handleItemHighlight}
+            onBacklogRefresh={refreshItems}
+            currentProject={currentProject}
           />
-        </div>
-
-        {/* Right Panel - Agent Log */}
-        <div className="col-span-3 border rounded-2xl overflow-hidden shadow-sm">
-          <AgentLog />
         </div>
       </div>
     </div>
