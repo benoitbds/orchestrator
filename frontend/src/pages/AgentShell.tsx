@@ -3,37 +3,141 @@
 import { useState, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useProjects } from '@/context/ProjectContext';
 import { useRunsStore } from '@/stores/useRunsStore';
 import { useBacklog } from '@/context/BacklogContext';
 import { mutate } from 'swr';
-import { cn } from '@/lib/utils';
+import { useAgentStream } from '@/hooks/useAgentStream';
+import { ChatComposer } from '@/components/agent/ChatComposer';
 import { BacklogPanel } from '@/components/backlog/BacklogPanel';
-import { AgentArea } from '@/components/agent/AgentArea';
+import { ProjectPanel } from '@/components/project/ProjectPanel';
+import { ConversationHistory } from '@/components/agent/ConversationHistory';
+import { useMessagesStore, type Message } from '@/stores/useMessagesStore';
+import { toast } from 'sonner';
+import { http } from '@/lib/api';
 
-interface Message {
-  id: string;
-  type: 'user' | 'agent';
-  content: string;
-  timestamp: number;
-  runId?: string;
-  status?: 'sending' | 'completed' | 'failed';
-}
 
 export function AgentShell() {
   const [highlightItemId, setHighlightItemId] = useState<number>();
   const [activeTab, setActiveTab] = useState("backlog");
+  const [isHydrated, setIsHydrated] = useState(false);
+  const [pendingObjective, setPendingObjective] = useState<string>();
 
-  const { projects, currentProject, setCurrentProject } = useProjects();
+  const { currentProject } = useProjects();
   const { refreshItems } = useBacklog();
-  const { getCurrentRun } = useRunsStore();
+  const { currentRunId, startRun, isRunning, getCurrentRun } = useRunsStore();
+  const { messages, addMessage, updateMessage, getMessagesForProject } = useMessagesStore();
 
-  const handleProjectChange = (projectId: string) => {
-    const project = projects.find(p => p.id.toString() === projectId);
-    if (project) {
-      setCurrentProject(project);
+  // Handle hydration for persisted stores
+  useEffect(() => {
+    const rehydrateStores = async () => {
+      // Manually rehydrate the stores after component mounts
+      await useRunsStore.persist.rehydrate();
+      await useMessagesStore.persist.rehydrate();
+      setIsHydrated(true);
+    };
+    rehydrateStores();
+  }, []);
+
+  // Get messages for current project
+  const currentMessages = isHydrated ? getMessagesForProject(currentProject?.id) : [];
+
+  // WebSocket connection
+  useAgentStream(currentRunId, {
+    objective: pendingObjective,
+    projectId: currentProject?.id,
+    onRunIdUpdate: (tempRunId: string, realRunId: string) => {
+      console.log('Run ID updated:', { tempRunId, realRunId });
+      // Update the agent message with the real run ID
+      const { messages: allMessages, updateMessage: updateMsg } = useMessagesStore.getState();
+      const agentMessage = allMessages.find(msg => 
+        msg.runId === tempRunId && 
+        msg.type === 'agent' && 
+        msg.projectId === currentProject?.id
+      );
+      if (agentMessage) {
+        updateMsg(agentMessage.id, { runId: realRunId });
+      }
+    },
+    onFinish: async (summary) => {
+      console.log('onFinish called with:', { summary, currentRunId, projectId: currentProject?.id });
+      // Update the agent message with final content - get fresh messages from store
+      const { messages: allMessages, updateMessage: updateMsg } = useMessagesStore.getState();
+      const agentMessage = allMessages.find(msg => 
+        msg.type === 'agent' && 
+        msg.projectId === currentProject?.id &&
+        msg.status === 'sending'
+      );
+      console.log('All messages:', allMessages.length, 'Found agent message:', agentMessage);
+      if (agentMessage) {
+        console.log('Updating message with summary:', summary);
+        updateMsg(agentMessage.id, { content: summary, status: 'completed' });
+      } else {
+        console.error('Agent message not found');
+      }
+
+      // Clear pending objective
+      setPendingObjective(undefined);
+
+      // Refresh backlog data
+      if (currentProject) {
+        await refreshItems();
+        await mutate(`/items?project_id=${currentProject.id}`);
+      }
+    },
+    onError: (error) => {
+      console.log('onError called with error:', error);
+      const { messages: allMessages, updateMessage: updateMsg } = useMessagesStore.getState();
+      const agentMessage = allMessages.find(msg => 
+        msg.type === 'agent' && 
+        msg.projectId === currentProject?.id &&
+        msg.status === 'sending'
+      );
+      if (agentMessage) {
+        updateMsg(agentMessage.id, { content: `Error: ${error}`, status: 'failed' });
+      }
+      setPendingObjective(undefined);
     }
+  });
+
+  const handleSend = async (objective: string) => {
+    if (!currentProject) {
+      toast.error('Please select a project first');
+      return;
+    }
+
+    // Generate a temporary run ID for tracking
+    const tempRunId = `temp-${Date.now()}`;
+
+    // Add user message immediately
+    const userMessage: Message = {
+      id: `user-${Date.now()}`,
+      type: 'user',
+      content: objective,
+      timestamp: Date.now(),
+      projectId: currentProject.id,
+    };
+
+    // Add placeholder agent message
+    const agentMessage: Message = {
+      id: `agent-${Date.now()}`,
+      type: 'agent',
+      content: 'Processing your request...',
+      timestamp: Date.now(),
+      runId: tempRunId,
+      status: 'sending',
+      projectId: currentProject.id,
+    };
+
+    console.log('Adding messages:', { userMessage, agentMessage });
+    addMessage(userMessage);
+    addMessage(agentMessage);
+    
+    // Set pending objective for WebSocket
+    setPendingObjective(objective);
+    
+    // Start run with temp ID
+    startRun(tempRunId);
   };
 
   const getStatusBadge = () => {
@@ -73,45 +177,44 @@ export function AgentShell() {
               <h1 className="text-xl font-bold">Agent 4 BA</h1>
               {getStatusBadge()}
             </div>
-            
-            <Select
-              value={currentProject?.id.toString() || ''}
-              onValueChange={handleProjectChange}
-            >
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Select project" />
-              </SelectTrigger>
-              <SelectContent>
-                {projects.map((project) => (
-                  <SelectItem key={project.id} value={project.id.toString()}>
-                    {project.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
         </header>
 
-        {/* Mobile Tabs - Only 2 tabs now */}
+        {/* Mobile Tabs - 3 tabs for new layout */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
-          <TabsList className="grid w-full grid-cols-2 rounded-none">
+          <TabsList className="grid w-full grid-cols-3 rounded-none">
+            <TabsTrigger value="projects">Projects</TabsTrigger>
             <TabsTrigger value="backlog">Backlog</TabsTrigger>
-            <TabsTrigger value="agent">Agent</TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>
 
           <div className="flex-1 flex flex-col overflow-hidden">
-            <TabsContent value="backlog" className="flex-1 m-0">
-              <BacklogPanel 
-                highlightItemId={highlightItemId}
-                onItemClick={setHighlightItemId}
-              />
+            <TabsContent value="projects" className="flex-1 m-0">
+              <ProjectPanel />
             </TabsContent>
 
-            <TabsContent value="agent" className="flex-1 flex flex-col m-0">
-              <AgentArea 
+            <TabsContent value="backlog" className="flex-1 flex flex-col m-0">
+              {/* User Input on top */}
+              <div className="border-b">
+                <ChatComposer
+                  onSend={handleSend}
+                  isSending={isRunning()}
+                  projectId={currentProject?.id}
+                />
+              </div>
+              {/* Backlog below */}
+              <div className="flex-1">
+                <BacklogPanel 
+                  highlightItemId={highlightItemId}
+                  onItemClick={setHighlightItemId}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="history" className="flex-1 m-0">
+              <ConversationHistory 
+                messages={currentMessages}
                 onItemHighlight={handleItemHighlight}
-                onBacklogRefresh={refreshItems}
-                currentProject={currentProject}
               />
             </TabsContent>
           </div>
@@ -120,58 +223,51 @@ export function AgentShell() {
     );
   }
 
-  // Desktop 2-Pane Layout
+  // Desktop 3-Panel Layout
   return (
     <div className="flex flex-col h-screen bg-background">
-      {/* Desktop Header - Remove ASCII, keep minimal */}
+      {/* Desktop Header */}
       <header className="border-b p-4">
         <div className="container max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <h1 className="text-2xl font-bold">Agent 4 BA</h1>
             {getStatusBadge()}
           </div>
-          
-          <Select
-            value={currentProject?.id.toString() || ''}
-            onValueChange={handleProjectChange}
-          >
-            <SelectTrigger className="w-64">
-              <SelectValue placeholder="Select a project" />
-            </SelectTrigger>
-            <SelectContent>
-              {projects.map((project) => (
-                <SelectItem key={project.id} value={project.id.toString()}>
-                  <div>
-                    <div className="font-medium">{project.name}</div>
-                    {project.description && (
-                      <div className="text-xs text-muted-foreground truncate">
-                        {project.description}
-                      </div>
-                    )}
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
       </header>
 
-      {/* Desktop 2-Pane Layout */}
+      {/* Desktop 3-Panel Layout */}
       <div className="flex-1 grid grid-cols-12 gap-4 p-4 container max-w-7xl mx-auto overflow-hidden">
-        {/* Left Panel - Backlog (unchanged) */}
-        <div className="col-span-4 md:col-span-12 border rounded-2xl overflow-hidden shadow-sm">
-          <BacklogPanel 
-            highlightItemId={highlightItemId}
-            onItemClick={setHighlightItemId}
-          />
+        {/* Left Panel - Project Management */}
+        <div className="col-span-3 border rounded-2xl overflow-hidden shadow-sm">
+          <ProjectPanel />
         </div>
 
-        {/* Right Panel - Agent Area (Chat + Log merged) */}
-        <div className="col-span-8 md:col-span-12 border rounded-2xl overflow-hidden shadow-sm">
-          <AgentArea 
+        {/* Center Panel - User Input (top) + Backlog (60% height) */}
+        <div className="col-span-6 flex flex-col gap-4">
+          {/* User Input Section */}
+          <div className="border rounded-2xl shadow-sm">
+            <ChatComposer
+              onSend={handleSend}
+              isSending={isRunning()}
+              projectId={currentProject?.id}
+            />
+          </div>
+          
+          {/* Backlog Section - 60% of remaining space */}
+          <div className="flex-1 border rounded-2xl overflow-hidden shadow-sm">
+            <BacklogPanel 
+              highlightItemId={highlightItemId}
+              onItemClick={setHighlightItemId}
+            />
+          </div>
+        </div>
+
+        {/* Right Panel - Conversation History */}
+        <div className="col-span-3 border rounded-2xl overflow-hidden shadow-sm">
+          <ConversationHistory 
+            messages={currentMessages}
             onItemHighlight={handleItemHighlight}
-            onBacklogRefresh={refreshItems}
-            currentProject={currentProject}
           />
         </div>
       </div>

@@ -5,6 +5,9 @@ import { connectWS } from '@/lib/ws';
 interface UseAgentStreamOptions {
   onFinish?: (summary: string) => void;
   onError?: (error: string) => void;
+  onRunIdUpdate?: (tempRunId: string, realRunId: string) => void;
+  objective?: string;
+  projectId?: number;
 }
 
 export function useAgentStream(
@@ -50,8 +53,17 @@ export function useAgentStream(
         setConnected(true);
         reconnectAttemptsRef.current = 0;
         
-        // Send initial run_id
-        ws.send(JSON.stringify({ run_id: runId }));
+        // Send either run_id or objective+project_id
+        if (options.objective && options.projectId) {
+          console.log('Sending objective to WebSocket:', { objective: options.objective, project_id: options.projectId });
+          ws.send(JSON.stringify({ 
+            objective: options.objective, 
+            project_id: options.projectId 
+          }));
+        } else {
+          console.log('Sending run_id to WebSocket:', runId);
+          ws.send(JSON.stringify({ run_id: runId }));
+        }
       };
 
       ws.onmessage = (event) => {
@@ -59,10 +71,37 @@ export function useAgentStream(
           const data = JSON.parse(event.data);
           console.log('WebSocket message:', data);
 
+          // Handle initial run_id response from backend
+          if (data.run_id && data.status === 'started') {
+            console.log('Backend created run_id:', data.run_id);
+            // Update our runId to the real one from backend
+            const realRunId = data.run_id;
+            
+            // Update the runs store with the real run_id
+            const { runs } = useRunsStore.getState();
+            const tempRun = runs[runId!];
+            if (tempRun) {
+              const newRuns = { ...runs };
+              newRuns[realRunId] = { ...tempRun };
+              delete newRuns[runId!];
+              
+              useRunsStore.setState({
+                currentRunId: realRunId,
+                runs: newRuns,
+              });
+            }
+            
+            // Also notify parent component about the real run_id
+            if (options.onRunIdUpdate) {
+              options.onRunIdUpdate(runId!, realRunId);
+            }
+            return;
+          }
+
           // Handle error messages
           if (data.error) {
             console.error('WebSocket error:', data.error);
-            failRun(runId, data.error);
+            failRun(runId!, data.error);
             options.onError?.(data.error);
             disconnect();
             return;
@@ -79,14 +118,20 @@ export function useAgentStream(
             content: data.content,
           };
 
-          // Push event to store
-          pushEvent(runId, agentEvent);
+          // Push event to store (use current runId from store)
+          const currentRunIdFromStore = useRunsStore.getState().currentRunId;
+          if (currentRunIdFromStore) {
+            pushEvent(currentRunIdFromStore, agentEvent);
+          }
 
           // Handle completion
           if (data.status === 'done' || data.node === 'write') {
             const summary = data.summary || data.content || 'Task completed';
-            finishRun(runId, summary);
-            options.onFinish?.(summary);
+            const finalRunId = useRunsStore.getState().currentRunId;
+            if (finalRunId) {
+              finishRun(finalRunId, summary);
+              options.onFinish?.(summary);
+            }
             disconnect();
           }
         } catch (error) {

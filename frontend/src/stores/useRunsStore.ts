@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 export type AgentEvent = {
   node: string;
@@ -37,9 +38,11 @@ type RunState = {
   isRunning: () => boolean;
 };
 
-export const useRunsStore = create<RunState>((set, get) => ({
-  currentRunId: undefined,
-  runs: {},
+export const useRunsStore = create<RunState>()(
+  persist(
+    (set, get) => ({
+      currentRunId: undefined,
+      runs: {},
 
   startRun: (runId: string) =>
     set((state) => ({
@@ -134,4 +137,12 @@ export const useRunsStore = create<RunState>((set, get) => ({
     if (!currentRunId) return false;
     return runs[currentRunId]?.status === 'running';
   },
-}));
+    }),
+    {
+      name: 'agent-runs-storage',
+      // Don't persist currentRunId to avoid reconnecting to old runs
+      partialize: (state) => ({ runs: state.runs }),
+      skipHydration: true,
+    }
+  )
+);
