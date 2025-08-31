@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { listDocuments, uploadDocument } from './documents';
+import { listDocuments, uploadDocument, deleteDocument } from './documents';
 
 // Mock fetch globally
 const globalAny: any = global;
@@ -41,6 +41,26 @@ describe('documents api', () => {
       globalAny.fetch.mockResolvedValue({ ok: false });
       const file = new File(['hello'], 'test.txt');
       await expect(uploadDocument(1, file)).rejects.toThrow('Failed to upload document');
+    });
+  });
+
+  describe('deleteDocument', () => {
+    it('sends delete request and returns response', async () => {
+      const doc = { ok: true, json: () => Promise.resolve({}) };
+      globalAny.fetch.mockResolvedValue(doc);
+      await deleteDocument(1);
+      const [url, options] = globalAny.fetch.mock.calls[0];
+      expect(url).toBe('/api/documents/1');
+      expect(options.method).toBe('DELETE');
+    });
+
+    it('throws on delete failure', async () => {
+      globalAny.fetch.mockResolvedValue({ ok: false });
+      await expect(deleteDocument(1)).rejects.toThrow('Failed to delete document');
+    });
+
+    it('validates document id', async () => {
+      await expect(deleteDocument(0)).rejects.toThrow('Invalid document ID');
     });
   });
 });

@@ -11,9 +11,10 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useProjects } from '@/context/ProjectContext';
 import { toast } from 'sonner';
-import { http, getApiBaseUrl } from '@/lib/api';
+import { http } from '@/lib/api';
 import type { Document } from '@/models/document';
 import { listDocuments, uploadDocument } from '@/lib/documents';
+import { DocumentList } from './DocumentList';
 
 export function ProjectPanel() {
   const { projects, currentProject, setCurrentProject, refreshProjects } = useProjects();
@@ -224,25 +225,7 @@ export function ProjectPanel() {
 
               <div>
                 <h4 className="font-medium mb-2">Documents</h4>
-                {documents.length > 0 ? (
-                  <ul className="list-disc list-inside space-y-1">
-                    {documents.map((doc) => (
-                      <li key={doc.id}>
-                        <a
-                          href={`${getApiBaseUrl()}/documents/${doc.id}/content`}
-                          className="text-blue-500 hover:underline"
-                          download
-                        >
-                          {doc.filename}
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    No documents uploaded.
-                  </p>
-                )}
+                <DocumentList documents={documents} refetch={loadDocuments} />
               </div>
             </div>
           </div>
