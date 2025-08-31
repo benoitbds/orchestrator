@@ -73,25 +73,31 @@ crud.init_db()
 def startup_event():
     crud.init_db()
 
-origins = [
+ALLOWED_ORIGINS = [
     "http://localhost:3000",
-    "http://localhost:5173",
-    "http://localhost:9080",
+    "http://127.0.0.1:3000",
     "http://192.168.1.93:3000",
-    "http://192.168.1.93:8000",
-    "*"  # permissive dev CORS for cross-network access
 ]
 
-# Autorise l’origine du front (dev localhost:3000/5173)
+# Allow configured origins and fall back to accepting any HTTP(S) origin for dev
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(ws_router)
+
+@app.middleware("http")
+async def log_origin(request, call_next):
+    origin = request.headers.get("origin")
+    path = request.url.path
+    logging.getLogger("cors").debug("Origin %r -> %s", origin, path)
+    response = await call_next(request)
+    return response
+
 
 try:
     __version__ = metadata.version("orchestrator")

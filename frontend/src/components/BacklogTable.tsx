@@ -257,6 +257,7 @@ export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
                 key={item.id}
                 className="border-t hover:bg-gray-50 cursor-pointer"
                 onClick={() => onEdit(item)}
+                data-item-id={item.id}
               >
                 <td className="px-4 py-3">
                   <Badge className={`${getBadgeColor(item)} text-white`}>
