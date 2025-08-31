@@ -5,6 +5,8 @@ from typing import List, Optional
 from .models import (
     Project,
     ProjectCreate,
+    Document,
+    DocumentCreate,
     BacklogItem,
     BacklogItemCreate,
     BacklogItemUpdate,
@@ -114,6 +116,19 @@ def init_db():
             conn.execute(f"ALTER TABLE backlog ADD COLUMN {column_name} {column_type}")
         except sqlite3.OperationalError:
             pass
+
+    # Table for project documents
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS documents ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT," 
+        "project_id INTEGER," 
+        "filename TEXT," 
+        "content TEXT," 
+        "embedding TEXT," 
+        "FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE"
+        ")"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id)")
     # Tables for run tracking
     conn.execute(
         "CREATE TABLE IF NOT EXISTS runs ("
@@ -295,6 +310,72 @@ def delete_project(project_id: int) -> bool:
     conn.commit()
     conn.close()
     return cursor.rowcount > 0
+
+
+def create_document(
+    project_id: int,
+    filename: str,
+    content: str | None = None,
+    embedding: List[float] | None = None,
+) -> Document:
+    """Store a document linked to a project."""
+    if project_id is None or not filename:
+        raise ValueError("project_id and filename are required")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO documents (project_id, filename, content, embedding) VALUES (?, ?, ?, ?)",
+        (project_id, filename, content, json.dumps(embedding) if embedding is not None else None),
+    )
+    doc_id = cursor.lastrowid
+    conn.commit()
+    cursor.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return Document(
+        id=row["id"],
+        project_id=row["project_id"],
+        filename=row["filename"],
+        content=row["content"],
+        embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+    )
+
+
+def get_document(document_id: int) -> Optional[Document]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM documents WHERE id = ?", (document_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return Document(
+            id=row["id"],
+            project_id=row["project_id"],
+            filename=row["filename"],
+            content=row["content"],
+            embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+        )
+    return None
+
+
+def get_documents(project_id: int) -> List[Document]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM documents WHERE project_id = ? ORDER BY id", (project_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    documents = []
+    for row in rows:
+        documents.append(
+            Document(
+                id=row["id"],
+                project_id=row["project_id"],
+                filename=row["filename"],
+                content=row["content"],
+                embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+            )
+        )
+    return documents
 
 
 def create_item(item: BacklogItemCreate) -> BacklogItem:
