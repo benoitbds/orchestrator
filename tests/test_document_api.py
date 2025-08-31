@@ -54,3 +54,31 @@ async def test_get_document_content_not_found(tmp_path, monkeypatch):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.get("/documents/123/content")
         assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_upload_document_embedding_error(tmp_path, monkeypatch):
+    db = tmp_path / "db.sqlite"
+    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
+    crud.init_db()
+    project = crud.create_project(ProjectCreate(name="P", description=None))
+
+    import sys, types
+    dummy_doc_processing = types.SimpleNamespace(
+        extract_text_from_file=lambda content, filename: content.decode(),
+        DocumentParsingError=Exception,
+    )
+    monkeypatch.setitem(sys.modules, "orchestrator.doc_processing", dummy_doc_processing)
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "orchestrator.embedding_service.embed_document_text", boom
+    )
+
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        files = {"file": ("note.txt", b"hello", "text/plain")}
+        r = await ac.post(f"/projects/{project.id}/documents", files=files)
+        assert r.status_code == 201
+        assert r.json()["filename"] == "note.txt"

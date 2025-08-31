@@ -65,6 +65,7 @@ async def _no_aexit(self, exc_type=None, exc_value=None, traceback=None):
 httpx.AsyncClient.__aexit__ = _no_aexit
 
 setup_logging()
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 crud.init_db()
