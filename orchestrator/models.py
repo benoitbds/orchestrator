@@ -36,6 +36,17 @@ class DocumentCreate(BaseModel):
 DocumentOut = Document
 
 
+class LayoutNode(BaseModel):
+    item_id: int
+    x: float
+    y: float
+    pinned: bool = False
+
+
+class LayoutUpdate(BaseModel):
+    nodes: list[LayoutNode] = Field(default_factory=list)
+
+
 class RunStep(BaseModel):
     """Timeline entry for a run."""
 
