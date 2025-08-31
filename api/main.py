@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Load environment variables first
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import File, FastAPI, HTTPException, Query, UploadFile, Response
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
 
@@ -22,6 +22,7 @@ from orchestrator.models import (
     BacklogItemCreate,
     BacklogItemUpdate,
     BacklogItem,
+    DocumentOut,
     RunDetail,
     RunSummary,
     FeatureCreate,
@@ -180,6 +181,51 @@ async def update_project(project_id: int, project: ProjectCreate):
 @app.delete("/projects/{project_id}")
 async def delete_project(project_id: int):
     return crud.delete_project(project_id)
+
+
+# ---- Document endpoints ----
+
+
+@app.post(
+    "/projects/{project_id}/documents",
+    response_model=DocumentOut,
+    status_code=201,
+)
+async def upload_document(project_id: int, file: UploadFile = File(...)):
+    """Upload a document for a project."""
+
+    if not crud.get_project(project_id):
+        raise HTTPException(status_code=404, detail="project not found")
+
+    content_bytes = await file.read()
+    try:
+        content_text = content_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        content_text = content_bytes.decode("utf-8", errors="ignore")
+
+    return crud.create_document(project_id, file.filename, content_text, None)
+
+
+@app.get(
+    "/projects/{project_id}/documents",
+    response_model=list[DocumentOut],
+)
+async def list_documents(project_id: int):
+    """List documents for a project."""
+
+    if not crud.get_project(project_id):
+        raise HTTPException(status_code=404, detail="project not found")
+    return crud.get_documents(project_id)
+
+
+@app.get("/documents/{doc_id}/content")
+async def get_document_content(doc_id: int):
+    """Return the stored content of a document."""
+
+    doc = crud.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="document not found")
+    return Response(doc.content or "", media_type="text/plain")
 
 
 # ---- Backlog item endpoints ----
