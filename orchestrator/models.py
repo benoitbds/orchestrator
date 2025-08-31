@@ -21,6 +21,7 @@ class Document(BaseModel):
     filename: str
     content: str | None = None
     embedding: list[float] | None = None
+    filepath: str | None = None
 
 
 class DocumentCreate(BaseModel):
@@ -28,6 +29,7 @@ class DocumentCreate(BaseModel):
     filename: str
     content: str | None = None
     embedding: list[float] | None = None
+    filepath: str | None = None
 
 
 # For symmetry with other models

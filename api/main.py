@@ -255,7 +255,7 @@ async def get_document_content(doc_id: int):
     doc = crud.get_document(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="document not found")
-    return Response(doc.content or "", media_type="text/plain")
+    return Response(doc.get("content") or "", media_type="text/plain")
 
 
 @app.get("/documents/{doc_id}/chunks")
@@ -266,9 +266,28 @@ async def get_document_chunks(doc_id: int):
     doc = crud.get_document(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="document not found")
-    
+
     chunks = crud.get_document_chunks(doc_id)
     return chunks
+
+
+@app.delete("/documents/{doc_id}")
+def delete_document_api(doc_id: int):
+    doc = crud.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    crud.delete_document_chunks(doc_id)
+
+    fp = doc.get("filepath")
+    if fp:
+        try:
+            os.remove(fp)
+        except FileNotFoundError:
+            pass
+
+    ok = crud.delete_document(doc_id)
+    return {"ok": bool(ok)}
 
 
 @app.post("/projects/{project_id}/search")
