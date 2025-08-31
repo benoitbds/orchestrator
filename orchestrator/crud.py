@@ -120,21 +120,27 @@ def init_db():
     # Table for project documents
     conn.execute(
         "CREATE TABLE IF NOT EXISTS documents ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT," 
-        "project_id INTEGER," 
-        "filename TEXT," 
-        "content TEXT," 
-        "embedding TEXT," 
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "project_id INTEGER,"
+        "filename TEXT,"
+        "content TEXT,"
+        "embedding TEXT,"
+        "filepath TEXT,"
         "FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE"
         ")"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id)")
+    # Add filepath column if missing for backward compatibility
+    cur = conn.execute("PRAGMA table_info(documents)")
+    cols = [row[1] for row in cur.fetchall()]
+    if "filepath" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN filepath TEXT")
     
     # Table for document chunks with embeddings
     conn.execute(
         "CREATE TABLE IF NOT EXISTS document_chunks ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "document_id INTEGER,"
+        "doc_id INTEGER,"
         "chunk_index INTEGER,"
         "text TEXT NOT NULL,"
         "start_char INTEGER,"
@@ -143,11 +149,15 @@ def init_db():
         "embedding TEXT,"
         "embedding_model TEXT,"
         "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE"
+        "FOREIGN KEY(doc_id) REFERENCES documents(id) ON DELETE CASCADE"
         ")"
     )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_document_chunks_document ON document_chunks(document_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_document_chunks_model ON document_chunks(embedding_model)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_document_chunks_doc_chunk ON document_chunks(doc_id, chunk_index)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_document_chunks_model ON document_chunks(embedding_model)"
+    )
     
     # Tables for run tracking
     conn.execute(
@@ -280,17 +290,22 @@ def get_runs(project_id: int | None = None) -> List[dict]:
     conn.close()
     return [dict(row) for row in rows]
 
-def create_project(project: ProjectCreate) -> Project:
+def create_project(project: ProjectCreate | str, description: str | None = None) -> Project:
+    if isinstance(project, ProjectCreate):
+        data = project
+    else:
+        data = ProjectCreate(name=project, description=description)
+
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO projects (name, description) VALUES (?, ?)",
-        (project.name, project.description)
+        (data.name, data.description)
     )
     conn.commit()
     project_id = cursor.lastrowid
     conn.close()
-    return Project(id=project_id, **project.model_dump())
+    return Project(id=project_id, **data.model_dump())
 
 def get_project(project_id: int) -> Optional[Project]:
     conn = get_db_connection()
@@ -337,6 +352,7 @@ def create_document(
     filename: str,
     content: str | None = None,
     embedding: List[float] | None = None,
+    filepath: str | None = None,
 ) -> Document:
     """Store a document linked to a project."""
     if project_id is None or not filename:
@@ -344,8 +360,14 @@ def create_document(
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO documents (project_id, filename, content, embedding) VALUES (?, ?, ?, ?)",
-        (project_id, filename, content, json.dumps(embedding) if embedding is not None else None),
+        "INSERT INTO documents (project_id, filename, content, embedding, filepath) VALUES (?, ?, ?, ?, ?)",
+        (
+            project_id,
+            filename,
+            content,
+            json.dumps(embedding) if embedding is not None else None,
+            filepath,
+        ),
     )
     doc_id = cursor.lastrowid
     conn.commit()
@@ -358,24 +380,27 @@ def create_document(
         filename=row["filename"],
         content=row["content"],
         embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+        filepath=row["filepath"],
     )
 
 
-def get_document(document_id: int) -> Optional[Document]:
+def get_document(doc_id: int) -> Optional[dict]:
+    """Return document row as a dict or None."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM documents WHERE id = ?", (document_id,))
+    cursor.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
     row = cursor.fetchone()
     conn.close()
-    if row:
-        return Document(
-            id=row["id"],
-            project_id=row["project_id"],
-            filename=row["filename"],
-            content=row["content"],
-            embedding=json.loads(row["embedding"]) if row["embedding"] else None,
-        )
-    return None
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "project_id": row["project_id"],
+        "filename": row["filename"],
+        "content": row["content"],
+        "embedding": json.loads(row["embedding"]) if row["embedding"] else None,
+        "filepath": row["filepath"],
+    }
 
 
 def get_documents(project_id: int) -> List[Document]:
@@ -393,6 +418,7 @@ def get_documents(project_id: int) -> List[Document]:
                 filename=row["filename"],
                 content=row["content"],
                 embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+                filepath=row["filepath"],
             )
         )
     return documents
@@ -400,12 +426,12 @@ def get_documents(project_id: int) -> List[Document]:
 
 # Document chunks CRUD operations
 
-def create_document_chunks(document_id: int, chunks_data: List[dict]) -> List[int]:
+def create_document_chunks(doc_id: int, chunks_data: List[dict]) -> List[int]:
     """
     Create multiple document chunks for a document.
     
     Args:
-        document_id: ID of the parent document
+        doc_id: ID of the parent document
         chunks_data: List of chunk dictionaries with embedding data
         
     Returns:
@@ -422,18 +448,18 @@ def create_document_chunks(document_id: int, chunks_data: List[dict]) -> List[in
         for chunk in chunks_data:
             cursor.execute(
                 "INSERT INTO document_chunks "
-                "(document_id, chunk_index, text, start_char, end_char, token_count, embedding, embedding_model) "
+                "(doc_id, chunk_index, text, start_char, end_char, token_count, embedding, embedding_model) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    document_id,
+                    doc_id,
                     chunk.get("chunk_index"),
                     chunk.get("text"),
                     chunk.get("start_char"),
                     chunk.get("end_char"),
                     chunk.get("token_count"),
                     json.dumps(chunk.get("embedding")) if chunk.get("embedding") else None,
-                    chunk.get("embedding_model")
-                )
+                    chunk.get("embedding_model"),
+                ),
             )
             chunk_ids.append(cursor.lastrowid)
         
@@ -446,12 +472,12 @@ def create_document_chunks(document_id: int, chunks_data: List[dict]) -> List[in
     
     return chunk_ids
 
-def get_document_chunks(document_id: int) -> List[dict]:
+def get_document_chunks(doc_id: int) -> List[dict]:
     """
     Get all chunks for a document.
     
     Args:
-        document_id: ID of the parent document
+        doc_id: ID of the parent document
         
     Returns:
         List of chunk dictionaries
@@ -459,8 +485,8 @@ def get_document_chunks(document_id: int) -> List[dict]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT * FROM document_chunks WHERE document_id = ? ORDER BY chunk_index",
-        (document_id,)
+        "SELECT * FROM document_chunks WHERE doc_id = ? ORDER BY chunk_index",
+        (doc_id,)
     )
     rows = cursor.fetchall()
     conn.close()
@@ -469,7 +495,7 @@ def get_document_chunks(document_id: int) -> List[dict]:
     for row in rows:
         chunks.append({
             "id": row["id"],
-            "document_id": row["document_id"],
+            "doc_id": row["doc_id"],
             "chunk_index": row["chunk_index"],
             "text": row["text"],
             "start_char": row["start_char"],
@@ -496,10 +522,10 @@ def get_all_chunks_for_project(project_id: int) -> List[dict]:
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT dc.*, d.filename, d.project_id 
-        FROM document_chunks dc 
-        JOIN documents d ON dc.document_id = d.id 
-        WHERE d.project_id = ? 
+        SELECT dc.*, d.filename, d.project_id
+        FROM document_chunks dc
+        JOIN documents d ON dc.doc_id = d.id
+        WHERE d.project_id = ?
         ORDER BY d.id, dc.chunk_index
         """,
         (project_id,)
@@ -511,7 +537,7 @@ def get_all_chunks_for_project(project_id: int) -> List[dict]:
     for row in rows:
         chunks.append({
             "id": row["id"],
-            "document_id": row["document_id"],
+            "doc_id": row["doc_id"],
             "chunk_index": row["chunk_index"],
             "text": row["text"],
             "start_char": row["start_char"],
@@ -526,23 +552,24 @@ def get_all_chunks_for_project(project_id: int) -> List[dict]:
     
     return chunks
 
-def delete_document_chunks(document_id: int) -> int:
-    """
-    Delete all chunks for a document.
-    
-    Args:
-        document_id: ID of the parent document
-        
-    Returns:
-        Number of chunks deleted
-    """
+def delete_document_chunks(doc_id: int) -> None:
+    """Delete all chunks for a document."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM document_chunks WHERE document_id = ?", (document_id,))
-    deleted_count = cursor.rowcount
+    cursor.execute("DELETE FROM document_chunks WHERE doc_id = ?", (doc_id,))
     conn.commit()
     conn.close()
-    return deleted_count
+
+
+def delete_document(doc_id: int) -> bool:
+    """Delete a document row. Returns True if deleted."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+    conn.commit()
+    deleted = cursor.rowcount > 0
+    conn.close()
+    return deleted
 
 def search_similar_chunks(
     project_id: int,
@@ -567,9 +594,9 @@ def search_similar_chunks(
     cursor = conn.cursor()
     
     query = """
-        SELECT dc.*, d.filename, d.project_id 
-        FROM document_chunks dc 
-        JOIN documents d ON dc.document_id = d.id 
+        SELECT dc.*, d.filename, d.project_id
+        FROM document_chunks dc
+        JOIN documents d ON dc.doc_id = d.id
         WHERE d.project_id = ? AND dc.embedding IS NOT NULL
     """
     params = [project_id]
@@ -592,7 +619,7 @@ def search_similar_chunks(
     for row in rows:
         chunks.append({
             "id": row["id"],
-            "document_id": row["document_id"],
+            "doc_id": row["doc_id"],
             "chunk_index": row["chunk_index"],
             "text": row["text"],
             "start_char": row["start_char"],

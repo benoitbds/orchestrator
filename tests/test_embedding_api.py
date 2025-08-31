@@ -225,7 +225,7 @@ class TestSemanticSearchAPI:
                         "chunk_index": 0,
                         "embedding": [0.9, 0.1, 0.0],
                         "similarity_score": 0.99,
-                        "document_id": 1,
+                        "doc_id": 1,
                         "filename": "doc1.txt"
                     },
                     {
@@ -233,7 +233,7 @@ class TestSemanticSearchAPI:
                         "chunk_index": 1,
                         "embedding": [0.8, 0.2, 0.0],
                         "similarity_score": 0.89,
-                        "document_id": 1,
+                        "doc_id": 1,
                         "filename": "doc1.txt"
                     }
                 ]
@@ -415,7 +415,7 @@ class TestEmbeddingIntegration:
                             "chunk_index": 0,
                             "embedding": [0.9, 0.1, 0.0, 0.0, 0.0],
                             "similarity_score": 0.95,
-                            "document_id": document["id"],
+                            "doc_id": document["id"],
                             "filename": "ai_doc.txt"
                         }
                     ]
