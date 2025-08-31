@@ -1,6 +1,7 @@
 import pytest
 import json
 import asyncio
+import os
 from unittest.mock import Mock, AsyncMock, patch
 from orchestrator.embedding_service import (
     EmbeddingService,

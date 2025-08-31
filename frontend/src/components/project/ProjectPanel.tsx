@@ -212,6 +212,7 @@ export function ProjectPanel() {
                   onChange={handleFileChange}
                   ref={fileInputRef}
                   className="flex-1"
+                  aria-label="Upload file"
                 />
                 <Button
                   onClick={handleUpload}

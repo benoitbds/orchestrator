@@ -7,6 +7,8 @@ from httpx_ws import aconnect_ws, WebSocketDisconnect
 from httpx_ws.transport import ASGIWebSocketTransport
 from api.main import app
 from orchestrator import crud
+from orchestrator.models import ProjectCreate
+import fitz
 
 crud.init_db()
 
@@ -219,6 +221,7 @@ async def test_feature_proposals_endpoint(monkeypatch):
 
     # Stub de crud.create_item pour simuler l'écriture en BDD
     created = []
+
     def fake_create_item(item):
         idx = len(created) + 1
         d = {
@@ -250,3 +253,63 @@ async def test_feature_proposals_endpoint(monkeypatch):
         for i, prop in enumerate(expected.proposals):
             assert data[i]["title"] == prop.title
             assert data[i]["description"] == prop.description
+
+
+@pytest.mark.asyncio
+async def test_document_upload_and_listing(tmp_path, monkeypatch):
+    db = tmp_path / "db.sqlite"
+    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
+    crud.init_db()
+    project = crud.create_project(ProjectCreate(name="P", description=None))
+
+    from orchestrator import embedding_service
+
+    async def fake_embed(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(embedding_service, "embed_document_text", fake_embed)
+
+    async with AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+        files = {"file": ("note.txt", b"hello", "text/plain")}
+        r = await ac.post(f"/projects/{project.id}/documents", files=files)
+        assert r.status_code == 201
+
+        docs = crud.get_documents(project.id)
+        assert len(docs) == 1
+        assert docs[0].filename == "note.txt"
+
+        rlist = await ac.get(f"/projects/{project.id}/documents")
+        assert rlist.status_code == 200
+        data = rlist.json()
+        assert len(data) == 1 and data[0]["filename"] == "note.txt"
+
+
+@pytest.mark.asyncio
+async def test_pdf_content_extraction(tmp_path, monkeypatch):
+    db = tmp_path / "db.sqlite"
+    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
+    crud.init_db()
+    project = crud.create_project(ProjectCreate(name="P", description=None))
+
+    from orchestrator import embedding_service
+
+    async def fake_embed(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(embedding_service, "embed_document_text", fake_embed)
+
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_text((72, 72), "sample pdf text")
+    pdf_bytes = pdf.tobytes()
+    pdf.close()
+
+    async with AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+        files = {"file": ("sample.pdf", pdf_bytes, "application/pdf")}
+        r = await ac.post(f"/projects/{project.id}/documents", files=files)
+        assert r.status_code == 201
+        doc_id = r.json()["id"]
+
+        rcontent = await ac.get(f"/documents/{doc_id}/content")
+        assert rcontent.status_code == 200
+        assert "sample pdf text" in rcontent.text
