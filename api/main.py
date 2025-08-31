@@ -198,12 +198,41 @@ async def upload_document(project_id: int, file: UploadFile = File(...)):
         raise HTTPException(status_code=404, detail="project not found")
 
     content_bytes = await file.read()
+    
+    # Extract text from document using appropriate parser
+    from orchestrator.doc_processing import extract_text_from_file, DocumentParsingError
+    from orchestrator.embedding_service import embed_document_text, EmbeddingError
+    
     try:
-        content_text = content_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        content_text = content_bytes.decode("utf-8", errors="ignore")
+        content_text = extract_text_from_file(content_bytes, file.filename)
+    except DocumentParsingError as e:
+        raise HTTPException(status_code=422, detail=f"Document parsing failed: {str(e)}")
 
-    return crud.create_document(project_id, file.filename, content_text, None)
+    # Create the document first
+    document = crud.create_document(project_id, file.filename, content_text, None)
+    
+    # Generate embeddings for document chunks in background
+    try:
+        chunk_embeddings = await embed_document_text(
+            text=content_text,
+            chunking_strategy="sentences",
+            max_tokens=500,
+            overlap_tokens=50
+        )
+        
+        # Store chunk embeddings in database
+        if chunk_embeddings:
+            crud.create_document_chunks(document.id, chunk_embeddings)
+            logger.info(f"Generated {len(chunk_embeddings)} embeddings for document {document.id}")
+        
+    except EmbeddingError as e:
+        logger.warning(f"Failed to generate embeddings for document {document.id}: {e}")
+        # Continue without embeddings - don't fail the upload
+    except Exception as e:
+        logger.error(f"Unexpected error generating embeddings for document {document.id}: {e}")
+        # Continue without embeddings - don't fail the upload
+
+    return document
 
 
 @app.get(
@@ -226,6 +255,71 @@ async def get_document_content(doc_id: int):
     if not doc:
         raise HTTPException(status_code=404, detail="document not found")
     return Response(doc.content or "", media_type="text/plain")
+
+
+@app.get("/documents/{doc_id}/chunks")
+async def get_document_chunks(doc_id: int):
+    """Get all chunks for a specific document."""
+    
+    # Verify document exists
+    doc = crud.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="document not found")
+    
+    chunks = crud.get_document_chunks(doc_id)
+    return chunks
+
+
+@app.post("/projects/{project_id}/search")
+async def search_documents(
+    project_id: int,
+    query: dict
+):
+    """Search for similar document chunks using semantic search."""
+    
+    if not crud.get_project(project_id):
+        raise HTTPException(status_code=404, detail="project not found")
+    
+    query_text = query.get("query", "")
+    if not query_text:
+        raise HTTPException(status_code=400, detail="Query text is required")
+    
+    limit = query.get("limit", 5)
+    similarity_threshold = query.get("similarity_threshold", 0.3)
+    
+    try:
+        from orchestrator.embedding_service import get_embedding_service, EmbeddingError
+        
+        # Generate embedding for the query
+        embedding_service = get_embedding_service()
+        query_embedding = await embedding_service.generate_embedding(query_text)
+        
+        # Get all chunks for the project
+        all_chunks = crud.get_all_chunks_for_project(project_id)
+        
+        if not all_chunks:
+            return {"query": query_text, "results": [], "total_chunks": 0}
+        
+        # Find similar chunks
+        similar_chunks = await embedding_service.find_similar_chunks(
+            query_embedding=query_embedding,
+            chunk_embeddings=all_chunks,
+            top_k=limit,
+            similarity_threshold=similarity_threshold
+        )
+        
+        return {
+            "query": query_text,
+            "results": similar_chunks,
+            "total_chunks": len(all_chunks),
+            "similarity_threshold": similarity_threshold
+        }
+        
+    except EmbeddingError as e:
+        raise HTTPException(status_code=500, detail=f"Embedding error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
 # ---- Backlog item endpoints ----

@@ -129,6 +129,26 @@ def init_db():
         ")"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id)")
+    
+    # Table for document chunks with embeddings
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS document_chunks ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "document_id INTEGER,"
+        "chunk_index INTEGER,"
+        "text TEXT NOT NULL,"
+        "start_char INTEGER,"
+        "end_char INTEGER,"
+        "token_count INTEGER,"
+        "embedding TEXT,"
+        "embedding_model TEXT,"
+        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE"
+        ")"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_document_chunks_document ON document_chunks(document_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_document_chunks_model ON document_chunks(embedding_model)")
+    
     # Tables for run tracking
     conn.execute(
         "CREATE TABLE IF NOT EXISTS runs ("
@@ -376,6 +396,216 @@ def get_documents(project_id: int) -> List[Document]:
             )
         )
     return documents
+
+
+# Document chunks CRUD operations
+
+def create_document_chunks(document_id: int, chunks_data: List[dict]) -> List[int]:
+    """
+    Create multiple document chunks for a document.
+    
+    Args:
+        document_id: ID of the parent document
+        chunks_data: List of chunk dictionaries with embedding data
+        
+    Returns:
+        List of chunk IDs that were created
+    """
+    if not chunks_data:
+        return []
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    chunk_ids = []
+    
+    try:
+        for chunk in chunks_data:
+            cursor.execute(
+                "INSERT INTO document_chunks "
+                "(document_id, chunk_index, text, start_char, end_char, token_count, embedding, embedding_model) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    document_id,
+                    chunk.get("chunk_index"),
+                    chunk.get("text"),
+                    chunk.get("start_char"),
+                    chunk.get("end_char"),
+                    chunk.get("token_count"),
+                    json.dumps(chunk.get("embedding")) if chunk.get("embedding") else None,
+                    chunk.get("embedding_model")
+                )
+            )
+            chunk_ids.append(cursor.lastrowid)
+        
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+    
+    return chunk_ids
+
+def get_document_chunks(document_id: int) -> List[dict]:
+    """
+    Get all chunks for a document.
+    
+    Args:
+        document_id: ID of the parent document
+        
+    Returns:
+        List of chunk dictionaries
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM document_chunks WHERE document_id = ? ORDER BY chunk_index",
+        (document_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    
+    chunks = []
+    for row in rows:
+        chunks.append({
+            "id": row["id"],
+            "document_id": row["document_id"],
+            "chunk_index": row["chunk_index"],
+            "text": row["text"],
+            "start_char": row["start_char"],
+            "end_char": row["end_char"],
+            "token_count": row["token_count"],
+            "embedding": json.loads(row["embedding"]) if row["embedding"] else None,
+            "embedding_model": row["embedding_model"],
+            "created_at": row["created_at"]
+        })
+    
+    return chunks
+
+def get_all_chunks_for_project(project_id: int) -> List[dict]:
+    """
+    Get all document chunks for a project.
+    
+    Args:
+        project_id: ID of the project
+        
+    Returns:
+        List of chunk dictionaries with document info
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT dc.*, d.filename, d.project_id 
+        FROM document_chunks dc 
+        JOIN documents d ON dc.document_id = d.id 
+        WHERE d.project_id = ? 
+        ORDER BY d.id, dc.chunk_index
+        """,
+        (project_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    
+    chunks = []
+    for row in rows:
+        chunks.append({
+            "id": row["id"],
+            "document_id": row["document_id"],
+            "chunk_index": row["chunk_index"],
+            "text": row["text"],
+            "start_char": row["start_char"],
+            "end_char": row["end_char"],
+            "token_count": row["token_count"],
+            "embedding": json.loads(row["embedding"]) if row["embedding"] else None,
+            "embedding_model": row["embedding_model"],
+            "created_at": row["created_at"],
+            "filename": row["filename"],
+            "project_id": row["project_id"]
+        })
+    
+    return chunks
+
+def delete_document_chunks(document_id: int) -> int:
+    """
+    Delete all chunks for a document.
+    
+    Args:
+        document_id: ID of the parent document
+        
+    Returns:
+        Number of chunks deleted
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM document_chunks WHERE document_id = ?", (document_id,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count
+
+def search_similar_chunks(
+    project_id: int,
+    query_embedding: List[float],
+    limit: int = 10,
+    embedding_model: str = None
+) -> List[dict]:
+    """
+    Search for similar chunks in a project using embeddings.
+    Note: This is a basic implementation. For production, consider using a vector database.
+    
+    Args:
+        project_id: ID of the project to search in
+        query_embedding: Query embedding vector
+        limit: Maximum number of results to return
+        embedding_model: Optional filter by embedding model
+        
+    Returns:
+        List of similar chunks (similarity calculation done in application layer)
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT dc.*, d.filename, d.project_id 
+        FROM document_chunks dc 
+        JOIN documents d ON dc.document_id = d.id 
+        WHERE d.project_id = ? AND dc.embedding IS NOT NULL
+    """
+    params = [project_id]
+    
+    if embedding_model:
+        query += " AND dc.embedding_model = ?"
+        params.append(embedding_model)
+    
+    query += " ORDER BY dc.created_at DESC"
+    
+    if limit:
+        query += " LIMIT ?"
+        params.append(limit * 5)  # Get more chunks for similarity calculation
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    chunks = []
+    for row in rows:
+        chunks.append({
+            "id": row["id"],
+            "document_id": row["document_id"],
+            "chunk_index": row["chunk_index"],
+            "text": row["text"],
+            "start_char": row["start_char"],
+            "end_char": row["end_char"],
+            "token_count": row["token_count"],
+            "embedding": json.loads(row["embedding"]) if row["embedding"] else None,
+            "embedding_model": row["embedding_model"],
+            "created_at": row["created_at"],
+            "filename": row["filename"],
+            "project_id": row["project_id"]
+        })
+    
+    return chunks
 
 
 def create_item(item: BacklogItemCreate) -> BacklogItem:
