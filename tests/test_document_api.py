@@ -70,12 +70,18 @@ async def test_upload_document_embedding_error(tmp_path, monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "orchestrator.doc_processing", dummy_doc_processing)
 
-    async def boom(*args, **kwargs):
+    async def boom(texts):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(
-        "orchestrator.embedding_service.embed_document_text", boom
-    )
+    from agents import embeddings
+    monkeypatch.setattr(embeddings, "embed_texts", boom)
+    monkeypatch.setattr(embeddings, "chunk_text", lambda text, **_: [text])
+    class DummyEnc:
+        def encode(self, text):
+            return [0] * len(text.split())
+        def decode(self, toks):
+            return " ".join("x" for _ in toks)
+    monkeypatch.setattr(embeddings.tiktoken, "get_encoding", lambda name: DummyEnc())
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         files = {"file": ("note.txt", b"hello", "text/plain")}

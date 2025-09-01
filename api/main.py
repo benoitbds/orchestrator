@@ -32,6 +32,7 @@ from orchestrator.models import (
     UCCreate,
 )
 import httpx
+from agents.embeddings import chunk_text, embed_texts
 
 
 def setup_logging() -> None:
@@ -202,7 +203,6 @@ async def upload_document(project_id: int, file: UploadFile = File(...)):
     
     # Extract text from document using appropriate parser
     from orchestrator.doc_processing import extract_text_from_file, DocumentParsingError
-    from orchestrator.embedding_service import embed_document_text, EmbeddingError
     
     try:
         content_text = extract_text_from_file(content_bytes, file.filename)
@@ -211,27 +211,20 @@ async def upload_document(project_id: int, file: UploadFile = File(...)):
 
     # Create the document first
     document = crud.create_document(project_id, file.filename, content_text, None)
-    
-    # Generate embeddings for document chunks in background
+
+    chunks = chunk_text(content_text, target_tokens=400, overlap_tokens=60)
     try:
-        chunk_embeddings = await embed_document_text(
-            text=content_text,
-            chunking_strategy="sentences",
-            max_tokens=500,
-            overlap_tokens=50
-        )
-        
-        # Store chunk embeddings in database
-        if chunk_embeddings:
-            crud.create_document_chunks(document.id, chunk_embeddings)
-            logger.info(f"Generated {len(chunk_embeddings)} embeddings for document {document.id}")
-        
-    except EmbeddingError as e:
-        logger.warning(f"Failed to generate embeddings for document {document.id}: {e}")
-        # Continue without embeddings - don't fail the upload
-    except Exception as e:
-        logger.error(f"Unexpected error generating embeddings for document {document.id}: {e}")
-        # Continue without embeddings - don't fail the upload
+        embeddings = await embed_texts(chunks)
+    except Exception as e:  # pragma: no cover - unexpected
+        logger.warning("Failed to embed document %s: %s", document.id, e)
+        embeddings = [[] for _ in chunks]
+
+    payload = [
+        (i, chunk, embeddings[i] if i < len(embeddings) else [])
+        for i, chunk in enumerate(chunks)
+    ]
+    if payload:
+        crud.upsert_document_chunks(document.id, payload)
 
     return document
 
