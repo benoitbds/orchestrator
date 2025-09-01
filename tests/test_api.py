@@ -262,12 +262,19 @@ async def test_document_upload_and_listing(tmp_path, monkeypatch):
     crud.init_db()
     project = crud.create_project(ProjectCreate(name="P", description=None))
 
-    from orchestrator import embedding_service
+    from agents import embeddings
 
-    async def fake_embed(*args, **kwargs):
-        return []
+    async def fake_embed(texts):
+        return [[] for _ in texts]
 
-    monkeypatch.setattr(embedding_service, "embed_document_text", fake_embed)
+    monkeypatch.setattr(embeddings, "embed_texts", fake_embed)
+    monkeypatch.setattr(embeddings, "chunk_text", lambda text, **_: [text])
+    class DummyEnc:
+        def encode(self, text):
+            return [0] * len(text.split())
+        def decode(self, toks):
+            return " ".join("x" for _ in toks)
+    monkeypatch.setattr(embeddings.tiktoken, "get_encoding", lambda name: DummyEnc())
 
     async with AsyncClient(transport=transport, base_url=BASE_URL) as ac:
         files = {"file": ("note.txt", b"hello", "text/plain")}
@@ -291,12 +298,19 @@ async def test_pdf_content_extraction(tmp_path, monkeypatch):
     crud.init_db()
     project = crud.create_project(ProjectCreate(name="P", description=None))
 
-    from orchestrator import embedding_service
+    from agents import embeddings
 
-    async def fake_embed(*args, **kwargs):
-        return []
+    async def fake_embed(texts):
+        return [[] for _ in texts]
 
-    monkeypatch.setattr(embedding_service, "embed_document_text", fake_embed)
+    monkeypatch.setattr(embeddings, "embed_texts", fake_embed)
+    monkeypatch.setattr(embeddings, "chunk_text", lambda text, **_: [text])
+    class DummyEnc:
+        def encode(self, text):
+            return [0] * len(text.split())
+        def decode(self, toks):
+            return " ".join("x" for _ in toks)
+    monkeypatch.setattr(embeddings.tiktoken, "get_encoding", lambda name: DummyEnc())
 
     pdf = fitz.open()
     page = pdf.new_page()

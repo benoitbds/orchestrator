@@ -169,6 +169,9 @@ def init_db():
         ")"
     )
     conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_document_chunks_doc ON document_chunks(doc_id)"
+    )
+    conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_document_chunks_doc_chunk ON document_chunks(doc_id, chunk_index)"
     )
     conn.execute(
@@ -479,6 +482,35 @@ def get_documents(project_id: int) -> List[Document]:
 
 
 # Document chunks CRUD operations
+
+def upsert_document_chunks(doc_id: int, chunks: list[tuple[int, str, list[float]]]) -> int:
+    """Upsert chunk records for a document.
+
+    Each chunk tuple is (chunk_index, text, embedding_list).
+    Embeddings are stored as JSON strings. Returns number of processed chunks.
+    """
+    if not chunks:
+        return 0
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    count = 0
+    try:
+        for idx, text, emb in chunks:
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO document_chunks (id, doc_id, chunk_index, text, embedding)
+                VALUES (
+                    COALESCE((SELECT id FROM document_chunks WHERE doc_id=? AND chunk_index=?), NULL),
+                    ?, ?, ?, ?
+                )
+                """,
+                (doc_id, idx, doc_id, idx, text, json.dumps(emb)),
+            )
+            count += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return count
 
 def create_document_chunks(doc_id: int, chunks_data: List[dict]) -> List[int]:
     """
