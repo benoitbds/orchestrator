@@ -85,17 +85,20 @@ Process:
 """
 
 async def run_objective(project_id: int, objective: str) -> Dict[str, Any]:
-    """Execute a single objective using the agent tools."""
-    
-    # Import here to avoid circular dependency (core_loop imports this module)
+    """Execute a single objective using the agent tools.
+
+    A new run is created and its identifier is returned so that callers can
+    later query progress or attach to the streaming API.
+    """
+
     from orchestrator.core_loop import run_chat_tools
-    
-    # Use a temporary string run_id for the existing core_loop function
-    temp_run_id = str(uuid4())
+
+    run_id = str(uuid4())
+    crud.create_run(run_id, objective, project_id)
     try:
-        await run_chat_tools(objective, project_id, temp_run_id)
-        result = {"ok": True, "note": "Objective execution completed"}
-    except Exception as e:
-        result = {"ok": False, "error": str(e)}
-    return result
+        await run_chat_tools(objective, project_id, run_id)
+        return {"ok": True, "run_id": run_id}
+    except Exception as e:  # pragma: no cover - unexpected failures
+        crud.finish_run(run_id, "", str(e), {})
+        return {"ok": False, "run_id": run_id, "error": str(e)}
 

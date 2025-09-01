@@ -84,16 +84,18 @@ async def run_agent(payload: RunAgentPayload):
     project = crud.get_project(payload.project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    run_id = crud.create_run(payload.project_id, payload.objective)
-    async def _bg():
+
+    async def _bg() -> None:
         try:
-            crud.update_run_status(run_id, "running")
-            result = await planner.run_objective(project_id=payload.project_id, objective=payload.objective)
-            crud.update_run_status(run_id, "done", json.dumps(result or {}))
-        except Exception as e:
-            crud.update_run_status(run_id, "error", json.dumps({"error": str(e)}))
+            await planner.run_objective(
+                project_id=payload.project_id, objective=payload.objective
+            )
+        except Exception as e:  # pragma: no cover - unexpected runtime errors
+            logger.warning("planner failed: %s", e)
+
     asyncio.create_task(_bg())
-    return {"ok": True, "run_id": run_id}
+    # For backward compatibility the endpoint simply acknowledges the request.
+    return {"ok": True}
 
 
 @app.on_event("startup")
@@ -154,14 +156,14 @@ async def chat(payload: dict) -> dict:
 
 
 @app.get("/runs/{run_id}")
-async def get_run(run_id: int):
+async def get_run(run_id: str):
     run = crud.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
 
 @app.get("/runs/{run_id}/steps")
-async def get_run_steps(run_id: int, limit: int = Query(200, ge=1, le=1000)):
+async def get_run_steps(run_id: str, limit: int = Query(200, ge=1, le=1000)):
     """Get conversation steps/logs for a run."""
     run = crud.get_run(run_id)
     if not run:
