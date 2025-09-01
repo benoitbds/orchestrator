@@ -549,8 +549,13 @@ def get_all_chunks_for_project(project_id: int) -> List[dict]:
             "filename": row["filename"],
             "project_id": row["project_id"]
         })
-    
+
     return chunks
+
+
+def get_all_document_chunks_for_project(project_id: int) -> List[dict]:
+    """Compatibility wrapper for older naming."""
+    return get_all_chunks_for_project(project_id)
 
 def delete_document_chunks(doc_id: int) -> None:
     """Delete all chunks for a document."""

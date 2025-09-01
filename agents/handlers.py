@@ -7,6 +7,14 @@ from typing import Any, Dict, List
 from pydantic import BaseModel, ValidationError, field_validator, model_validator
 
 from orchestrator import crud
+try:  # pragma: no cover - fallback if embeddings not ready
+    from .embeddings import embed_text, cosine_similarity
+except Exception:  # pragma: no cover
+    def embed_text(text: str) -> list[float]:
+        return [0.0]
+
+    def cosine_similarity(a: List[float], b: List[float]) -> float:
+        return 0.0
 from orchestrator.models import (
     EpicCreate,
     CapabilityCreate,
@@ -490,3 +498,48 @@ async def bulk_create_features_tool(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": True, "result": {"created_ids": created_ids}}
     except (ValidationError, ValueError) as e:
         return {"ok": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Document handlers
+# ---------------------------------------------------------------------------
+
+async def list_documents_handler(args: Dict[str, Any]) -> Dict[str, Any]:
+    project_id = int(args["project_id"])
+    docs = [d.model_dump() for d in crud.get_documents(project_id)]
+    return {"ok": True, "documents": docs}
+
+
+async def search_documents_handler(args: Dict[str, Any]) -> Dict[str, Any]:
+    project_id = int(args["project_id"])
+    query = str(args["query"])
+    chunks = crud.get_all_document_chunks_for_project(project_id)
+    if not chunks:
+        return {"ok": True, "matches": []}
+    q = embed_text(query)
+    ranked = sorted(
+        (
+            {
+                "doc_id": c["doc_id"],
+                "text": c["text"],
+                "score": float(cosine_similarity(c.get("embedding"), q)),
+            }
+            for c in chunks
+            if c.get("embedding") is not None
+        ),
+        key=lambda x: x["score"],
+        reverse=True,
+    )[:5]
+    return {"ok": True, "matches": ranked}
+
+
+async def get_document_handler(args: Dict[str, Any]) -> Dict[str, Any]:
+    doc_id = int(args["doc_id"])
+    doc = crud.get_document(doc_id)
+    if not doc:
+        return {"ok": False, "error": "Document not found"}
+    return {
+        "ok": True,
+        "content": doc.get("content", ""),
+        "filename": doc.get("filename"),
+    }

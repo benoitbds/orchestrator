@@ -72,10 +72,30 @@ class BulkCreateFeaturesArgs(BaseModel):
     parent_id: int
     items: List[Dict[str, Optional[str]]]
 
+class ListDocsArgs(BaseModel):
+    project_id: int
+
+class SearchDocsArgs(BaseModel):
+    project_id: int
+    query: str
+
+class GetDocArgs(BaseModel):
+    doc_id: int
+
 # ---------- HANDLERS réels ----------
 from .handlers import (
-    create_item_tool, update_item_tool, find_item_tool, get_item_tool, list_items_tool,
-    delete_item_tool, move_item_tool, summarize_project_tool, bulk_create_features_tool,
+    create_item_tool,
+    update_item_tool,
+    find_item_tool,
+    get_item_tool,
+    list_items_tool,
+    delete_item_tool,
+    move_item_tool,
+    summarize_project_tool,
+    bulk_create_features_tool,
+    list_documents_handler,
+    search_documents_handler,
+    get_document_handler,
 )
 
 def _sanitize(obj: Any) -> Any:
@@ -156,6 +176,9 @@ TOOLS = [
     _mk_tool("move_item", "Reparent an item (hierarchy enforced).", MoveItemArgs),
     _mk_tool("summarize_project", "Summarize the project tree and counts.", SummarizeProjectArgs),
     _mk_tool("bulk_create_features", "Create multiple Features under a parent; skip duplicates.", BulkCreateFeaturesArgs),
+    _mk_tool("list_documents", "List documents in the project.", ListDocsArgs),
+    _mk_tool("search_documents", "Search relevant passages in project documents.", SearchDocsArgs),
+    _mk_tool("get_document", "Get full text content of a document by ID.", GetDocArgs),
 ]
 
 # On conserve HANDLERS exporté si utilisé ailleurs
@@ -169,4 +192,7 @@ HANDLERS = {
     "move_item": move_item_tool,
     "summarize_project": summarize_project_tool,
     "bulk_create_features": bulk_create_features_tool,
+    "list_documents": list_documents_handler,
+    "search_documents": search_documents_handler,
+    "get_document": get_document_handler,
 }
