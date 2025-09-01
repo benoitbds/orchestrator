@@ -181,84 +181,161 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_document_chunks_model ON document_chunks(embedding_model)"
     )
     
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS runs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL,
-      objective TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',    -- pending | running | done | error
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      result_json TEXT
+    # ---- Runs & steps ----
+    # Runs are referenced throughout the agent workflow.  Earlier revisions used an
+    # auto-increment integer id which made it awkward to coordinate with the
+    # frontend that generates UUIDs.  We now store the UUID directly as the
+    # primary key.
+    cur = conn.execute("PRAGMA table_info(runs)")
+    cols = [row[1] for row in cur.fetchall()]
+    if cols and "run_id" not in cols:
+        conn.execute("DROP TABLE runs")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS runs (
+            run_id TEXT PRIMARY KEY,
+            project_id INTEGER,
+            objective TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running',
+            html TEXT,
+            summary TEXT,
+            artifacts TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at TEXT
+        )
+        """
     )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)")
-    # Run steps: log tool calls & planner messages per run_id (TEXT to allow UUIDs)
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS run_steps (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id TEXT NOT NULL,
-      ts TEXT NOT NULL DEFAULT (datetime('now')),
-      kind TEXT NOT NULL,         -- e.g., 'tool:search_documents:request' | 'tool:search_documents:response' | 'planner:msg'
-      data TEXT                   -- JSON payload as TEXT
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)"
     )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, ts)")
+
+    # Run steps keep a simple ordered log of what happened during the run.  Each
+    # step is stored with an auto-increment id so ordering can be reconstructed.
+    cur = conn.execute("PRAGMA table_info(run_steps)")
+    cols = [row[1] for row in cur.fetchall()]
+    if cols and "node" not in cols:
+        conn.execute("DROP TABLE run_steps")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS run_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            node TEXT NOT NULL,
+            content TEXT,
+            ts TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, ts)"
+    )
     conn.close()
 
 
-def create_run(project_id: int, objective: str) -> int:
+def create_run(run_id: str, objective: str, project_id: int | None) -> None:
+    """Create a new run entry.
+
+    The caller provides the run_id so that it can be shared with the frontend
+    immediately (e.g. for WebSocket subscriptions).
+    """
     conn = get_conn()
-    cur = conn.execute(
-        "INSERT INTO runs (project_id, objective, status) VALUES (?, ?, 'pending')",
-        (project_id, objective),
+    conn.execute(
+        "INSERT INTO runs (run_id, project_id, objective, status) VALUES (?, ?, ?, 'running')",
+        (run_id, project_id, objective),
     )
     conn.commit()
-    return cur.lastrowid
+    conn.close()
 
-def update_run_status(run_id: int, status: str, result_json: str | None = None):
+
+def finish_run(run_id: str, html: str, summary: str, artifacts: dict | None = None) -> None:
     conn = get_conn()
-    if result_json is None:
-        conn.execute("UPDATE runs SET status=?, updated_at=datetime('now') WHERE id=?", (status, run_id))
-    else:
-        conn.execute("UPDATE runs SET status=?, result_json=?, updated_at=datetime('now') WHERE id=?", (status, result_json, run_id))
+    conn.execute(
+        "UPDATE runs SET status='done', html=?, summary=?, artifacts=?, completed_at=datetime('now') WHERE run_id=?",
+        (html, summary, json.dumps(artifacts or {}), run_id),
+    )
     conn.commit()
+    conn.close()
 
-def get_run(run_id: int) -> dict | None:
+
+def get_run(run_id: str) -> dict | None:
     conn = get_conn()
-    row = conn.execute("SELECT id, project_id, objective, status, created_at, updated_at, result_json FROM runs WHERE id=?", (run_id,)).fetchone()
-    if not row: return None
-    keys = ["id","project_id","objective","status","created_at","updated_at","result_json"]
-    return dict(zip(keys, row))
+    row = conn.execute(
+        "SELECT run_id, project_id, objective, status, html, summary, artifacts, created_at, completed_at FROM runs WHERE run_id=?",
+        (run_id,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return None
 
-def record_run_step(run_id, kind: str, data: str, broadcast: bool = False) -> None:
-    """
-    Persist a run step for tracing. run_id can be UUID string or int; it's stored as TEXT.
-    kind: short label (e.g. 'tool:search_documents:request').
-    data: JSON string (keep size reasonable; truncate if > 1MB).
+    step_rows = conn.execute(
+        "SELECT node, content, ts FROM run_steps WHERE run_id=? ORDER BY id",
+        (run_id,),
+    ).fetchall()
+    conn.close()
+
+    steps = [
+        {
+            "order": idx + 1,
+            "node": r[0],
+            "timestamp": r[2],
+            "content": r[1],
+        }
+        for idx, r in enumerate(step_rows)
+    ]
+    result = dict(row)
+    result.setdefault("html", "")
+    result.setdefault("summary", "")
+    result.setdefault("artifacts", None)
+    result["steps"] = steps
+    return result
+
+
+def get_runs(project_id: int | None = None) -> list[dict]:
+    conn = get_conn()
+    if project_id is None:
+        rows = conn.execute(
+            "SELECT run_id, project_id, objective, status, created_at, completed_at FROM runs ORDER BY created_at",
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT run_id, project_id, objective, status, created_at, completed_at FROM runs WHERE project_id=? ORDER BY created_at",
+            (project_id,),
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def record_run_step(run_id: str, node: str, content: str, broadcast: bool = False) -> None:
+    """Persist a run step for tracing.
+
+    The ``broadcast`` flag is accepted for backward compatibility with older
+    callers but is currently ignored.  Streaming to clients is handled at a
+    higher level.
     """
     conn = get_conn()
     try:
-        # Safety guard to avoid bloating DB
-        if data and len(data) > 1_000_000:
-            data = data[:1_000_000] + "...[truncated]"
+        if content and len(content) > 1_000_000:
+            content = content[:1_000_000] + "...[truncated]"
         conn.execute(
-            "INSERT INTO run_steps (run_id, kind, data) VALUES (?, ?, ?)",
-            (str(run_id), kind, data or "")
+            "INSERT INTO run_steps (run_id, node, content) VALUES (?, ?, ?)",
+            (run_id, node, content),
         )
         conn.commit()
-    except Exception as e:
-        # As a safety net, don't crash the app if logging fails
-        print(f"[record_run_step][warn] {e}")
+    finally:
+        conn.close()
 
-def get_run_steps(run_id, limit: int = 200) -> list[dict]:
+
+def get_run_steps(run_id: str, limit: int = 200) -> list[dict]:
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id, run_id, ts, kind, data FROM run_steps WHERE run_id=? ORDER BY id DESC LIMIT ?",
-        (str(run_id), limit)
+        "SELECT node, content, ts FROM run_steps WHERE run_id=? ORDER BY id LIMIT ?",
+        (run_id, limit),
     ).fetchall()
-    cols = ["id", "run_id", "ts", "kind", "data"]
-    return [dict(zip(cols, r)) for r in rows]
+    conn.close()
+    return [
+        {"order": idx + 1, "node": r[0], "content": r[1], "timestamp": r[2]}
+        for idx, r in enumerate(rows)
+    ]
 
 
 

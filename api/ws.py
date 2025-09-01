@@ -6,10 +6,12 @@ from uuid import uuid4
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+import logging
 from orchestrator.core_loop import run_chat_tools
 from orchestrator import crud, stream
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 async def close_ws(ws: WebSocket, code: int, reason: str | None = None) -> None:
@@ -78,5 +80,5 @@ async def stream_chat(ws: WebSocket):
         if run_id:
             stream.discard(run_id)
     except Exception as e:  # pragma: no cover - runtime errors
-        msg = (str(e) or "internal error")[:120]
-        await close_ws(ws, code=1011, reason=msg)
+        logger.exception("WS error")
+        await close_ws(ws, code=1011, reason=str(e))
