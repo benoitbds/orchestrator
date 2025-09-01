@@ -117,6 +117,22 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # Table for storing diagram layout positions
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS diagram_layout ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "project_id INTEGER NOT NULL,"
+        "item_id INTEGER NOT NULL,"
+        "x REAL NOT NULL,"
+        "y REAL NOT NULL,"
+        "pinned INTEGER NOT NULL DEFAULT 0,"
+        "UNIQUE(project_id, item_id)"
+        ")"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_diagram_layout_project ON diagram_layout(project_id)"
+    )
+
     # Table for project documents
     conn.execute(
         "CREATE TABLE IF NOT EXISTS documents ("
@@ -345,6 +361,44 @@ def delete_project(project_id: int) -> bool:
     conn.commit()
     conn.close()
     return cursor.rowcount > 0
+
+
+def get_layout(project_id: int) -> List[dict]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT item_id, x, y, pinned FROM diagram_layout WHERE project_id = ?",
+        (project_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "item_id": row["item_id"],
+            "x": row["x"],
+            "y": row["y"],
+            "pinned": bool(row["pinned"]),
+        }
+        for row in rows
+    ]
+
+
+def upsert_layout(project_id: int, nodes: List[dict]) -> None:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    for node in nodes:
+        cursor.execute(
+            "INSERT OR REPLACE INTO diagram_layout (project_id, item_id, x, y, pinned) VALUES (?, ?, ?, ?, ?)",
+            (
+                project_id,
+                node["item_id"],
+                node["x"],
+                node["y"],
+                1 if node.get("pinned") else 0,
+            ),
+        )
+    conn.commit()
+    conn.close()
 
 
 def create_document(

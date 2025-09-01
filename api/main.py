@@ -30,6 +30,7 @@ from orchestrator.models import (
     CapabilityCreate,
     USCreate,
     UCCreate,
+    LayoutUpdate,
 )
 import httpx
 
@@ -340,6 +341,26 @@ async def search_documents(
     except Exception as e:
         logger.error(f"Search error: {e}")
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@app.get("/projects/{project_id}/layout")
+async def get_project_layout(project_id: int):
+    if not crud.get_project(project_id):
+        raise HTTPException(status_code=404, detail="project not found")
+    nodes = crud.get_layout(project_id)
+    return {"nodes": nodes}
+
+
+@app.put("/projects/{project_id}/layout")
+async def put_project_layout(project_id: int, payload: LayoutUpdate):
+    if not crud.get_project(project_id):
+        raise HTTPException(status_code=404, detail="project not found")
+    for node in payload.nodes:
+        item = crud.get_item(node.item_id)
+        if not item or item.project_id != project_id:
+            raise HTTPException(status_code=400, detail=f"invalid item_id {node.item_id}")
+    crud.upsert_layout(project_id, [n.model_dump() for n in payload.nodes])
+    return {"ok": True, "count": len(payload.nodes)}
 
 
 # ---- Backlog item endpoints ----
