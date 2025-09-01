@@ -64,8 +64,11 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+def get_conn():
+    return get_db_connection()
+
 def init_db():
-    conn = get_db_connection()
+    conn = get_conn()
     conn.execute(
         "CREATE TABLE IF NOT EXISTS projects ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -178,136 +181,86 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_document_chunks_model ON document_chunks(embedding_model)"
     )
     
-    # Tables for run tracking
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS runs ("
-        "run_id TEXT PRIMARY KEY,"
-        "project_id INTEGER,"
-        "objective TEXT,"
-        "status TEXT,"
-        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "completed_at DATETIME,"
-        "html TEXT,"
-        "summary TEXT"
-        ")"
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      objective TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',    -- pending | running | done | error
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      result_json TEXT
     )
+    """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)")
-    # Ensure artifacts column exists
-    cur = conn.execute("PRAGMA table_info(runs)")
-    cols = [row[1] for row in cur.fetchall()]
-    if "artifacts" not in cols:
-        conn.execute("ALTER TABLE runs ADD COLUMN artifacts TEXT")
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS run_steps ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "run_id TEXT,"
-        "step_order INTEGER,"
-        "node TEXT,"
-        "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "content TEXT,"
-        "FOREIGN KEY(run_id) REFERENCES runs(run_id)"
-        ")"
+    # Run steps: log tool calls & planner messages per run_id (TEXT to allow UUIDs)
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS run_steps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      ts TEXT NOT NULL DEFAULT (datetime('now')),
+      kind TEXT NOT NULL,         -- e.g., 'tool:search_documents:request' | 'tool:search_documents:response' | 'planner:msg'
+      data TEXT                   -- JSON payload as TEXT
     )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id)")
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, ts)")
     conn.close()
 
 
-def create_run(run_id: str, objective: str, project_id: int | None) -> None:
-    """Insert a new run with running status."""
-    if not run_id or not objective:
-        raise ValueError("run_id and objective are required")
-    conn = get_db_connection()
-    conn.execute(
-        "INSERT INTO runs (run_id, project_id, objective, status) VALUES (?, ?, ?, 'running')",
-        (run_id, project_id, objective),
+def create_run(project_id: int, objective: str) -> int:
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO runs (project_id, objective, status) VALUES (?, ?, 'pending')",
+        (project_id, objective),
     )
     conn.commit()
-    conn.close()
+    return cur.lastrowid
 
-
-def record_run_step(run_id: str, node: str, content: str, broadcast: bool = True) -> dict:
-    """Append a step entry for a run and optionally broadcast it."""
-    if not run_id or not node:
-        raise ValueError("run_id and node are required")
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT COALESCE(MAX(step_order), 0) + 1 FROM run_steps WHERE run_id = ?",
-        (run_id,),
-    )
-    next_order = cur.fetchone()[0]
-    cur.execute(
-        "INSERT INTO run_steps (run_id, step_order, node, content) VALUES (?, ?, ?, ?)",
-        (run_id, next_order, node, content),
-    )
-    step_id = cur.lastrowid
-    cur.execute("SELECT timestamp FROM run_steps WHERE id = ?", (step_id,))
-    timestamp = cur.fetchone()[0]
-    conn.commit()
-    conn.close()
-
-    step = {
-        "run_id": run_id,
-        "node": node,
-        "content": content,
-        "order": next_order,
-        "timestamp": timestamp,
-    }
-    if broadcast:
-        from . import stream
-        stream.publish(run_id, step)
-    return step
-
-
-def finish_run(run_id: str, html: str, summary: str, artifacts: dict | None = None) -> None:
-    """Mark a run as completed and store final render."""
-    conn = get_db_connection()
-    conn.execute(
-        "UPDATE runs SET status = 'done', completed_at = CURRENT_TIMESTAMP, html = ?, summary = ?, artifacts = ? WHERE run_id = ?",
-        (html, summary, json.dumps(artifacts) if artifacts is not None else None, run_id),
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_run(run_id: str) -> dict | None:
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT run_id, project_id, objective, status, created_at, completed_at, html, summary, artifacts FROM runs WHERE run_id = ?",
-        (run_id,),
-    )
-    row = cur.fetchone()
-    if not row:
-        conn.close()
-        return None
-    run = dict(row)
-    artifacts = run.get("artifacts")
-    run["artifacts"] = json.loads(artifacts) if artifacts else None
-    cur.execute(
-        "SELECT step_order as 'order', node, timestamp, content FROM run_steps WHERE run_id = ? ORDER BY step_order",
-        (run_id,),
-    )
-    run["steps"] = [dict(r) for r in cur.fetchall()]
-    conn.close()
-    return run
-
-
-def get_runs(project_id: int | None = None) -> List[dict]:
-    conn = get_db_connection()
-    cur = conn.cursor()
-    if project_id is None:
-        cur.execute(
-            "SELECT run_id, project_id, objective, status, created_at, completed_at FROM runs ORDER BY created_at"
-        )
+def update_run_status(run_id: int, status: str, result_json: str | None = None):
+    conn = get_conn()
+    if result_json is None:
+        conn.execute("UPDATE runs SET status=?, updated_at=datetime('now') WHERE id=?", (status, run_id))
     else:
-        cur.execute(
-            "SELECT run_id, project_id, objective, status, created_at, completed_at FROM runs WHERE project_id = ? ORDER BY created_at",
-            (project_id,),
+        conn.execute("UPDATE runs SET status=?, result_json=?, updated_at=datetime('now') WHERE id=?", (status, result_json, run_id))
+    conn.commit()
+
+def get_run(run_id: int) -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT id, project_id, objective, status, created_at, updated_at, result_json FROM runs WHERE id=?", (run_id,)).fetchone()
+    if not row: return None
+    keys = ["id","project_id","objective","status","created_at","updated_at","result_json"]
+    return dict(zip(keys, row))
+
+def record_run_step(run_id, kind: str, data: str, broadcast: bool = False) -> None:
+    """
+    Persist a run step for tracing. run_id can be UUID string or int; it's stored as TEXT.
+    kind: short label (e.g. 'tool:search_documents:request').
+    data: JSON string (keep size reasonable; truncate if > 1MB).
+    """
+    conn = get_conn()
+    try:
+        # Safety guard to avoid bloating DB
+        if data and len(data) > 1_000_000:
+            data = data[:1_000_000] + "...[truncated]"
+        conn.execute(
+            "INSERT INTO run_steps (run_id, kind, data) VALUES (?, ?, ?)",
+            (str(run_id), kind, data or "")
         )
-    rows = cur.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+        conn.commit()
+    except Exception as e:
+        # As a safety net, don't crash the app if logging fails
+        print(f"[record_run_step][warn] {e}")
+
+def get_run_steps(run_id, limit: int = 200) -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id, run_id, ts, kind, data FROM run_steps WHERE run_id=? ORDER BY id DESC LIMIT ?",
+        (str(run_id), limit)
+    ).fetchall()
+    cols = ["id", "run_id", "ts", "kind", "data"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
 
 def create_project(project: ProjectCreate | str, description: str | None = None) -> Project:
     if isinstance(project, ProjectCreate):
