@@ -1,12 +1,19 @@
 """Async handlers for backlog management tools."""
 from __future__ import annotations
 
+import json
+import os
 from collections import Counter, defaultdict
 from typing import Any, Dict, List
 
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ValidationError, field_validator, model_validator
 
 from orchestrator import crud
+
+# Load environment variables
+load_dotenv()
 try:  # pragma: no cover - fallback if embeddings not ready
     from .embeddings import embed_text, cosine_similarity
 except Exception:  # pragma: no cover
@@ -540,3 +547,57 @@ async def get_document_handler(args: Dict[str, Any]) -> Dict[str, Any]:
         "content": doc.get("content", ""),
         "filename": doc.get("filename"),
     }
+
+# ---------------------------------------------------------------------------
+# LLM helper function
+# ---------------------------------------------------------------------------
+
+async def llm_json_extract(prompt: str, schema: str = "features_items") -> Dict[str, Any]:
+    """Extract structured JSON from text using LLM."""
+    llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4"), temperature=0.2)
+    
+    try:
+        response = llm.invoke([{"role": "user", "content": prompt}])
+        content = response.content.strip()
+        
+        # Try to extract JSON from the response
+        if content.startswith("```json"):
+            content = content[7:]  # Remove ```json
+        if content.endswith("```"):
+            content = content[:-3]  # Remove ```
+        
+        return json.loads(content)
+    except (json.JSONDecodeError, Exception) as e:
+        return {"items": []}
+
+# ---------------------------------------------------------------------------
+# Draft features handler
+# ---------------------------------------------------------------------------
+
+async def draft_features_from_matches_handler(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Draft Feature items array from document matches."""
+    try:
+        project_id = int(args["project_id"])
+        doc_query = str(args["doc_query"])
+        k = int(args.get("k", 6))
+        
+        # Search documents first
+        matches = await search_documents_handler({"project_id": project_id, "query": doc_query})
+        snippets = [m["snippet"] for m in matches.get("matches", [])][:8]
+        
+        if not snippets:
+            return {"ok": True, "items": []}
+        
+        # Call LLM to synthesize features
+        prompt = f"""From the following snippets, propose {k} Features.
+Return strict JSON: {{"items":[{{"title": "...", "description":"...", "type":"Feature", "acceptance_criteria":["...","..."]}}]}}
+Snippets:
+{json.dumps(snippets, ensure_ascii=False)}"""
+        
+        result = await llm_json_extract(prompt, schema="features_items")
+        items = result.get("items", [])
+        
+        return {"ok": True, "items": items}
+        
+    except (ValidationError, ValueError) as e:
+        return {"ok": False, "error": str(e)}

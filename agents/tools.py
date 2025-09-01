@@ -82,6 +82,11 @@ class SearchDocsArgs(BaseModel):
 class GetDocArgs(BaseModel):
     doc_id: int
 
+class DraftFeaturesArgs(BaseModel):
+    project_id: int
+    doc_query: str
+    k: int = 6  # number of features to draft
+
 # ---------- HANDLERS réels ----------
 from .handlers import (  # noqa: E402 - handlers import requires models above
     create_item_tool,
@@ -96,6 +101,7 @@ from .handlers import (  # noqa: E402 - handlers import requires models above
     list_documents_handler,
     search_documents_handler,
     get_document_handler,
+    draft_features_from_matches_handler,
 )
 
 def _sanitize(obj: Any) -> Any:
@@ -191,6 +197,7 @@ TOOLS = [
     _mk_tool("list_documents", "List documents in the project.", ListDocsArgs),
     _mk_tool("search_documents", "Search relevant passages in project documents.", SearchDocsArgs),
     _mk_tool("get_document", "Get full text content of a document by ID.", GetDocArgs),
+    _mk_tool("draft_features_from_matches", "Draft Feature items array from document matches. It returns {items:[...]}, not writing to DB.", DraftFeaturesArgs),
 ]
 
 # On conserve HANDLERS exporté si utilisé ailleurs
@@ -207,4 +214,5 @@ HANDLERS = {
     "list_documents": list_documents_handler,
     "search_documents": search_documents_handler,
     "get_document": get_document_handler,
+    "draft_features_from_matches": draft_features_from_matches_handler,
 }
