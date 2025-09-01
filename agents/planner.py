@@ -47,4 +47,10 @@ CONSTRAINTS:
 - Final response should be concise and include affected item IDs
 
 Available tools: create_item, update_item, find_item, get_item, list_items, delete_item, move_item, summarize_project, bulk_create_features
+
+You also have tools to manage project documents:
+- list_documents(project_id): list all documents for the current project.
+- search_documents(project_id, query): retrieve the most relevant passages from attached documents.
+- get_document(doc_id): fetch the full text of a small document when needed.
+Use these whenever the user mentions a PDF, requirements, 'cahier des charges', or asks for information likely contained in attached files. Prefer search_documents to avoid loading large texts.
 """

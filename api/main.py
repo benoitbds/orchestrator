@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Load environment variables first
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import File, FastAPI, HTTPException, Query, UploadFile, Response
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
 
@@ -22,6 +22,7 @@ from orchestrator.models import (
     BacklogItemCreate,
     BacklogItemUpdate,
     BacklogItem,
+    DocumentOut,
     RunDetail,
     RunSummary,
     FeatureCreate,
@@ -29,8 +30,10 @@ from orchestrator.models import (
     CapabilityCreate,
     USCreate,
     UCCreate,
+    LayoutUpdate,
 )
 import httpx
+from agents.embeddings import chunk_text, embed_texts
 
 
 def setup_logging() -> None:
@@ -64,6 +67,7 @@ async def _no_aexit(self, exc_type=None, exc_value=None, traceback=None):
 httpx.AsyncClient.__aexit__ = _no_aexit
 
 setup_logging()
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 crud.init_db()
@@ -180,6 +184,176 @@ async def update_project(project_id: int, project: ProjectCreate):
 @app.delete("/projects/{project_id}")
 async def delete_project(project_id: int):
     return crud.delete_project(project_id)
+
+
+# ---- Document endpoints ----
+
+
+@app.post(
+    "/projects/{project_id}/documents",
+    response_model=DocumentOut,
+    status_code=201,
+)
+async def upload_document(project_id: int, file: UploadFile = File(...)):
+    """Upload a document for a project."""
+
+    if not crud.get_project(project_id):
+        raise HTTPException(status_code=404, detail="project not found")
+
+    content_bytes = await file.read()
+    
+    # Extract text from document using appropriate parser
+    from orchestrator.doc_processing import extract_text_from_file, DocumentParsingError
+    
+    try:
+        content_text = extract_text_from_file(content_bytes, file.filename)
+    except DocumentParsingError as e:
+        raise HTTPException(status_code=422, detail=f"Document parsing failed: {str(e)}")
+
+    # Create the document first
+    document = crud.create_document(project_id, file.filename, content_text, None)
+
+    chunks = chunk_text(content_text, target_tokens=400, overlap_tokens=60)
+    try:
+        embeddings = await embed_texts(chunks)
+    except Exception as e:  # pragma: no cover - unexpected
+        logger.warning("Failed to embed document %s: %s", document.id, e)
+        embeddings = [[] for _ in chunks]
+
+    payload = [
+        (i, chunk, embeddings[i] if i < len(embeddings) else [])
+        for i, chunk in enumerate(chunks)
+    ]
+    if payload:
+        crud.upsert_document_chunks(document.id, payload)
+
+    return document
+
+
+@app.get(
+    "/projects/{project_id}/documents",
+    response_model=list[DocumentOut],
+)
+async def list_documents(project_id: int):
+    """List documents for a project."""
+
+    if not crud.get_project(project_id):
+        raise HTTPException(status_code=404, detail="project not found")
+    return crud.get_documents(project_id)
+
+
+@app.get("/documents/{doc_id}/content")
+async def get_document_content(doc_id: int):
+    """Return the stored content of a document."""
+
+    doc = crud.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="document not found")
+    return Response(doc.get("content") or "", media_type="text/plain")
+
+
+@app.get("/documents/{doc_id}/chunks")
+async def get_document_chunks(doc_id: int):
+    """Get all chunks for a specific document."""
+    
+    # Verify document exists
+    doc = crud.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="document not found")
+
+    chunks = crud.get_document_chunks(doc_id)
+    return chunks
+
+
+@app.delete("/documents/{doc_id}")
+def delete_document_api(doc_id: int):
+    doc = crud.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    crud.delete_document_chunks(doc_id)
+
+    fp = doc.get("filepath")
+    if fp:
+        try:
+            os.remove(fp)
+        except FileNotFoundError:
+            pass
+
+    ok = crud.delete_document(doc_id)
+    return {"ok": bool(ok)}
+
+
+@app.post("/projects/{project_id}/search")
+async def search_documents(
+    project_id: int,
+    query: dict
+):
+    """Search for similar document chunks using semantic search."""
+    
+    if not crud.get_project(project_id):
+        raise HTTPException(status_code=404, detail="project not found")
+    
+    query_text = query.get("query", "")
+    if not query_text:
+        raise HTTPException(status_code=400, detail="Query text is required")
+    
+    limit = query.get("limit", 5)
+    similarity_threshold = query.get("similarity_threshold", 0.3)
+    
+    try:
+        from orchestrator.embedding_service import get_embedding_service, EmbeddingError
+        
+        # Generate embedding for the query
+        embedding_service = get_embedding_service()
+        query_embedding = await embedding_service.generate_embedding(query_text)
+        
+        # Get all chunks for the project
+        all_chunks = crud.get_all_chunks_for_project(project_id)
+        
+        if not all_chunks:
+            return {"query": query_text, "results": [], "total_chunks": 0}
+        
+        # Find similar chunks
+        similar_chunks = await embedding_service.find_similar_chunks(
+            query_embedding=query_embedding,
+            chunk_embeddings=all_chunks,
+            top_k=limit,
+            similarity_threshold=similarity_threshold
+        )
+        
+        return {
+            "query": query_text,
+            "results": similar_chunks,
+            "total_chunks": len(all_chunks),
+            "similarity_threshold": similarity_threshold
+        }
+        
+    except EmbeddingError as e:
+        raise HTTPException(status_code=500, detail=f"Embedding error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@app.get("/projects/{project_id}/layout")
+async def get_project_layout(project_id: int):
+    if not crud.get_project(project_id):
+        raise HTTPException(status_code=404, detail="project not found")
+    nodes = crud.get_layout(project_id)
+    return {"nodes": nodes}
+
+
+@app.put("/projects/{project_id}/layout")
+async def put_project_layout(project_id: int, payload: LayoutUpdate):
+    if not crud.get_project(project_id):
+        raise HTTPException(status_code=404, detail="project not found")
+    for node in payload.nodes:
+        item = crud.get_item(node.item_id)
+        if not item or item.project_id != project_id:
+            raise HTTPException(status_code=400, detail=f"invalid item_id {node.item_id}")
+    crud.upsert_layout(project_id, [n.model_dump() for n in payload.nodes])
+    return {"ok": True, "count": len(payload.nodes)}
 
 
 # ---- Backlog item endpoints ----

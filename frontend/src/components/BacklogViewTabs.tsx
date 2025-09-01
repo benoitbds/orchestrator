@@ -1,7 +1,7 @@
 "use client";
 import { ItemTree } from '@/components/ItemTree';
 import { BacklogTable } from '@/components/BacklogTable';
-import { BacklogDiagram } from '@/components/BacklogDiagram';
+import { DiagramView } from '@/components/backlog/DiagramView';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BacklogItem } from '@/models/backlogItem';
 
@@ -28,7 +28,7 @@ export function BacklogViewTabs({ projectId, onEdit }: BacklogViewTabsProps) {
       </TabsContent>
 
       <TabsContent value="diagram">
-        <BacklogDiagram projectId={projectId} onEdit={onEdit} />
+        <DiagramView projectId={projectId} />
       </TabsContent>
     </Tabs>
   );

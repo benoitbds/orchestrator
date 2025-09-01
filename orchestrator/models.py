@@ -13,6 +13,40 @@ class ProjectCreate(BaseModel):
     description: str | None = None
 
 
+class Document(BaseModel):
+    """File uploaded to a project."""
+
+    id: int
+    project_id: int
+    filename: str
+    content: str | None = None
+    embedding: list[float] | None = None
+    filepath: str | None = None
+
+
+class DocumentCreate(BaseModel):
+    project_id: int
+    filename: str
+    content: str | None = None
+    embedding: list[float] | None = None
+    filepath: str | None = None
+
+
+# For symmetry with other models
+DocumentOut = Document
+
+
+class LayoutNode(BaseModel):
+    item_id: int
+    x: float
+    y: float
+    pinned: bool = False
+
+
+class LayoutUpdate(BaseModel):
+    nodes: list[LayoutNode] = Field(default_factory=list)
+
+
 class RunStep(BaseModel):
     """Timeline entry for a run."""
 

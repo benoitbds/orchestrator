@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Plus, Folder, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +12,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { useProjects } from '@/context/ProjectContext';
 import { toast } from 'sonner';
 import { http } from '@/lib/api';
+import type { Document } from '@/models/document';
+import { listDocuments, uploadDocument } from '@/lib/documents';
+import { DocumentList } from './DocumentList';
 
 export function ProjectPanel() {
   const { projects, currentProject, setCurrentProject, refreshProjects } = useProjects();
@@ -21,6 +24,10 @@ export function ProjectPanel() {
     name: '',
     description: ''
   });
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleProjectChange = (projectId: string) => {
     const project = projects.find(p => p.id.toString() === projectId);
@@ -60,6 +67,48 @@ export function ProjectPanel() {
       toast.error(error instanceof Error ? error.message : 'Failed to create project');
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const loadDocuments = async () => {
+    if (!currentProject) return;
+    try {
+      const docs = await listDocuments(currentProject.id);
+      setDocuments(docs);
+    } catch {
+      toast.error('Failed to load documents');
+    }
+  };
+
+  useEffect(() => {
+    if (currentProject) {
+      loadDocuments();
+    } else {
+      setDocuments([]);
+    }
+  }, [currentProject]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSelectedFile(e.target.files?.[0] || null);
+  };
+
+  const handleUpload = async () => {
+    if (!currentProject) return;
+    if (!selectedFile) {
+      toast.error('Please select a file');
+      return;
+    }
+    setIsUploading(true);
+    try {
+      await uploadDocument(currentProject.id, selectedFile);
+      toast.success('Document uploaded');
+      setSelectedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      await loadDocuments();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to upload document');
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -141,7 +190,7 @@ export function ProjectPanel() {
       {/* Current Project Details */}
       {currentProject ? (
         <Card className="m-4 p-4">
-          <div className="space-y-3">
+          <div className="space-y-6">
             <div className="flex items-start justify-between">
               <div>
                 <h3 className="font-medium">{currentProject.name}</h3>
@@ -155,6 +204,29 @@ export function ProjectPanel() {
                 <Info className="h-3 w-3 mr-1" />
                 Active
               </Badge>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Input
+                  type="file"
+                  onChange={handleFileChange}
+                  ref={fileInputRef}
+                  className="flex-1"
+                  aria-label="Upload file"
+                />
+                <Button
+                  onClick={handleUpload}
+                  disabled={!selectedFile || isUploading}
+                >
+                  {isUploading ? 'Uploading...' : 'Upload'}
+                </Button>
+              </div>
+
+              <div>
+                <h4 className="font-medium mb-2">Documents</h4>
+                <DocumentList documents={documents} refetch={loadDocuments} />
+              </div>
             </div>
           </div>
         </Card>
