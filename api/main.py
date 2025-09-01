@@ -81,16 +81,19 @@ class RunAgentPayload(BaseModel):
 
 @app.post("/agent/run")
 async def run_agent(payload: RunAgentPayload):
-    # Basic validation
     project = crud.get_project(payload.project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-
-    # Fire-and-forget run (non blocking)
-    asyncio.create_task(
-        planner.run_objective(project_id=payload.project_id, objective=payload.objective)
-    )
-    return {"ok": True}
+    run_id = crud.create_run(payload.project_id, payload.objective)
+    async def _bg():
+        try:
+            crud.update_run_status(run_id, "running")
+            result = await planner.run_objective(project_id=payload.project_id, objective=payload.objective)
+            crud.update_run_status(run_id, "done", json.dumps(result or {}))
+        except Exception as e:
+            crud.update_run_status(run_id, "error", json.dumps({"error": str(e)}))
+    asyncio.create_task(_bg())
+    return {"ok": True, "run_id": run_id}
 
 
 @app.on_event("startup")
@@ -146,37 +149,25 @@ async def ping():
 @app.post("/chat")
 async def chat(payload: dict) -> dict:
     """Handle a chat objective and return the run result."""
-
-    objective = payload.get("objective", "")
-    project_id = payload.get("project_id")
-
-    run_id = str(uuid4())
-    crud.create_run(run_id, objective, project_id)
-    # Register the run before launching the agent so clients can stream
-    stream.register(run_id)
-    crud.record_run_step(run_id, "plan", json.dumps({"objective": objective}))
-
-    await run_chat_tools(objective, project_id, run_id)
-    run = crud.get_run(run_id)
-
-    if run.get("status") != "done":
-        for _ in range(15):  # ~3s total
-            await asyncio.sleep(0.2)
-            run = crud.get_run(run_id)
-            if run.get("status") == "done":
-                break
-        if run.get("status") != "done":
-            logging.warning("run %s finished with status %s", run_id, run.get("status"))
-
-    return {"run_id": run_id, "html": run.get("html") or ""}
+    # This endpoint is deprecated in favor of /agent/run + /runs/{run_id}
+    raise HTTPException(status_code=410, detail="This endpoint is deprecated. Use /agent/run instead.")
 
 
-@app.get("/runs/{run_id}", response_model=RunDetail)
-async def read_run(run_id: str):
+@app.get("/runs/{run_id}")
+async def get_run(run_id: int):
     run = crud.get_run(run_id)
     if not run:
-        raise HTTPException(status_code=404)
+        raise HTTPException(status_code=404, detail="Run not found")
     return run
+
+@app.get("/runs/{run_id}/steps")
+async def get_run_steps(run_id: int, limit: int = Query(200, ge=1, le=1000)):
+    """Get conversation steps/logs for a run."""
+    run = crud.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    steps = crud.get_run_steps(run_id, limit)
+    return {"run_id": run_id, "steps": steps, "total_steps": len(steps)}
 
 
 @app.get("/runs", response_model=list[RunSummary])

@@ -85,21 +85,17 @@ Process:
 """
 
 async def run_objective(project_id: int, objective: str) -> Dict[str, Any]:
-    """Execute a single objective using the agent tools.
-
-    Creates a run entry, registers a stream for tool feedback, then delegates
-    execution to the main agent loop (``run_chat_tools``). Returns a dict
-    containing the run identifier.
-    """
-
+    """Execute a single objective using the agent tools."""
+    
     # Import here to avoid circular dependency (core_loop imports this module)
     from orchestrator.core_loop import run_chat_tools
-
-    run_id = str(uuid4())
-    crud.create_run(run_id, objective, project_id)
-    stream.register(run_id)
-    crud.record_run_step(run_id, "plan", json.dumps({"objective": objective}))
-
-    await run_chat_tools(objective, project_id, run_id)
-    return {"ok": True, "run_id": run_id}
+    
+    # Use a temporary string run_id for the existing core_loop function
+    temp_run_id = str(uuid4())
+    try:
+        await run_chat_tools(objective, project_id, temp_run_id)
+        result = {"ok": True, "note": "Objective execution completed"}
+    except Exception as e:
+        result = {"ok": False, "error": str(e)}
+    return result
 
