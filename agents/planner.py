@@ -1,9 +1,15 @@
-from typing import Any
+from typing import Any, Dict
 import json
 import os
+from uuid import uuid4
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
+from orchestrator import crud, stream
 from .schemas import Plan
+from .tools import TOOLS
+
+# Reference tools to ensure they're loaded for agent runs
+_ = TOOLS
 
 # Load environment variables
 load_dotenv()
@@ -54,3 +60,23 @@ You also have tools to manage project documents:
 - get_document(doc_id): fetch the full text of a small document when needed.
 Use these whenever the user mentions a PDF, requirements, 'cahier des charges', or asks for information likely contained in attached files. Prefer search_documents to avoid loading large texts.
 """
+
+async def run_objective(project_id: int, objective: str) -> Dict[str, Any]:
+    """Execute a single objective using the agent tools.
+
+    Creates a run entry, registers a stream for tool feedback, then delegates
+    execution to the main agent loop (``run_chat_tools``). Returns a dict
+    containing the run identifier.
+    """
+
+    # Import here to avoid circular dependency (core_loop imports this module)
+    from orchestrator.core_loop import run_chat_tools
+
+    run_id = str(uuid4())
+    crud.create_run(run_id, objective, project_id)
+    stream.register(run_id)
+    crud.record_run_step(run_id, "plan", json.dumps({"objective": objective}))
+
+    await run_chat_tools(objective, project_id, run_id)
+    return {"ok": True, "run_id": run_id}
+
