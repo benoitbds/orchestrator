@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Trash } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { getApiBaseUrl } from '@/lib/api';
+import { getApiBaseUrl, runAgent } from '@/lib/api';
 import { deleteDocument } from '@/lib/documents';
 import type { Document } from '@/models/document';
 
@@ -15,6 +15,7 @@ interface DocumentListProps {
 
 export function DocumentList({ documents, refetch }: DocumentListProps) {
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [analyzingId, setAnalyzingId] = useState<number | null>(null);
 
   const handleDelete = async (id: number) => {
     if (!confirm('Supprimer ce document ?')) return;
@@ -27,6 +28,23 @@ export function DocumentList({ documents, refetch }: DocumentListProps) {
       toast.error(e instanceof Error ? e.message : 'Failed to delete document');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleAnalyze = async (doc: Document) => {
+    if (analyzingId !== null) return;
+    try {
+      setAnalyzingId(doc.id);
+      const objective =
+        `Analyze the document "${doc.filename}" and generate Features -> User Stories -> Use Cases with acceptance criteria. ` +
+        `Use search_documents to cite relevant excerpts (page/section). De-duplicate and group by theme.`;
+      await runAgent({ project_id: doc.project_id, objective });
+      toast.success('Analysis started. Check the backlog shortly.');
+      await refetch();
+    } catch (e) {
+      toast.error('Could not start analysis');
+    } finally {
+      setAnalyzingId(null);
     }
   };
 
@@ -45,6 +63,15 @@ export function DocumentList({ documents, refetch }: DocumentListProps) {
           >
             {doc.filename}
           </a>
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-label={`Analyze ${doc.filename}`}
+            disabled={analyzingId === doc.id}
+            onClick={() => handleAnalyze(doc)}
+          >
+            Analyze
+          </Button>
           <Button
             variant="destructive"
             size="icon"

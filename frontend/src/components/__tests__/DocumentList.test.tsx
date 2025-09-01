@@ -12,11 +12,20 @@ vi.mock('@/lib/documents', () => ({
   deleteDocument: (...args: any[]) => deleteDocument(...args)
 }));
 
+const runAgent = vi.fn();
+vi.mock('@/lib/api', () => ({
+  getApiBaseUrl: () => '',
+  runAgent: (...args: any[]) => runAgent(...args)
+}));
+
 const docs = [{ id: 1, project_id: 1, filename: 'doc.txt' }];
 
 describe('DocumentList', () => {
   beforeEach(() => {
     deleteDocument.mockReset();
+    runAgent.mockReset();
+    (toast.success as any).mockReset();
+    (toast.error as any).mockReset();
   });
 
   it('deletes document after confirmation', async () => {
@@ -53,5 +62,34 @@ describe('DocumentList', () => {
     await waitFor(() => expect(deleteDocument).toHaveBeenCalled());
     await waitFor(() => expect(refetch).not.toHaveBeenCalled());
     expect(toast.error).toHaveBeenCalled();
+  });
+
+  it('starts analysis and refreshes on success', async () => {
+    const refetch = vi.fn();
+    let resolve: () => void;
+    runAgent.mockImplementation(() => new Promise(r => { resolve = r; }));
+
+    render(<DocumentList documents={docs} refetch={refetch} />);
+    const button = screen.getByRole('button', { name: /analyze doc.txt/i });
+    fireEvent.click(button);
+    expect(button).toBeDisabled();
+    resolve!();
+    await waitFor(() => expect(runAgent).toHaveBeenCalled());
+    await waitFor(() => expect(refetch).toHaveBeenCalled());
+    expect(toast.success).toHaveBeenCalled();
+    await waitFor(() => expect(button).not.toBeDisabled());
+  });
+
+  it('shows error toast when analysis fails', async () => {
+    const refetch = vi.fn();
+    runAgent.mockRejectedValue(new Error('fail'));
+
+    render(<DocumentList documents={docs} refetch={refetch} />);
+    const button = screen.getByRole('button', { name: /analyze doc.txt/i });
+    fireEvent.click(button);
+    await waitFor(() => expect(runAgent).toHaveBeenCalled());
+    await waitFor(() => expect(refetch).not.toHaveBeenCalled());
+    expect(toast.error).toHaveBeenCalled();
+    await waitFor(() => expect(button).not.toBeDisabled());
   });
 });
