@@ -13,10 +13,11 @@ load_dotenv()
 from fastapi import File, FastAPI, HTTPException, Query, UploadFile, Response
 from fastapi.middleware.cors import CORSMiddleware
 from api.ws import router as ws_router
+from pydantic import BaseModel
 
 from orchestrator import crud, stream
 from orchestrator.core_loop import run_chat_tools
-from agents import writer
+from agents import writer, planner
 from orchestrator.models import (
     ProjectCreate,
     BacklogItemCreate,
@@ -71,6 +72,25 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 crud.init_db()
+
+
+class RunAgentPayload(BaseModel):
+    project_id: int
+    objective: str
+
+
+@app.post("/agent/run")
+async def run_agent(payload: RunAgentPayload):
+    # Basic validation
+    project = crud.get_project(payload.project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Fire-and-forget run (non blocking)
+    asyncio.create_task(
+        planner.run_objective(project_id=payload.project_id, objective=payload.objective)
+    )
+    return {"ok": True}
 
 
 @app.on_event("startup")
