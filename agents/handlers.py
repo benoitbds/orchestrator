@@ -511,26 +511,23 @@ async def list_documents_handler(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def search_documents_handler(args: Dict[str, Any]) -> Dict[str, Any]:
-    project_id = int(args["project_id"])
-    query = str(args["query"])
+    project_id = int(args["project_id"]); query = str(args["query"])
     chunks = crud.get_all_document_chunks_for_project(project_id)
-    if not chunks:
-        return {"ok": True, "matches": []}
-    q = embed_text(query)
-    ranked = sorted(
-        (
-            {
-                "doc_id": c["doc_id"],
-                "text": c["text"],
-                "score": float(cosine_similarity(c.get("embedding"), q)),
-            }
-            for c in chunks
-            if c.get("embedding") is not None
-        ),
-        key=lambda x: x["score"],
-        reverse=True,
-    )[:5]
-    return {"ok": True, "matches": ranked}
+    if not chunks: return {"ok": True, "matches": []}
+    q = await embed_text(query)
+    scored = []
+    for c in chunks:
+        emb = c.get("embedding")
+        if not emb: continue
+        score = cosine_similarity(emb, q)
+        if score <= 0: continue
+        text = c.get("text", "")
+        # make a short snippet
+        snippet = text[:360] + ("…" if len(text) > 360 else "")
+        scored.append({"doc_id": c["doc_id"], "chunk_index": c["chunk_index"], "score": float(score), "snippet": snippet})
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    top = scored[:8]
+    return {"ok": True, "matches": top}
 
 
 async def get_document_handler(args: Dict[str, Any]) -> Dict[str, Any]:
