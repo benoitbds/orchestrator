@@ -1,5 +1,5 @@
 from typing import Optional, Literal, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ValidationError
 import logging
 try:
     from langchain.tools import StructuredTool
@@ -83,7 +83,7 @@ class GetDocArgs(BaseModel):
     doc_id: int
 
 # ---------- HANDLERS réels ----------
-from .handlers import (
+from .handlers import (  # noqa: E402 - handlers import requires models above
     create_item_tool,
     update_item_tool,
     find_item_tool,
@@ -122,6 +122,18 @@ async def _exec(name: str, run_id: str, args: dict):
         logger.debug("Calling handler for tool '%s'", name)
         res = await asyncio.wait_for(handler(args), timeout=12)
         logger.debug("Tool '%s' returned: %s", name, res)
+    except ValidationError as ve:
+        logger.error("Tool '%s' validation error: %s", name, ve)
+        hint = {
+            "ok": False,
+            "error": "VALIDATION_ERROR",
+            "tool": name,
+            "message": str(ve),
+            "expected": "For bulk_create_features you MUST provide 'items': [...]. See planner guidance.",
+        }
+        crud.record_run_step(run_id, f"tool:{name}:validation_error", json.dumps(hint), broadcast=False)
+        stream.publish(run_id, {"node": f"tool:{name}:validation_error", **hint})
+        return json.dumps(hint)
     except asyncio.TimeoutError:
         logger.error("Tool '%s' timed out", name)
         res = {"ok": False, "error": "timeout"}
