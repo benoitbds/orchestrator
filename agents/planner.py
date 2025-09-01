@@ -59,6 +59,29 @@ You also have tools to manage project documents:
 - search_documents(project_id, query): retrieve the most relevant passages from attached documents.
 - get_document(doc_id): fetch the full text of a small document when needed.
 Use these whenever the user mentions a PDF, requirements, 'cahier des charges', or asks for information likely contained in attached files. Prefer search_documents to avoid loading large texts.
+
+When you want to create multiple Features at once you MUST call:
+bulk_create_features(project_id: int, parent_id: int, items: FeatureInput[])
+
+Where FeatureInput is an array of JSON objects with at least:
+[
+  {
+    "title": "<clear feature title>",
+    "description": "<1-3 sentences>",
+    "type": "Feature",
+    "acceptance_criteria": [
+      "Given ... When ... Then ...",
+      "Given ... When ... Then ..."
+    ]
+  },
+  ...
+]
+
+Process:
+1) Use search_documents(project_id, query) to find relevant excerpts.
+2) Draft 3–7 Features synthesizing the excerpts (no duplicates).
+3) Call bulk_create_features with the 'items' array (do NOT omit it).
+4) Parent the features under 'parent_id' (Epic) provided by the user or selected item.
 """
 
 async def run_objective(project_id: int, objective: str) -> Dict[str, Any]:
