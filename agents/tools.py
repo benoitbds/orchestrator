@@ -197,7 +197,11 @@ TOOLS = [
     _mk_tool("list_documents", "List documents in the project.", ListDocsArgs),
     _mk_tool("search_documents", "Search relevant passages in project documents.", SearchDocsArgs),
     _mk_tool("get_document", "Get full text content of a document by ID.", GetDocArgs),
-    _mk_tool("draft_features_from_matches", "Draft Feature items array from document matches. It returns {items:[...]}, not writing to DB.", DraftFeaturesArgs),
+    _mk_tool(
+        "draft_features_from_matches",
+        "Infer and create Feature backlog items from project documents. Returns {items:[{id,title}]}.",
+        DraftFeaturesArgs,
+    ),
 ]
 
 # On conserve HANDLERS exporté si utilisé ailleurs
