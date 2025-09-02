@@ -25,16 +25,32 @@ def test_draft_features_creates_items(monkeypatch):
     monkeypatch.setattr("agents.handlers.embed_text", fake_embed)
     monkeypatch.setattr("agents.handlers.cosine_similarity", lambda a, b: 0.9)
 
-    # dummy llm always returns one feature
+    # dummy llm always returns one feature via tool call
     class DummyLLM:
         def __init__(self, *a, **kw):
             pass
 
+        def bind_tools(self, tools):
+            return self
+
         def invoke(self, msgs):
             return SimpleNamespace(
-                content=(
-                    '{"features":[{"title":"Gestion du backlog","objective":"Obj","business_value":"Val","acceptance_criteria":["crit1","crit2"],"parent_hint":null}]}'
-                )
+                tool_calls=[
+                    {
+                        "name": "return_features",
+                        "args": {
+                            "features": [
+                                {
+                                    "title": "Gestion du backlog",
+                                    "objective": "Obj",
+                                    "business_value": "Val",
+                                    "acceptance_criteria": ["crit1", "crit2"],
+                                    "parent_hint": None,
+                                }
+                            ]
+                        },
+                    }
+                ]
             )
 
     monkeypatch.setattr("agents.handlers.ChatOpenAI", DummyLLM)
@@ -80,14 +96,30 @@ def test_draft_features_fallback(monkeypatch):
         def __init__(self, *a, **kw):
             self.calls = 0
 
+        def bind_tools(self, tools):
+            return self
+
         def invoke(self, msgs):
             self.calls += 1
             if self.calls == 1:
-                return SimpleNamespace(content='{"features": []}')
+                return SimpleNamespace(tool_calls=[{"name": "return_features", "args": {"features": []}}])
             return SimpleNamespace(
-                content=(
-                    '{"features":[{"title":"Analyse", "objective":"Obj","business_value":"Val","acceptance_criteria":["c1","c2"],"parent_hint":null}]}'
-                )
+                tool_calls=[
+                    {
+                        "name": "return_features",
+                        "args": {
+                            "features": [
+                                {
+                                    "title": "Analyse",
+                                    "objective": "Obj",
+                                    "business_value": "Val",
+                                    "acceptance_criteria": ["c1", "c2"],
+                                    "parent_hint": None,
+                                }
+                            ]
+                        },
+                    }
+                ]
             )
 
     dummy = DummyLLMFallback()
