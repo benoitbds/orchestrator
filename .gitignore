@@ -26,3 +26,4 @@ orchestrator.db
 .idea/
 .vscode/
 
+run_back.sh
