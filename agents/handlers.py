@@ -1,7 +1,6 @@
 """Async handlers for backlog management tools."""
 from __future__ import annotations
 
-import json
 import os
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional
@@ -9,6 +8,8 @@ import logging
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
 from pydantic import (
     BaseModel,
     Field,
@@ -592,84 +593,51 @@ def _resolve_parent_hint(project_id: int, hint: Optional[str]) -> Optional[int]:
     return None
 
 
-# JSON schema describing the features extracted by the LLM
-FEATURES_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "features": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "maxLength": 120},
-                    "objective": {"type": "string"},
-                    "business_value": {"type": "string"},
-                    "acceptance_criteria": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "minItems": 2,
-                        "maxItems": 4,
-                    },
-                    "parent_hint": {"type": ["string", "null"]},
-                },
-                "required": [
-                    "title",
-                    "objective",
-                    "business_value",
-                    "acceptance_criteria",
-                ],
-            },
-            "minItems": 5,
-            "maxItems": 10,
-        }
-    },
-    "required": ["features"],
-    "additionalProperties": False,
-}
 
 
-def _build_llm_json_schema() -> ChatOpenAI:
-    """Construct ChatOpenAI instance enforcing FEATURES_SCHEMA."""
+@tool("return_features", return_direct=True)
+def return_features(features: List[Dict]):
+    """Return extracted product features (schema-enforced by the tool signature)."""
+    return {"features": features}
+
+
+TOOLS = [return_features]
+
+
+def _build_llm_tools() -> ChatOpenAI:
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    return ChatOpenAI(model=model, temperature=0.2, timeout=30)
+
+
+def _tool_schema_instruction() -> str:
+    return (
+        "You MUST call the `return_features` tool ONCE with a single argument: "
+        "{'features': [ { 'title': str, 'objective': str, 'business_value': str, "
+        "'acceptance_criteria': [str, ...], 'parent_hint': str|null } ... ] } . "
+        "Create 5-10 features. Stay in French."
+    )
+
+
+def _validate_features_payload(payload: Dict[str, Any]) -> List[GeneratedFeature]:
     try:
-        return ChatOpenAI(
-            model=model,
-            temperature=0.2,
-            timeout=30,
-            model_kwargs={
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "features_extraction_schema",
-                        "schema": FEATURES_SCHEMA,
-                        "strict": True,
-                    },
-                }
-            },
-        )
-    except TypeError:
-        # Older versions may not support response_format
-        return ChatOpenAI(model=model, temperature=0.2, timeout=30)
-
-
-async def _call_llm(excerpts: str) -> List[GeneratedFeature]:
-    """Call LLM with prompt and return parsed features list."""
-    llm = _build_llm_json_schema()
-
-    prompt = FEATURES_FROM_EXCERPTS_PROMPT.replace("{{excerpts}}", excerpts)
-    response = llm.invoke([{ "role": "user", "content": prompt }])
-    content = response.content.strip()
-    if content.startswith("```json"):
-        content = content[7:]
-    if content.endswith("```"):
-        content = content[:-3]
-    logger.info("LLM raw JSON length=%d", len(content))
-    logger.debug("LLM raw JSON preview: %s", content[:500])
-    try:
-        return GeneratedFeatures.model_validate_json(content).features
+        return GeneratedFeatures.model_validate(payload).features
     except ValidationError as e:
-        logger.error("JSON validation failed: %s", e)
+        logger.error("Tool payload validation failed: %s", e)
         return []
+
+
+async def _call_llm(excerpts_text: str) -> List[GeneratedFeature]:
+    """Call LLM using tool calling and return validated features."""
+    llm = _build_llm_tools()
+    user = HumanMessage(content=_tool_schema_instruction() + "\n\nEXTRACTS:\n" + excerpts_text)
+    resp = llm.bind_tools(TOOLS).invoke([user])
+    tool_calls = getattr(resp, "tool_calls", []) or []
+    for call in tool_calls:
+        if call.get("name") == "return_features":
+            args = call.get("args") if isinstance(call.get("args"), dict) else {}
+            feats = args.get("features", [])
+            return _validate_features_payload({"features": feats})
+    return []
 
 
 def _get_document_text(doc_id: int) -> str:
