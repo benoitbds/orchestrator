@@ -592,20 +592,69 @@ def _resolve_parent_hint(project_id: int, hint: Optional[str]) -> Optional[int]:
     return None
 
 
-async def _call_llm(excerpts: str) -> List[GeneratedFeature]:
-    """Call LLM with prompt and return parsed features list."""
-    schema = GeneratedFeatures.model_json_schema()
-    llm_kwargs = {
-        "model": os.getenv("OPENAI_MODEL", "gpt-4"),
-        "temperature": 0.2,
-    }
+# JSON schema describing the features extracted by the LLM
+FEATURES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "features": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "maxLength": 120},
+                    "objective": {"type": "string"},
+                    "business_value": {"type": "string"},
+                    "acceptance_criteria": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 2,
+                        "maxItems": 4,
+                    },
+                    "parent_hint": {"type": ["string", "null"]},
+                },
+                "required": [
+                    "title",
+                    "objective",
+                    "business_value",
+                    "acceptance_criteria",
+                ],
+            },
+            "minItems": 5,
+            "maxItems": 10,
+        }
+    },
+    "required": ["features"],
+    "additionalProperties": False,
+}
+
+
+def _build_llm_json_schema() -> ChatOpenAI:
+    """Construct ChatOpenAI instance enforcing FEATURES_SCHEMA."""
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     try:
-        llm = ChatOpenAI(
-            **llm_kwargs,
-            response_format={"type": "json_schema", "json_schema": schema},
+        return ChatOpenAI(
+            model=model,
+            temperature=0.2,
+            timeout=30,
+            model_kwargs={
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "features_extraction_schema",
+                        "schema": FEATURES_SCHEMA,
+                        "strict": True,
+                    },
+                }
+            },
         )
     except TypeError:
-        llm = ChatOpenAI(**llm_kwargs)
+        # Older versions may not support response_format
+        return ChatOpenAI(model=model, temperature=0.2, timeout=30)
+
+
+async def _call_llm(excerpts: str) -> List[GeneratedFeature]:
+    """Call LLM with prompt and return parsed features list."""
+    llm = _build_llm_json_schema()
 
     prompt = FEATURES_FROM_EXCERPTS_PROMPT.replace("{{excerpts}}", excerpts)
     response = llm.invoke([{ "role": "user", "content": prompt }])
