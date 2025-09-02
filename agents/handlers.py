@@ -4,14 +4,22 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter, defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+import logging
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+    constr,
+)
 
 from orchestrator import crud
-
+from orchestrator.prompt_loader import load_prompt
 # Load environment variables
 load_dotenv()
 try:  # pragma: no cover - fallback if embeddings not ready
@@ -30,6 +38,26 @@ from orchestrator.models import (
     UCCreate,
     BacklogItemUpdate,
 )
+
+# Logger
+logger = logging.getLogger(__name__)
+
+# Prompt templates
+FEATURES_FROM_EXCERPTS_PROMPT = load_prompt("features_from_excerpts")
+
+
+class GeneratedFeature(BaseModel):
+    """Structured representation of a drafted Feature."""
+
+    title: constr(max_length=120)
+    objective: str
+    business_value: str
+    acceptance_criteria: List[str] = Field(min_length=2, max_length=4)
+    parent_hint: Optional[str] = None
+
+
+class GeneratedFeatures(BaseModel):
+    features: List[GeneratedFeature]
 
 
 class ParentRef(BaseModel):
@@ -549,55 +577,136 @@ async def get_document_handler(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 # ---------------------------------------------------------------------------
-# LLM helper function
+# LLM helpers
 # ---------------------------------------------------------------------------
 
-async def llm_json_extract(prompt: str, schema: str = "features_items") -> Dict[str, Any]:
-    """Extract structured JSON from text using LLM."""
-    llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4"), temperature=0.2)
-    
+def _resolve_parent_hint(project_id: int, hint: Optional[str]) -> Optional[int]:
+    """Best-effort mapping from hint like 'Epic: Foo' to an existing item id."""
+    if not hint or ":" not in hint:
+        return None
+    type_part, title_part = [p.strip() for p in hint.split(":", 1)]
+    items = crud.get_items(project_id, type=type_part)
+    for it in items:
+        if it.title.lower().startswith(title_part.lower()):
+            return it.id
+    return None
+
+
+async def _call_llm(excerpts: str) -> List[GeneratedFeature]:
+    """Call LLM with prompt and return parsed features list."""
+    schema = GeneratedFeatures.model_json_schema()
+    llm_kwargs = {
+        "model": os.getenv("OPENAI_MODEL", "gpt-4"),
+        "temperature": 0.2,
+    }
     try:
-        response = llm.invoke([{"role": "user", "content": prompt}])
-        content = response.content.strip()
-        
-        # Try to extract JSON from the response
-        if content.startswith("```json"):
-            content = content[7:]  # Remove ```json
-        if content.endswith("```"):
-            content = content[:-3]  # Remove ```
-        
-        return json.loads(content)
-    except (json.JSONDecodeError, Exception) as e:
-        return {"items": []}
+        llm = ChatOpenAI(
+            **llm_kwargs,
+            response_format={"type": "json_schema", "json_schema": schema},
+        )
+    except TypeError:
+        llm = ChatOpenAI(**llm_kwargs)
+
+    prompt = FEATURES_FROM_EXCERPTS_PROMPT.replace("{{excerpts}}", excerpts)
+    response = llm.invoke([{ "role": "user", "content": prompt }])
+    content = response.content.strip()
+    if content.startswith("```json"):
+        content = content[7:]
+    if content.endswith("```"):
+        content = content[:-3]
+    logger.info("LLM raw JSON length=%d", len(content))
+    logger.debug("LLM raw JSON preview: %s", content[:500])
+    try:
+        return GeneratedFeatures.model_validate_json(content).features
+    except ValidationError as e:
+        logger.error("JSON validation failed: %s", e)
+        return []
+
+
+def _get_document_text(doc_id: int) -> str:
+    doc = crud.get_document(doc_id)
+    return doc.get("content", "") if doc else ""
+
 
 # ---------------------------------------------------------------------------
 # Draft features handler
 # ---------------------------------------------------------------------------
 
 async def draft_features_from_matches_handler(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Draft Feature items array from document matches."""
+    """Draft and create Features from document matches."""
     try:
         project_id = int(args["project_id"])
         doc_query = str(args["doc_query"])
         k = int(args.get("k", 6))
-        
-        # Search documents first
-        matches = await search_documents_handler({"project_id": project_id, "query": doc_query})
-        snippets = [m["snippet"] for m in matches.get("matches", [])][:8]
-        
-        if not snippets:
+
+        # Retrieve relevant chunks with higher recall
+        chunks = crud.get_all_document_chunks_for_project(project_id)
+        if not chunks:
             return {"ok": True, "items": []}
-        
-        # Call LLM to synthesize features
-        prompt = f"""From the following snippets, propose {k} Features.
-Return strict JSON: {{"items":[{{"title": "...", "description":"...", "type":"Feature", "acceptance_criteria":["...","..."]}}]}}
-Snippets:
-{json.dumps(snippets, ensure_ascii=False)}"""
-        
-        result = await llm_json_extract(prompt, schema="features_items")
-        items = result.get("items", [])
-        
-        return {"ok": True, "items": items}
-        
+        q_emb = await embed_text(doc_query)
+        scored: List[Dict[str, Any]] = []
+        for c in chunks:
+            emb = c.get("embedding")
+            if not emb:
+                continue
+            score = cosine_similarity(emb, q_emb)
+            if score < 0.45:
+                continue
+            scored.append({"doc_id": c["doc_id"], "text": c.get("text", ""), "score": float(score)})
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        top = scored[:20]
+        excerpts = []
+        total = 0
+        for s in top:
+            t = s["text"]
+            if total + len(t) > 4000:
+                t = t[: max(0, 4000 - total)]
+            excerpts.append(t)
+            total += len(t)
+            if total >= 4000:
+                break
+        excerpt_text = "\n---\n".join(excerpts)
+        logger.info(
+            "draft_features_from_matches: matches=%d top_score=%.2f excerpt_len=%d",
+            len(top),
+            top[0]["score"] if top else 0.0,
+            len(excerpt_text),
+        )
+        features = await _call_llm(excerpt_text)
+
+        # Fallback to full document text if no features
+        if not features and top:
+            doc_text = _get_document_text(top[0]["doc_id"])[:12000]
+            logger.info("Fallback to full document text of length %d", len(doc_text))
+            features = await _call_llm(doc_text)
+
+        if not features:
+            return {"ok": True, "items": []}
+
+        created_items = []
+        for feat in features[:k]:
+            parent_id = _resolve_parent_hint(project_id, feat.parent_hint)
+            description = (
+                f"{feat.objective}\n\nValeur métier:\n{feat.business_value}\n\nCritères d'acceptation:\n- "
+                + "\n- ".join(feat.acceptance_criteria)
+            )
+            item = FeatureCreate(
+                project_id=project_id,
+                parent_id=parent_id,
+                title=feat.title,
+                description=description,
+                acceptance_criteria="\n".join(f"- {c}" for c in feat.acceptance_criteria),
+            )
+            created = crud.create_item(item)
+            logger.info(
+                "Created Feature id=%s title=%s parent=%s",
+                created.id,
+                created.title,
+                parent_id,
+            )
+            created_items.append({"id": created.id, "title": created.title})
+
+        return {"ok": True, "items": created_items}
+
     except (ValidationError, ValueError) as e:
         return {"ok": False, "error": str(e)}

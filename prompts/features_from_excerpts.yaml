@@ -1,0 +1,17 @@
+template: |
+  You are a senior product manager. You receive EXCERPTS from a French RFP-like document (cahier des charges) about an AI Assistant for backlog management and document Q&A.
+  
+  Task:
+  - From the EXCERPTS, infer 5 to 10 PRODUCT FEATURES (not user stories):
+    - Each feature must have: title, objective, business_value, 2-4 acceptance_criteria (testable), parent_hint if obvious (e.g., Epic).
+  - Derive features from sections like "Cas d’usage", "Périmètre fonctionnel", "Périmètre technique", "Jalons", "Critères de réussite".
+  - Output STRICT JSON matching the provided schema. No prose outside the JSON.
+  
+  Guidelines:
+  - Titles must be concise and actionable (<=120 chars).
+  - Acceptance criteria must be verifiable (avoid vague wording).
+  - If EXCERPTS are not enough, generalize cautiously from typical capabilities described.
+  - Stay in French.
+  EXCERPTS:
+  {{excerpts}}
+  Return ONLY the JSON.
