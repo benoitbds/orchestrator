@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ProjectProvider } from "@/context/ProjectContext";
 import ProjectSelector from "@/components/ProjectSelector";
+import { APP_CONFIG } from "@/lib/constants";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Agent 4 BA",
-  description: "Assistant IA pour la gestion de backlog avec Agent 4 BA",
+  title: APP_CONFIG.name,
+  description: APP_CONFIG.description,
 };
 
 export default function RootLayout({

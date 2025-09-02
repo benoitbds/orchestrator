@@ -243,7 +243,7 @@ export function ItemTree({ projectId, onEdit }: { projectId: number | null, onEd
 
   return (
     <div
-      className="space-y-1"
+      className="space-y-1 p-2"
       onDragOver={(e) => e.preventDefault()}
       onDrop={() => handleDrop(null)}
     >

@@ -49,14 +49,14 @@ export function BacklogPanel({ className, highlightItemId, onItemClick }: Backlo
 
   return (
     <div ref={panelRef} className={cn("flex flex-col h-full", className)}>
-      <div className="p-4 border-b">
+      <div className="p-4 border-b flex-shrink-0">
         <h2 className="font-semibold">Backlog</h2>
         <p className="text-sm text-muted-foreground mt-1">
           {currentProject.name}
         </p>
       </div>
       
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0">
         <BacklogPane />
       </div>
     </div>

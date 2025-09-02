@@ -15,6 +15,7 @@ import { ConversationHistory } from '@/components/agent/ConversationHistory';
 import { useMessagesStore, type Message } from '@/stores/useMessagesStore';
 import { toast } from 'sonner';
 import { http } from '@/lib/api';
+import { APP_CONFIG } from '@/lib/constants';
 
 
 export function AgentShell() {
@@ -174,7 +175,7 @@ export function AgentShell() {
         <header className="border-b p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold">Agent 4 BA</h1>
+              <h1 className="text-xl font-bold">{APP_CONFIG.name}</h1>
               {getStatusBadge()}
             </div>
           </div>
@@ -230,7 +231,7 @@ export function AgentShell() {
       <header className="border-b p-4">
         <div className="container max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold">Agent 4 BA</h1>
+            <h1 className="text-2xl font-bold">{APP_CONFIG.name}</h1>
             {getStatusBadge()}
           </div>
         </div>
@@ -255,7 +256,7 @@ export function AgentShell() {
           </div>
           
           {/* Backlog Section - 60% of remaining space */}
-          <div className="flex-1 border rounded-2xl overflow-hidden shadow-sm">
+          <div className="flex-1 border rounded-2xl shadow-sm">
             <BacklogPanel 
               highlightItemId={highlightItemId}
               onItemClick={setHighlightItemId}

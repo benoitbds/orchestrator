@@ -64,18 +64,19 @@ export default function BacklogPane() {
   };
 
   return (
-    <div className="p-4 border rounded-md bg-gray-50">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="font-medium">Backlog</h3>
+    <div className="p-4 h-full flex flex-col">
+      <div className="flex justify-end items-center mb-4 flex-shrink-0">
         <Button size="sm" onClick={handleNewItem} disabled={!currentProject}>
           Nouvel item
         </Button>
       </div>
       
-      <BacklogViewTabs
-        projectId={currentProject?.id ?? null}
-        onEdit={handleEditItem}
-      />
+      <div className="flex-1 min-h-0">
+        <BacklogViewTabs
+          projectId={currentProject?.id ?? null}
+          onEdit={handleEditItem}
+        />
+      </div>
       
       {currentProject && (
         <ItemDialog
