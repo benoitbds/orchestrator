@@ -36,9 +36,18 @@ async def test_run_chat_tools_creates_item(monkeypatch, tmp_path):
     crud.init_db()
     crud.create_project(ProjectCreate(name="Proj", description=""))
 
-    ai_call = ToolCall(name="create_item", args={"title": "Feat", "type": "Feature"}, id="0")
-    responses = [types.SimpleNamespace(content="", tool_calls=[ai_call]), types.SimpleNamespace(content="done", tool_calls=[])]
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
+    ai_call = ToolCall(
+        name="create_item", args={"title": "Feat", "type": "Feature"}, id="0"
+    )
+    responses = [
+        types.SimpleNamespace(content="", tool_calls=[ai_call]),
+        types.SimpleNamespace(content="done", tool_calls=[]),
+    ]
+    monkeypatch.setattr(
+        core_loop,
+        "build_llm",
+        lambda provider, **k: FakeLLM(responses) if provider == "openai" else None,
+    )
 
     run_id = str(uuid.uuid4())
     crud.create_run(run_id, "Create", 1)
