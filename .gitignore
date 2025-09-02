@@ -27,3 +27,6 @@ orchestrator.db
 .vscode/
 
 run_back.sh
+# Prompt overrides
+prompts.local/
+*.local.yaml
