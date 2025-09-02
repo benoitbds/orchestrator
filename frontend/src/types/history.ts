@@ -1,0 +1,22 @@
+export type ErrorInfo = { code?: string; message: string; hint?: string; docUrl?: string };
+export type Step = {
+  id: string;
+  t: string;
+  kind: 'LLM' | 'Tool' | 'DB' | 'System';
+  title: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'timeout';
+  latencyMs?: number;
+  summary?: string;
+  details?: { input?: any; output?: any; error?: ErrorInfo };
+};
+export type HistoryRun = {
+  id: string;
+  startedAt: string;
+  endedAt?: string;
+  userPrompt: string;
+  agentPlan: { bullets: string[]; rationale?: string };
+  steps: Step[];
+  finalAnswer?: { markdown?: string; json?: any; html?: string };
+  modelMeta?: { provider: 'openai' | 'anthropic' | 'mistral'; model: string; tokens?: number };
+  stats?: { durationMs?: number; toolCount: number; errorCount: number };
+};
