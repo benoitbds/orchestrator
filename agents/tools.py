@@ -1,5 +1,5 @@
 from typing import Optional, Literal, List, Dict, Any
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, Field
 import logging
 try:
     from langchain.tools import StructuredTool
@@ -87,6 +87,12 @@ class DraftFeaturesArgs(BaseModel):
     doc_query: str
     k: int = 6  # number of features to draft
 
+class GenerateItemsArgs(BaseModel):
+    project_id: int = Field(..., description="Project ID")
+    parent_id: int = Field(..., description="Parent item ID")
+    target_type: Literal["Feature", "US", "UC"]
+    n: int | None = Field(6, description="How many items to generate (3..10)")
+
 # ---------- HANDLERS réels ----------
 from .handlers import (  # noqa: E402 - handlers import requires models above
     create_item_tool,
@@ -102,6 +108,7 @@ from .handlers import (  # noqa: E402 - handlers import requires models above
     search_documents_handler,
     get_document_handler,
     draft_features_from_matches_handler,
+    generate_items_from_parent_handler,
 )
 
 def _sanitize(obj: Any) -> Any:
@@ -194,6 +201,11 @@ TOOLS = [
     _mk_tool("move_item", "Reparent an item (hierarchy enforced).", MoveItemArgs),
     _mk_tool("summarize_project", "Summarize the project tree and counts.", SummarizeProjectArgs),
     _mk_tool("bulk_create_features", "Create multiple Features under a parent; skip duplicates.", BulkCreateFeaturesArgs),
+    _mk_tool(
+        "generate_items_from_parent",
+        "Generate backlog items (Feature, US, or UC) under a parent item.",
+        GenerateItemsArgs,
+    ),
     _mk_tool("list_documents", "List documents in the project.", ListDocsArgs),
     _mk_tool("search_documents", "Search relevant passages in project documents.", SearchDocsArgs),
     _mk_tool("get_document", "Get full text content of a document by ID.", GetDocArgs),
@@ -219,4 +231,5 @@ HANDLERS = {
     "search_documents": search_documents_handler,
     "get_document": get_document_handler,
     "draft_features_from_matches": draft_features_from_matches_handler,
+    "generate_items_from_parent": generate_items_from_parent_handler,
 }

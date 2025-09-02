@@ -5,6 +5,7 @@ import os
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional
 import logging
+import asyncio, json, re
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -243,6 +244,354 @@ async def create_item_tool(args: Dict[str, Any]) -> Dict[str, Any]:
         }
     except (ValidationError, ValueError) as e:
         return {"ok": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# generate_items_from_parent handler
+# ---------------------------------------------------------------------------
+
+MAX_PARENT = 1500
+MAX_CTX = 600
+MAX_DOCS = 1200
+ALLOWED_TYPES = {"Feature", "US", "UC"}
+
+
+class _GenerateArgs(BaseModel):
+    project_id: int
+    parent_id: int
+    target_type: str
+    n: int | None = 6
+
+
+def _build_llm_json_object():
+    return ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0.2,
+        timeout=30,
+        model_kwargs={"response_format": {"type": "json_object"}},
+    )
+
+
+def _short(text: str, limit: int) -> str:
+    t = (text or "").strip()
+    return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0] + "…"
+
+
+async def _project_summary(project_id: int) -> str:
+    try:
+        res = await summarize_project_tool({"project_id": project_id, "depth": 2})
+        if res.get("ok"):
+            return res["result"].get("text", "")
+    except Exception:
+        pass
+    return ""
+
+
+async def _doc_context_if_needed(project_id: int, title: str, desc: str) -> str:
+    if len(desc or "") >= 400:
+        return ""
+    try:
+        res = await search_documents_handler({"project_id": project_id, "query": title})
+        blobs = [m.get("snippet", "") for m in res.get("matches", [])]
+        return _short(" ".join(blobs), MAX_DOCS)
+    except Exception:
+        return ""
+
+
+async def _list_related_items(project_id: int, parent: Any) -> List[Dict[str, Any]]:
+    items = crud.get_items(project_id, limit=200)
+    out: List[Dict[str, Any]] = []
+    for it in items:
+        if it.id == parent.id:
+            continue
+        if it.type in {"Epic", "Feature", "US", "UC", "Capability"}:
+            out.append({"id": it.id, "type": it.type, "title": it.title or ""})
+        if len(out) >= 12:
+            break
+    return out
+
+
+def _validate_feature(d: Dict[str, Any]) -> Dict[str, Any] | None:
+    req = {"title", "objective", "business_value", "acceptance_criteria"}
+    if not isinstance(d, dict) or not req.issubset(d.keys()):
+        return None
+    ac = d.get("acceptance_criteria") or []
+    if not isinstance(ac, list) or len(ac) < 2:
+        return None
+    return {
+        "title": str(d["title"])[:120].strip(),
+        "objective": str(d["objective"]).strip(),
+        "business_value": str(d["business_value"]).strip(),
+        "acceptance_criteria": [str(x).strip() for x in ac if str(x).strip()],
+        "assumptions": [str(x).strip() for x in (d.get("assumptions") or []) if str(x).strip()],
+    }
+
+
+def _validate_us(d: Dict[str, Any]) -> Dict[str, Any] | None:
+    req = {"title", "as_a", "i_want", "so_that", "acceptance_criteria"}
+    if not isinstance(d, dict) or not req.issubset(d.keys()):
+        return None
+    ac = d.get("acceptance_criteria") or []
+    if not isinstance(ac, list) or len(ac) < 2:
+        return None
+    pr = d.get("priority", "Should")
+    if pr not in {"Must", "Should", "Could"}:
+        pr = "Should"
+    try:
+        est = int(d.get("estimate", 3))
+    except Exception:
+        est = 3
+    return {
+        "title": str(d["title"])[:120].strip(),
+        "as_a": str(d["as_a"]).strip(),
+        "i_want": str(d["i_want"]).strip(),
+        "so_that": str(d["so_that"]).strip(),
+        "acceptance_criteria": [str(x).strip() for x in ac if str(x).strip()],
+        "priority": pr,
+        "estimate": est,
+        "dependencies": [str(x).strip() for x in (d.get("dependencies") or []) if str(x).strip()],
+    }
+
+
+def _validate_uc(d: Dict[str, Any]) -> Dict[str, Any] | None:
+    req = {"title", "actors", "preconditions", "main_flow", "postconditions"}
+    if not isinstance(d, dict) or not req.issubset(d.keys()):
+        return None
+
+    def _lst(k: str) -> List[str]:
+        v = d.get(k) or []
+        return [str(x).strip() for x in v if str(x).strip()] if isinstance(v, list) else []
+
+    alt = d.get("alternate_flows") or []
+    if isinstance(alt, list):
+        alt = [[str(x).strip() for x in flow if str(x).strip()] for flow in alt if isinstance(flow, list)]
+    else:
+        alt = []
+    return {
+        "title": str(d["title"])[:120].strip(),
+        "actors": _lst("actors"),
+        "preconditions": _lst("preconditions"),
+        "main_flow": _lst("main_flow"),
+        "alternate_flows": alt,
+        "postconditions": _lst("postconditions"),
+        "non_functional_notes": _lst("non_functional_notes"),
+    }
+
+
+def _validate_payload(target_type: str, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    items = data.get("items", [])
+    out: List[Dict[str, Any]] = []
+    for it in items:
+        v = None
+        if target_type == "Feature":
+            v = _validate_feature(it)
+        elif target_type == "US":
+            v = _validate_us(it)
+        elif target_type == "UC":
+            v = _validate_uc(it)
+        if v:
+            out.append(v)
+    return out[:10]
+
+
+def _similar(a: str, b: str) -> float:
+    set_a = set(re.findall(r"\w+", a.lower()))
+    set_b = set(re.findall(r"\w+", b.lower()))
+    if not set_a or not set_b:
+        return 0.0
+    inter = len(set_a & set_b)
+    return inter / max(len(set_a), len(set_b))
+
+
+async def _dedup_titles(candidates: List[Dict[str, Any]], existing: List[Dict[str, Any]], threshold: float = 0.85):
+    ex_titles = [e["title"] for e in existing if e.get("title")]
+    out = []
+    for c in candidates:
+        t = c.get("title", "")
+        if t and max((_similar(t, et) for et in ex_titles), default=0.0) >= threshold:
+            continue
+        out.append(c)
+    return out
+
+
+def _describe_feature(v: Dict[str, Any]) -> str:
+    parts = [
+        v["objective"],
+        f"\n\nValeur métier:\n{v['business_value']}",
+        "\n\nCritères d'acceptation:\n- " + "\n- ".join(v["acceptance_criteria"]),
+    ]
+    if v.get("assumptions"):
+        parts.append("\n\nHypothèses:\n- " + "\n- ".join(v["assumptions"]))
+    return "".join(parts)
+
+
+def _describe_us(v: Dict[str, Any]) -> str:
+    return (
+        f"**En tant que** {v['as_a']}\n"
+        f"**Je veux** {v['i_want']}\n"
+        f"**Afin de** {v['so_that']}\n\n"
+        f"**Critères d'acceptation**:\n- " + "\n- ".join(v["acceptance_criteria"]) + "\n\n"
+        f"**Priorité**: {v['priority']}  |  **Estimation**: {v['estimate']} pts"
+    )
+
+
+def _describe_uc(v: Dict[str, Any]) -> str:
+    parts = []
+    if v["actors"]:
+        parts.append("**Acteurs**:\n- " + "\n- ".join(v["actors"]))
+    if v["preconditions"]:
+        parts.append("**Préconditions**:\n- " + "\n- ".join(v["preconditions"]))
+    if v["main_flow"]:
+        parts.append("**Flux nominal**:\n" + "\n".join(v["main_flow"]))
+    for idx, flow in enumerate(v.get("alternate_flows", []), start=1):
+        parts.append(f"**Flux alternatif A{idx}**:\n" + "\n".join(flow))
+    if v["postconditions"]:
+        parts.append("**Postconditions**:\n- " + "\n- ".join(v["postconditions"]))
+    if v.get("non_functional_notes"):
+        parts.append(
+            "**Notes non-fonctionnelles**:\n- " + "\n- ".join(v["non_functional_notes"])
+        )
+    return "\n\n".join(parts)
+
+
+async def _call_llm_with_backoff(llm, prompt: str) -> str:
+    for attempt, wait in enumerate((0.8, 2.0, 5.0), start=1):
+        try:
+            resp = await asyncio.to_thread(llm.invoke, [HumanMessage(content=prompt)])
+            return getattr(resp, "content", None) or resp.generations[0].message.content
+        except Exception as e:
+            if "rate limit" in str(e).lower() and attempt < 3:
+                await asyncio.sleep(wait)
+                continue
+            raise
+
+
+def _parse_json(raw: str | None) -> Dict[str, Any]:
+    if not raw:
+        return {"items": []}
+    try:
+        return json.loads(raw)
+    except Exception:
+        m = re.search(r"\{.*\}", raw, flags=re.S)
+        return json.loads(m.group(0)) if m else {"items": []}
+
+
+async def _create_items(validated: List[Dict[str, Any]], project_id: int, parent_id: int, target_type: str) -> List[Dict[str, Any]]:
+    created = []
+    for v in validated:
+        if target_type == "Feature":
+            desc = _describe_feature(v)
+            item = FeatureCreate(
+                project_id=project_id,
+                parent_id=parent_id,
+                title=v["title"],
+                description=desc,
+                acceptance_criteria="\n".join(v["acceptance_criteria"]),
+            )
+        elif target_type == "US":
+            desc = _describe_us(v)
+            item = USCreate(
+                project_id=project_id,
+                parent_id=parent_id,
+                title=v["title"],
+                description=desc,
+                acceptance_criteria="\n".join(v["acceptance_criteria"]),
+                story_points=v["estimate"],
+            )
+        else:
+            desc = _describe_uc(v)
+            item = UCCreate(
+                project_id=project_id,
+                parent_id=parent_id,
+                title=v["title"],
+                description=desc,
+            )
+        created_item = crud.create_item(item)
+        created.append({"id": created_item.id, "title": created_item.title})
+    return created
+
+
+def build_prompt_universal(target_type: str, n: int, parent: Dict[str, Any], project_ctx: str, items_existants: List[Dict[str, Any]], doc_ctx: str) -> str:
+    return f"""
+Tu es Product Manager senior et Business Analyst.
+Objectif: produire {n} éléments de type {target_type} sous l'item parent ci-dessous.
+Qualité:
+- Déduplication avec items_existants (éviter titres quasi-identiques).
+- Traçabilité: si pertinent, ajouter 'sources' (doc:#|titre|page).
+- Sortie STRICTEMENT JSON valide selon le schéma ci-dessous. Aucune prose hors JSON.
+
+Entrées:
+- target_type: {target_type}
+- n: {n}
+- item_parent: {{
+  "id": {parent['id']},
+  "type": "{parent.get('type','')}",
+  "title": "{parent.get('title','').replace('"','\\"')}",
+  "description": "{_short(parent.get('description',''), MAX_PARENT).replace('"','\\"')}"
+}}
+- contexte_projet (<=600): "{_short(project_ctx, MAX_CTX).replace('"','\\"')}"
+- items_existants (<=12): {json.dumps(items_existants, ensure_ascii=False)}
+- extraits_documents (<=1200): "{doc_ctx.replace('"','\\"') if doc_ctx else ''}"
+
+Consignes par type:
+- Feature: champs title, objective, business_value, acceptance_criteria[2..4], assumptions(optional).
+- US: title, as_a, i_want, so_that, acceptance_criteria[2..5] (Gherkin Given/When/Then), priority(Must|Should|Could), estimate(1|2|3|5|8), dependencies(optional).
+- UC: title, actors[], preconditions[], main_flow[], alternate_flows[[]], postconditions[], non_functional_notes(optional).
+
+Schéma de sortie JSON:
+{{
+  "parent_id": {parent['id']},
+  "type": "{target_type}",
+  "items": [ ... ]
+}}
+Réponds uniquement avec le JSON.
+""".strip()
+
+
+async def generate_items_from_parent_handler(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        data = _GenerateArgs(**args)
+    except (ValidationError, ValueError) as e:
+        return {"ok": False, "error": str(e)}
+
+    project_id = data.project_id
+    parent_id = data.parent_id
+    target_type = data.target_type.upper() if data.target_type.lower() in {"us", "uc"} else data.target_type.capitalize()
+    n = max(3, min(10, data.n or 6))
+    if target_type not in ALLOWED_TYPES:
+        return {"ok": False, "error": f"Unsupported target_type: {target_type}"}
+
+    parent = crud.get_item(parent_id)
+    if not parent or parent.project_id != project_id:
+        return {"ok": False, "error": "parent_not_found"}
+
+    parent_dict = {
+        "id": parent.id,
+        "type": parent.type,
+        "title": parent.title or "",
+        "description": parent.description or "",
+    }
+
+    proj_summary = await _project_summary(project_id)
+    items_existants = await _list_related_items(project_id, parent)
+    doc_ctx = await _doc_context_if_needed(project_id, parent.title or "", parent.description or "")
+    prompt = build_prompt_universal(target_type, n, parent_dict, proj_summary or "", items_existants, doc_ctx or "")
+
+    llm = _build_llm_json_object()
+    raw = await _call_llm_with_backoff(llm, prompt)
+    data_json = _parse_json(raw)
+    validated = _validate_payload(target_type, data_json)
+    if not validated:
+        return {"ok": True, "items": []}
+    validated = await _dedup_titles(validated, items_existants)
+    created = await _create_items(validated, project_id, parent_id, target_type)
+    logger.info(
+        "generate_items_from_parent: created=%d target_type=%s parent_id=%s",
+        len(created),
+        target_type,
+        parent_id,
+    )
+    return {"ok": True, "items": created}
 
 async def update_item_tool(args: Dict[str, Any]) -> Dict[str, Any]:
     """Validate args & existence; update item.
