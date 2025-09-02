@@ -15,12 +15,14 @@ crud.init_db()
 transport = ASGIWebSocketTransport(app=app)
 BASE_URL = "http://test"
 
+
 @pytest.mark.asyncio
 async def test_ping():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.get("/ping")
         assert r.status_code == 200
         assert r.json() == {"status": "ok"}
+
 
 @pytest.mark.asyncio
 async def test_ws_stream_new_run():
@@ -47,7 +49,7 @@ async def test_ws_stream_existing_run_only_new_steps():
 
     run_id = str(uuid4())
     crud.create_run(run_id, "obj", None)
-    queue = run_stream.register(run_id, asyncio.get_event_loop())
+    _ = run_stream.register(run_id, asyncio.get_event_loop())
     # record a step before connecting
     crud.record_run_step(run_id, "before", "one")
 
@@ -107,7 +109,11 @@ async def test_ws_stream_tool_steps(monkeypatch, tmp_path):
         types.SimpleNamespace(content="done", tool_calls=[]),
     ]
 
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
+    monkeypatch.setattr(
+        core_loop,
+        "build_llm",
+        lambda provider, **k: FakeLLM(responses) if provider == "openai" else None,
+    )
 
     async def fake_create(args):
         rid = args["run_id"]
@@ -204,6 +210,7 @@ async def test_project_and_backlog_endpoints():
 async def test_feature_proposals_endpoint(monkeypatch):
     """Vérifie l'endpoint POST /api/feature_proposals."""
     from agents.schemas import FeatureProposals, FeatureProposal
+
     # Stub de l'agent pour renvoyer une réponse contrôlée
     expected = FeatureProposals(
         project_id=1,
@@ -236,6 +243,7 @@ async def test_feature_proposals_endpoint(monkeypatch):
         return d
 
     from orchestrator import crud
+
     monkeypatch.setattr(crud, "create_item", fake_create_item)
 
     async with AsyncClient(transport=transport, base_url=BASE_URL) as ac:
@@ -269,11 +277,14 @@ async def test_document_upload_and_listing(tmp_path, monkeypatch):
 
     monkeypatch.setattr(embeddings, "embed_texts", fake_embed)
     monkeypatch.setattr(embeddings, "chunk_text", lambda text, **_: [text])
+
     class DummyEnc:
         def encode(self, text):
             return [0] * len(text.split())
+
         def decode(self, toks):
             return " ".join("x" for _ in toks)
+
     monkeypatch.setattr(embeddings.tiktoken, "get_encoding", lambda name: DummyEnc())
 
     async with AsyncClient(transport=transport, base_url=BASE_URL) as ac:
@@ -305,11 +316,14 @@ async def test_pdf_content_extraction(tmp_path, monkeypatch):
 
     monkeypatch.setattr(embeddings, "embed_texts", fake_embed)
     monkeypatch.setattr(embeddings, "chunk_text", lambda text, **_: [text])
+
     class DummyEnc:
         def encode(self, text):
             return [0] * len(text.split())
+
         def decode(self, toks):
             return " ".join("x" for _ in toks)
+
     monkeypatch.setattr(embeddings.tiktoken, "get_encoding", lambda name: DummyEnc())
 
     pdf = fitz.open()
