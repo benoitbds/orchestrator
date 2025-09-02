@@ -5,9 +5,9 @@ from typing import Any
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
-from agents.planner import TOOL_SYSTEM_PROMPT
 from agents.tools import TOOLS as LC_TOOLS, set_current_run  # StructuredTool list (async funcs)
 from orchestrator import crud, stream
+from orchestrator.prompt_loader import load_prompt
 
 # Load environment variables from .env file
 load_dotenv()
@@ -91,7 +91,8 @@ async def run_chat_tools(objective: str, project_id: int | None, run_id: str, ma
     llm = llm_with_tools
 
     # 2) Historique messages
-    enhanced_prompt = TOOL_SYSTEM_PROMPT + f"""
+    tool_system_prompt = load_prompt("tool_system_prompt")
+    enhanced_prompt = tool_system_prompt + f"""
 
 IMPORTANT: You have access to {len(valid_tools)} tools: {[t.name for t in valid_tools]}
 

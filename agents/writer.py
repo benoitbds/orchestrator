@@ -7,6 +7,7 @@ from .schemas import ExecResult, RenderResult, FeatureProposal, FeatureProposals
 from dotenv import load_dotenv
 from langchain.output_parsers import PydanticOutputParser
 from langchain_openai import ChatOpenAI
+from orchestrator.prompt_loader import load_prompt
 
 # Load environment variables
 load_dotenv()
@@ -50,12 +51,6 @@ load_dotenv()
 llm_feature = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4"), temperature=0.2)
 feature_parser = PydanticOutputParser(pydantic_object=FeatureProposals)
 
-SYSTEM_FEATURE_PROMPT = (
-    "Tu es un expert en gestion de backlog. "
-    "Pour l'épic donné, génère STRICTEMENT un JSON conforme à ce schéma :\n"
-    f"{feature_parser.get_format_instructions()}"
-)
-
 def make_feature_proposals(project_id: int, parent_id: int, parent_title: str) -> FeatureProposals:
     """
     Génère plusieurs propositions de features pour un épic via un LLM.
@@ -66,9 +61,13 @@ def make_feature_proposals(project_id: int, parent_id: int, parent_title: str) -
         f"Titre de l'épic: {parent_title}\n\n"
         "Propose 3-5 features avec un titre et une brève description chacune."
     )
+    system_template = load_prompt("feature_generation")
+    system_prompt = system_template.replace(
+        "{{schema}}", feature_parser.get_format_instructions()
+    )
     rsp = llm_feature.invoke(
         [
-            {"role": "system", "content": SYSTEM_FEATURE_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_msg},
         ]
     )

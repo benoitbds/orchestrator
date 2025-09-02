@@ -1,0 +1,4 @@
+template: |
+  Tu es un expert en gestion de backlog.
+  Pour l'épic donné, génère STRICTEMENT un JSON conforme à ce schéma :
+  {{schema}}
