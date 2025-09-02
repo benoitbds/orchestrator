@@ -40,7 +40,11 @@ async def test_run_chat_tools_injects_ids(monkeypatch, tmp_path):
         types.SimpleNamespace(content="", tool_calls=[ai_call]),
         types.SimpleNamespace(content="done", tool_calls=[]),
     ]
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
+    monkeypatch.setattr(
+        core_loop,
+        "build_llm",
+        lambda provider, **k: FakeLLM(responses) if provider == "openai" else None,
+    )
     monkeypatch.setattr(core_loop, "LC_TOOLS", [tool])
 
     monkeypatch.setattr(crud, "DATABASE_URL", str(tmp_path / "db.sqlite"))
@@ -56,7 +60,11 @@ async def test_run_chat_tools_injects_ids(monkeypatch, tmp_path):
 async def test_run_chat_tools_handles_unknown_tool(monkeypatch, tmp_path):
     ai_call = ToolCall(name="unknown", args={}, id="0")
     responses = [types.SimpleNamespace(content="", tool_calls=[ai_call])]
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
+    monkeypatch.setattr(
+        core_loop,
+        "build_llm",
+        lambda provider, **k: FakeLLM(responses) if provider == "openai" else None,
+    )
     monkeypatch.setattr(core_loop, "LC_TOOLS", [])
 
     monkeypatch.setattr(crud, "DATABASE_URL", str(tmp_path / "db.sqlite"))
@@ -71,11 +79,17 @@ async def test_run_chat_tools_handles_unknown_tool(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_run_chat_tools_returns_summary(monkeypatch, tmp_path):
     responses = [types.SimpleNamespace(content="all good", tool_calls=[])]
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
+    monkeypatch.setattr(
+        core_loop,
+        "build_llm",
+        lambda provider, **k: FakeLLM(responses) if provider == "openai" else None,
+    )
     monkeypatch.setattr(core_loop, "LC_TOOLS", [])
 
     published = {}
-    monkeypatch.setattr(core_loop.stream, "publish", lambda rid, msg: published.setdefault("m", msg))
+    monkeypatch.setattr(
+        core_loop.stream, "publish", lambda rid, msg: published.setdefault("m", msg)
+    )
 
     monkeypatch.setattr(crud, "DATABASE_URL", str(tmp_path / "db.sqlite"))
     crud.init_db()
@@ -94,8 +108,14 @@ async def test_run_chat_tools_stops_after_errors(monkeypatch, tmp_path):
 
     tool = types.SimpleNamespace(name="t", ainvoke=failing_tool)
     ai_call = ToolCall(name="t", args={}, id="0")
-    responses = [types.SimpleNamespace(content="", tool_calls=[ai_call]) for _ in range(3)]
-    monkeypatch.setattr(core_loop, "ChatOpenAI", lambda *a, **k: FakeLLM(responses))
+    responses = [
+        types.SimpleNamespace(content="", tool_calls=[ai_call]) for _ in range(3)
+    ]
+    monkeypatch.setattr(
+        core_loop,
+        "build_llm",
+        lambda provider, **k: FakeLLM(responses) if provider == "openai" else None,
+    )
     monkeypatch.setattr(core_loop, "LC_TOOLS", [tool])
 
     monkeypatch.setattr(crud, "DATABASE_URL", str(tmp_path / "db.sqlite"))
