@@ -9,6 +9,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AI
 from orchestrator.llm.safe_invoke import safe_invoke_with_fallback
 from orchestrator.llm.errors import ProviderExhaustedError
 from orchestrator.llm.factory import build_llm
+from orchestrator.llm.provider import OpenAIProvider, BoundLLMProvider
 from orchestrator.settings import LLM_PROVIDER_ORDER
 from agents.tools import (
     TOOLS as LC_TOOLS,
@@ -104,12 +105,18 @@ def _extract_model_name(msg: AIMessage) -> str | None:
 async def _build_provider_chain(valid_tools: list[Any]) -> list[Any]:
     providers: list[Any] = []
     for name in LLM_PROVIDER_ORDER:
+        if name == "openai" and os.getenv("OPENAI_API_KEY"):
+            providers.append(
+                OpenAIProvider(
+                    base_model=os.getenv("OPENAI_MODEL", "gpt-5.1-mini"),
+                    tool_model=os.getenv("OPENAI_TOOL_MODEL", "gpt-4o-mini"),
+                    temperature=0,
+                )
+            )
+            continue
         llm = build_llm(name, temperature=0)
         if llm:
-            try:
-                providers.append(llm.bind_tools(valid_tools))
-            except Exception:
-                providers.append(llm)
+            providers.append(BoundLLMProvider(llm, name=name))
     return providers
 
 
@@ -204,7 +211,7 @@ Current project_id: {project_id if project_id else 'Not specified'}
         logger.info("Starting iteration %d/%d", iteration + 1, max_tool_calls)
 
         try:
-            rsp: AIMessage = await safe_invoke_with_fallback(providers, messages)
+            rsp: AIMessage = await safe_invoke_with_fallback(providers, messages, tools=valid_tools)
             logger.info("AIMessage content: %r", getattr(rsp, "content", None))
             logger.info("AIMessage tool_calls: %s", getattr(rsp, "tool_calls", None))
             save_message(
