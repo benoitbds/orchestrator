@@ -22,6 +22,54 @@ logger = logging.getLogger(__name__)
 MessageLike = Union[Dict[str, Any], "BaseMessage"]
 
 
+def _tc_to_lc_shape(tc: dict) -> dict | None:
+    """Coerce tool call to LangChain shape."""
+    if not isinstance(tc, dict):
+        return None
+    tcid = tc.get("id")
+    name = tc.get("name")
+    args = tc.get("args")
+    if name and isinstance(args, dict):
+        return {"id": tcid, "type": "tool_call", "name": name, "args": args}
+    fn = (tc.get("function") or {})
+    name = name or fn.get("name")
+    arguments = args if isinstance(args, dict) else fn.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except Exception:
+            arguments = {}
+    if isinstance(arguments, dict) and name:
+        return {"id": tcid, "type": "tool_call", "name": name, "args": arguments}
+    return None
+
+
+def _normalize_assistant_with_tool_calls(raw_message: dict | Any) -> Dict[str, Any]:
+    """Build assistant dict with LC-shaped tool_calls if any."""
+    content = getattr(raw_message, "content", None)
+    if isinstance(raw_message, dict):
+        content = raw_message.get("content", content) or ""
+    else:
+        content = content or ""
+
+    raw_tcs = []
+    if isinstance(raw_message, dict):
+        raw_tcs = raw_message.get("tool_calls") or []
+    else:
+        raw_tcs = getattr(raw_message, "tool_calls", None) or []
+
+    tcs = []
+    for tc in raw_tcs:
+        coerced = _tc_to_lc_shape(tc or {})
+        if coerced:
+            tcs.append(coerced)
+
+    out = {"role": "assistant", "content": content}
+    if tcs:
+        out["tool_calls"] = tcs
+    return out
+
+
 def _role_of(m: MessageLike) -> str:
     if isinstance(m, dict):
         return m.get("role") or ""
@@ -70,45 +118,15 @@ def _content_of(m: MessageLike) -> str:
 
 
 def _to_openai_dict(m: MessageLike) -> Dict[str, Any]:
-    if isinstance(m, dict):
-        return dict(m)
-
     role = _role_of(m)
-    if role == "user":
-        return {"role": "user", "content": _content_of(m)}
+    if role == "assistant":
+        return _normalize_assistant_with_tool_calls(m)
+    if role == "tool":
+        return {"role": "tool", "content": _content_of(m), "tool_call_id": _tool_call_id_of(m)}
     if role == "system":
         return {"role": "system", "content": _content_of(m)}
-    if role == "assistant":
-        tcs = []
-        if isinstance(m, AIMessage):
-            for tc in getattr(m, "tool_calls", None) or []:
-                fn = (tc or {}).get("function") or {}
-                args = fn.get("arguments")
-                if not isinstance(args, str):
-                    try:
-                        args = json.dumps(args)
-                    except Exception:
-                        args = str(args)
-                tcs.append(
-                    {
-                        "id": tc.get("id"),
-                        "type": tc.get("type") or "function",
-                        "function": {
-                            "name": fn.get("name") or "",
-                            "arguments": args or "{}",
-                        },
-                    }
-                )
-        data: Dict[str, Any] = {"role": "assistant", "content": _content_of(m)}
-        if tcs:
-            data["tool_calls"] = tcs
-        return data
-    if role == "tool":
-        return {
-            "role": "tool",
-            "content": _content_of(m),
-            "tool_call_id": _tool_call_id_of(m),
-        }
+    if role == "user":
+        return {"role": "user", "content": _content_of(m)}
     return {"role": role or "user", "content": _content_of(m)}
 
 
@@ -118,29 +136,21 @@ def normalize_history(history: List[MessageLike]) -> List[Dict[str, Any]]:
 
 def preflight_validate_messages(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
-    last_assistant_tool_ids: Optional[Set[str]] = None
+    last_ids: Optional[Set[str]] = None
     for i, m in enumerate(msgs):
         role = m.get("role")
         if role == "assistant":
-            last_assistant_tool_ids = _assistant_tool_ids(m)
+            last_ids = _assistant_tool_ids(m)
             out.append(m)
         elif role == "tool":
             tcid = m.get("tool_call_id")
-            if last_assistant_tool_ids and tcid in last_assistant_tool_ids:
+            if last_ids and tcid in last_ids:
                 out.append(m)
             else:
-                logger.warning(
-                    "drop_orphan_tool",
-                    extra={
-                        "payload": {
-                            "tool_call_id": tcid,
-                            "idx": i,
-                            "reason": "no_adjacent_parent",
-                        }
-                    },
-                )
+                level = logging.WARNING if last_ids else logging.DEBUG
+                logger.log(level, "drop_orphan_tool", extra={"payload": {"tool_call_id": tcid, "idx": i}})
         else:
-            last_assistant_tool_ids = None
+            last_ids = None
             out.append(m)
     return out
 

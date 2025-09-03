@@ -12,7 +12,7 @@ def patch_graph():
     yield
 
 
-def test_assistant_tool_match_unchanged():
+def test_assistant_tool_coerced_to_lc():
     history = [
         {
             "role": "assistant",
@@ -25,7 +25,16 @@ def test_assistant_tool_match_unchanged():
     ]
     normalized = normalize_history(history)
     sanitized = preflight_validate_messages(normalized)
-    assert sanitized == history
+    assert sanitized == [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "a1", "type": "tool_call", "name": "x", "args": {}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "a1", "content": "{}"},
+    ]
 
 
 def test_orphan_tool_dropped(caplog):
@@ -34,10 +43,11 @@ def test_orphan_tool_dropped(caplog):
         {"role": "tool", "tool_call_id": "oops", "content": "{}"},
     ]
     normalized = normalize_history(history)
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         sanitized = preflight_validate_messages(normalized)
     assert sanitized == [history[0]]
     rec = caplog.records[0]
+    assert rec.levelno == logging.DEBUG
     assert rec.message == "drop_orphan_tool"
 
 
@@ -54,11 +64,7 @@ def test_langchain_messages_normalized():
             "role": "assistant",
             "content": "",
             "tool_calls": [
-                {
-                    "id": "a1",
-                    "type": "function",
-                    "function": {"name": "x", "arguments": "{}"},
-                }
+                {"id": "a1", "type": "tool_call", "name": "x", "args": {}}
             ],
         },
         {"role": "tool", "content": "{}", "tool_call_id": "a1"},
