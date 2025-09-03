@@ -35,9 +35,10 @@ from orchestrator.models import (
 )
 import httpx
 from agents.embeddings import chunk_text, embed_texts
+from orchestrator.logging_utils import JSONLHandler
 
 
-def setup_logging() -> None:
+def setup_logging(log_dir: str = "logs") -> None:
     level_name = os.getenv("LOGLEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
 
@@ -51,6 +52,9 @@ def setup_logging() -> None:
             logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
         )
         root.addHandler(h)
+
+    if not any(isinstance(h, JSONLHandler) for h in root.handlers):
+        root.addHandler(JSONLHandler(log_dir))
 
 
 async def _no_aclose(self):
