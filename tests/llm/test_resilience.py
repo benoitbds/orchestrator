@@ -61,3 +61,49 @@ def test_token_bucket():
     assert bucket.take() is True
     # third immediate take should fail until refill
     assert bucket.take() is False
+
+
+class Msg:
+    def __init__(self, tool_calls=None):
+        self.tool_calls = tool_calls
+
+
+class SeqLLM:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    def invoke(self, messages):
+        self.calls += 1
+        resp = self.responses.pop(0)
+        if isinstance(resp, Exception):
+            raise resp
+        return resp
+
+
+@pytest.mark.asyncio
+async def test_no_fallback_during_tool_exchange():
+    from orchestrator.llm import safe_invoke as mod
+
+    mod.in_tool_exchange = False
+
+    tool_msg = Msg(tool_calls=[{"id": 1}])
+    plain_msg = Msg()
+
+    # provider_a: tool call -> error -> ok -> error
+    provider_a = SeqLLM([tool_msg, Exception("boom"), plain_msg, Exception("boom2")])
+    provider_b = SeqLLM([plain_msg, plain_msg])
+
+    await safe_invoke_with_fallback([provider_a], [{}])
+    assert mod.in_tool_exchange is True
+
+    with pytest.raises(Exception):
+        await safe_invoke_with_fallback([provider_a, provider_b], [{}])
+    assert provider_b.calls == 0
+
+    await safe_invoke_with_fallback([provider_a], [{}])
+    assert mod.in_tool_exchange is False
+
+    out = await safe_invoke_with_fallback([provider_a, provider_b], [{}])
+    assert provider_b.calls == 1
+    assert out is plain_msg
