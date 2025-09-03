@@ -92,3 +92,36 @@ def test_non_adjacent_tool_slice(caplog):
 
     slice_msgs = extract_tool_exchange_slice(msgs)
     assert slice_msgs is None
+
+
+def test_tool_exchange_slice_minimal():
+    msgs = [
+        {"role": "system", "content": "s1"},
+        {"role": "user", "content": "u0"},
+        {"role": "system", "content": "s2"},
+        {"role": "user", "content": "u"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "a1", "type": "function", "function": {"name": "x", "arguments": "{}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "a1", "content": "ok"},
+        {"role": "tool", "tool_call_id": "a1", "content": "more"},
+    ]
+
+    slice_msgs = extract_tool_exchange_slice(msgs)
+    assert slice_msgs == [
+        {"role": "system", "content": "s2"},
+        {"role": "user", "content": "u"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "a1", "type": "function", "function": {"name": "x", "arguments": "{}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "a1", "content": "ok"},
+        {"role": "tool", "tool_call_id": "a1", "content": "more"},
+    ]

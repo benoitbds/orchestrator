@@ -165,6 +165,9 @@ def extract_tool_exchange_slice(msgs: List[MessageLike]) -> Optional[List[Dict[s
         if i - 1 >= 0 and nd[i - 1].get("role") in ("user", "assistant"):
             head.append(nd[i - 1])
         slice_msgs = head + tail
-        return preflight_validate_messages(slice_msgs)
+        validated = preflight_validate_messages(slice_msgs)
+        if not validated or validated[-1].get("role") != "tool":
+            return None
+        return validated
     return None
 
