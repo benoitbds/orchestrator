@@ -11,10 +11,8 @@ from orchestrator.llm.errors import ProviderExhaustedError
 from orchestrator.llm.factory import build_llm
 from orchestrator.llm.provider import OpenAIProvider, BoundLLMProvider
 from orchestrator.settings import LLM_PROVIDER_ORDER
-from agents.tools import (
-    TOOLS as LC_TOOLS,
-    set_current_run,
-)  # StructuredTool list (async funcs)
+from agents.tools import TOOLS as LC_TOOLS  # StructuredTool list (async funcs)
+from agents.tools_context import set_current_run_id
 from orchestrator import crud, stream
 from orchestrator.prompt_loader import load_prompt
 from orchestrator.storage.services import (
@@ -133,7 +131,7 @@ async def _run_chat_tools_impl(
     logger.info("TOOLS count: %d", len(LC_TOOLS))
 
     # Set the current run context for tools
-    set_current_run(run_id)
+    set_current_run_id(run_id)
 
     # 1) Prépare le modèle + binding outils (LangChain)
     # Verify tools are valid before binding

@@ -11,16 +11,9 @@ from orchestrator import stream  # assume stream.register/publish/close exist
 import json
 import asyncio
 
+from agents.tools_context import get_current_run_id
+
 logger = logging.getLogger(__name__)
-
-# Hook global (très simple): si run_id absent des kwargs, essaie de le lire depuis contexte global
-_CURRENT_RUN_ID: str | None = None
-
-
-def set_current_run(run_id: str):  # appelé par run_chat_tools avant l'exec
-    global _CURRENT_RUN_ID
-    _CURRENT_RUN_ID = run_id
-    logger.info("Set current run ID: %s", run_id)
 
 # ---------- Schemas Pydantic v2 ----------
 class CreateItemArgs(BaseModel):
@@ -167,7 +160,7 @@ async def _exec(name: str, run_id: str, args: dict):
 def _mk_tool(name: str, desc: str, schema: type[BaseModel]):
     async def _tool(**kwargs):
         logger.debug("Tool '%s' called with kwargs: %s", name, kwargs)
-        run_id = kwargs.pop("run_id", None) or _CURRENT_RUN_ID
+        run_id = kwargs.pop("run_id", None) or get_current_run_id()
         if not run_id:
             logger.warning("No run_id provided for tool '%s', using 'unknown'", name)
             run_id = "unknown"
