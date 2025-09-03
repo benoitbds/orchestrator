@@ -1,11 +1,15 @@
 import uuid
 import types
+import types
+import uuid
 import pytest
+from sqlmodel import create_engine
 
 from orchestrator import crud
 from orchestrator.models import ProjectCreate
 from orchestrator.core_loop import run_chat_tools
 from orchestrator import core_loop
+from orchestrator.storage import db as ag_db
 
 crud.init_db()
 
@@ -35,6 +39,10 @@ async def test_run_chat_tools_creates_item(monkeypatch, tmp_path):
     monkeypatch.setattr(crud, "DATABASE_URL", str(db))
     crud.init_db()
     crud.create_project(ProjectCreate(name="Proj", description=""))
+    agentic = tmp_path / "agentic.sqlite"
+    monkeypatch.setenv("AGENTIC_DB_URL", f"sqlite:///{agentic}")
+    ag_db.engine = create_engine(f"sqlite:///{agentic}")
+    ag_db.init_db()
 
     ai_call = ToolCall(
         name="create_item", args={"title": "Feat", "type": "Feature"}, id="0"

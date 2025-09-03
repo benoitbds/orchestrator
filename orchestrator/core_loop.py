@@ -16,11 +16,23 @@ from agents.tools import (
 )  # StructuredTool list (async funcs)
 from orchestrator import crud, stream
 from orchestrator.prompt_loader import load_prompt
+from orchestrator.storage.services import (
+    start_span,
+    end_span,
+    save_blob,
+    save_message,
+    save_tool_call,
+    save_tool_result,
+)
+from orchestrator.storage.db import get_session, init_db
+from orchestrator.storage.models import Run
 
 # Load environment variables from .env file
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+AGENT_NAME = "chat_tools"
 
 
 def _sanitize(obj: Any) -> Any:
@@ -70,6 +82,25 @@ def _build_clean_summary(summary: str, artifacts: dict[str, list[int]]) -> str:
     return summary
 
 
+def _extract_token_usage(msg: AIMessage) -> dict | None:
+    """Best-effort extraction of token usage from a LangChain message."""
+    meta = getattr(msg, "usage_metadata", None)
+    if not meta:
+        meta = getattr(msg, "response_metadata", {}).get("token_usage")
+    if isinstance(meta, dict):
+        return {
+            "prompt": meta.get("prompt_tokens"),
+            "completion": meta.get("completion_tokens"),
+            "total": meta.get("total_tokens"),
+        }
+    return None
+
+
+def _extract_model_name(msg: AIMessage) -> str | None:
+    meta = getattr(msg, "response_metadata", {})
+    return meta.get("model_name") or getattr(msg, "model", None)
+
+
 async def _build_provider_chain(valid_tools: list[Any]) -> list[Any]:
     providers: list[Any] = []
     for name in LLM_PROVIDER_ORDER:
@@ -82,7 +113,7 @@ async def _build_provider_chain(valid_tools: list[Any]) -> list[Any]:
     return providers
 
 
-async def run_chat_tools(
+async def _run_chat_tools_impl(
     objective: str, project_id: int | None, run_id: str, max_tool_calls: int = 10
 ) -> dict:
     logger.info(
@@ -152,6 +183,13 @@ Current project_id: {project_id if project_id else 'Not specified'}
         HumanMessage(content=user_message),
     ]
 
+    save_message(
+        run_id,
+        role="user",
+        content_ref=save_blob("text", user_message),
+        agent_name=AGENT_NAME,
+    )
+
     logger.info("System prompt length: %d characters", len(enhanced_prompt))
     logger.info("User message: %s", user_message)
 
@@ -169,6 +207,14 @@ Current project_id: {project_id if project_id else 'Not specified'}
             rsp: AIMessage = await safe_invoke_with_fallback(providers, messages)
             logger.info("AIMessage content: %r", getattr(rsp, "content", None))
             logger.info("AIMessage tool_calls: %s", getattr(rsp, "tool_calls", None))
+            save_message(
+                run_id,
+                role="assistant",
+                content_ref=save_blob("text", getattr(rsp, "content", "")),
+                agent_name=AGENT_NAME,
+                model=_extract_model_name(rsp),
+                tokens=_extract_token_usage(rsp),
+            )
         except ProviderExhaustedError:
             logger.exception("All LLM providers exhausted for run %s", run_id)
             summary = "LLM providers exhausted"
@@ -243,18 +289,26 @@ Current project_id: {project_id if project_id else 'Not specified'}
                     stream.discard(run_id)
                     return {"html": html}
 
-                # Exécuter le StructuredTool (il appelle le handler, loggue et stream)
+                call_ref = save_blob("json", args)
+                call_id = save_tool_call(
+                    run_id, AGENT_NAME, name, input_ref=call_ref, span_id=None
+                )
                 try:
                     logger.info("Invoking tool '%s' with args: %s", name, args)
                     result_str = await tool.ainvoke(
                         args
                     )  # notre func async renvoie une string JSON
                     logger.info("Tool '%s' completed successfully", name)
+                    status = "ok"
                 except Exception as e:
                     logger.error(
                         "Tool '%s' execution failed: %s", name, str(e), exc_info=True
                     )
                     result_str = json.dumps({"ok": False, "error": str(e)})
+                    status = "error"
+                save_tool_result(
+                    call_id, status, output_ref=save_blob("text", result_str)
+                )
 
                 # Parse résultat & maj artifacts
                 try:
@@ -326,3 +380,31 @@ Current project_id: {project_id if project_id else 'Not specified'}
     stream.close(run_id)
     stream.discard(run_id)
     return {"html": html}
+
+
+async def run_chat_tools(
+    objective: str, project_id: int | None, run_id: str, max_tool_calls: int = 10
+) -> dict:
+    inputs = {
+        "objective": objective,
+        "project_id": project_id,
+        "max_tool_calls": max_tool_calls,
+    }
+    init_db()
+    with get_session() as s:
+        if s.get(Run, run_id) is None:
+            s.add(Run(id=run_id, project_id=project_id))
+            s.commit()
+    span_id = start_span(run_id, AGENT_NAME, input_ref=save_blob("json", inputs))
+    result: dict | None = None
+    err: Exception | None = None
+    try:
+        result = await _run_chat_tools_impl(objective, project_id, run_id, max_tool_calls)
+    except Exception as e:  # pragma: no cover - propagate unexpected failures
+        err = e
+        raise
+    finally:
+        output = result if err is None else {"error": str(err)}
+        out_ref = save_blob("json", output)
+        end_span(span_id, status="error" if err else "ok", output_ref=out_ref)
+    return result

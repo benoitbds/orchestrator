@@ -98,18 +98,30 @@ def end_span(
 def save_message(
     run_id: str,
     role: str,
-    content: Any,
+    content: Any | None = None,
     *,
+    content_ref: str | None = None,
     agent_name: str | None = None,
     model: str | None = None,
     tokens: Mapping[str, int] | None = None,
     cost_eur: float | None = None,
     session: Session | None = None,
 ) -> str:
+    """Persist a chat message.
+
+    Either ``content`` or ``content_ref`` must be provided. If ``content`` is
+    given, it will be stored as a blob and referenced automatically.
+    """
+
+    if content_ref is None:
+        if content is None:
+            raise ValueError("content or content_ref required")
+    
     if session is None:
         with get_session() as s:
             _ensure_run(run_id, s)
-            content_ref = save_blob("message", content, session=s)
+            if content_ref is None:
+                content_ref = save_blob("message", content, session=s)
             msg = Message(
                 run_id=run_id,
                 agent_name=agent_name,
@@ -127,7 +139,8 @@ def save_message(
             s.refresh(msg)
             return msg.id
     _ensure_run(run_id, session)
-    content_ref = save_blob("message", content, session=session)
+    if content_ref is None:
+        content_ref = save_blob("message", content, session=session)
     msg = Message(
         run_id=run_id,
         agent_name=agent_name,
