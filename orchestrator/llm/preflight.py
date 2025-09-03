@@ -1,138 +1,170 @@
 from __future__ import annotations
 
-"""Preflight helpers for OpenAI chat messages.
-
-``preflight_validate_messages`` ensures tool messages are only sent when the
-immediately preceding assistant message contains a matching ``tool_calls``
-entry. ``extract_tool_exchange_slice`` trims the history to the minimal slice
-required for a trailing tool exchange.
-"""
-
-from typing import Dict, List, Optional
-import logging
 import json
+import logging
+from typing import Any, Dict, List, Optional, Set, Union
+
+try:  # soft import
+    from langchain_core.messages import (
+        AIMessage,
+        BaseMessage,
+        ChatMessage,
+        HumanMessage,
+        SystemMessage,
+        ToolMessage,
+    )
+except Exception:  # pragma: no cover - langchain not installed
+    BaseMessage = object  # type: ignore
+    AIMessage = HumanMessage = SystemMessage = ToolMessage = ChatMessage = object  # type: ignore
 
 logger = logging.getLogger(__name__)
 
+MessageLike = Union[Dict[str, Any], "BaseMessage"]
 
-def preflight_validate_messages(messages: List[Dict]) -> List[Dict]:
-    """Return a sanitized copy of *messages* with invalid tool messages dropped.
 
-    A tool message is kept only if:
-    * The immediately preceding message is an assistant message with a
-      ``tool_calls`` entry whose ``id`` matches the tool message's
-      ``tool_call_id``.
-    * No other messages appear between the assistant and tool message.
+def _role_of(m: MessageLike) -> str:
+    if isinstance(m, dict):
+        return m.get("role") or ""
+    t = getattr(m, "type", None)
+    if t == "human":
+        return "user"
+    if t == "ai":
+        return "assistant"
+    if t == "system":
+        return "system"
+    if t == "tool":
+        return "tool"
+    return getattr(m, "role", "") or ""
 
-    Offending tool messages are removed and a structured warning is logged.
-    The original list is not mutated.
-    """
 
-    sanitized: List[Dict] = []
-    last_tool_ids: set[str] = set()
-    expecting_tool = False  # True if last kept message was assistant w/ tool calls
+def _assistant_tool_ids(m: MessageLike) -> Set[str]:
+    ids: Set[str] = set()
+    if isinstance(m, dict):
+        for tc in m.get("tool_calls") or []:
+            tcid = (tc or {}).get("id")
+            if isinstance(tcid, str):
+                ids.add(tcid)
+        return ids
+    if isinstance(m, AIMessage):
+        for tc in getattr(m, "tool_calls", None) or []:
+            tcid = (tc or {}).get("id")
+            if isinstance(tcid, str):
+                ids.add(tcid)
+    return ids
 
-    for idx, msg in enumerate(messages):
-        role = msg.get("role")
+
+def _tool_call_id_of(m: MessageLike) -> Optional[str]:
+    if isinstance(m, dict):
+        tcid = m.get("tool_call_id")
+        return tcid if isinstance(tcid, str) else None
+    if isinstance(m, ToolMessage):
+        return getattr(m, "tool_call_id", None)
+    return None
+
+
+def _content_of(m: MessageLike) -> str:
+    if isinstance(m, dict):
+        c = m.get("content")
+        return c if isinstance(c, str) else ""
+    return getattr(m, "content", "") or ""
+
+
+def _to_openai_dict(m: MessageLike) -> Dict[str, Any]:
+    if isinstance(m, dict):
+        return dict(m)
+
+    role = _role_of(m)
+    if role == "user":
+        return {"role": "user", "content": _content_of(m)}
+    if role == "system":
+        return {"role": "system", "content": _content_of(m)}
+    if role == "assistant":
+        tcs = []
+        if isinstance(m, AIMessage):
+            for tc in getattr(m, "tool_calls", None) or []:
+                fn = (tc or {}).get("function") or {}
+                args = fn.get("arguments")
+                if not isinstance(args, str):
+                    try:
+                        args = json.dumps(args)
+                    except Exception:
+                        args = str(args)
+                tcs.append(
+                    {
+                        "id": tc.get("id"),
+                        "type": tc.get("type") or "function",
+                        "function": {
+                            "name": fn.get("name") or "",
+                            "arguments": args or "{}",
+                        },
+                    }
+                )
+        data: Dict[str, Any] = {"role": "assistant", "content": _content_of(m)}
+        if tcs:
+            data["tool_calls"] = tcs
+        return data
+    if role == "tool":
+        return {
+            "role": "tool",
+            "content": _content_of(m),
+            "tool_call_id": _tool_call_id_of(m),
+        }
+    return {"role": role or "user", "content": _content_of(m)}
+
+
+def normalize_history(history: List[MessageLike]) -> List[Dict[str, Any]]:
+    return [_to_openai_dict(m) for m in history]
+
+
+def preflight_validate_messages(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    last_assistant_tool_ids: Optional[Set[str]] = None
+    for i, m in enumerate(msgs):
+        role = m.get("role")
         if role == "assistant":
-            sanitized.append(msg.copy())
-            tool_calls = msg.get("tool_calls") or []
-            last_tool_ids = {
-                tc.get("id")
-                for tc in tool_calls
-                if isinstance(tc, dict) and tc.get("id")
-            }
-            expecting_tool = bool(last_tool_ids)
+            last_assistant_tool_ids = _assistant_tool_ids(m)
+            out.append(m)
         elif role == "tool":
-            tool_id = msg.get("tool_call_id")
-            if expecting_tool and tool_id in last_tool_ids:
-                sanitized.append(msg.copy())
+            tcid = m.get("tool_call_id")
+            if last_assistant_tool_ids and tcid in last_assistant_tool_ids:
+                out.append(m)
             else:
-                reason = (
-                    "missing parent assistant"
-                    if not expecting_tool
-                    else "unknown tool_call_id"
-                )
                 logger.warning(
-                    json.dumps(
-                        {
-                            "event": "drop_orphan_tool",
-                            "tool_call_id": tool_id,
-                            "reason": reason,
-                            "idx": idx,
+                    "drop_orphan_tool",
+                    extra={
+                        "payload": {
+                            "tool_call_id": tcid,
+                            "idx": i,
+                            "reason": "no_adjacent_parent",
                         }
-                    )
+                    },
                 )
-            # Whether kept or dropped, allow further tool messages for the same
-            # assistant so long as there are declared tool IDs.
-            expecting_tool = bool(last_tool_ids)
         else:
-            sanitized.append(msg.copy())
-            expecting_tool = False
+            last_assistant_tool_ids = None
+            out.append(m)
+    return out
 
-    return sanitized
 
-
-def extract_tool_exchange_slice(messages: List[Dict]) -> Optional[List[Dict]]:
-    """Return minimal slice if *messages* ends with a tool exchange.
-
-    The slice contains, in chronological order:
-
-    * Last system message before the assistant (if any).
-    * Last user/assistant message before the assistant (if any).
-    * The assistant message with ``tool_calls``.
-    * The trailing tool messages referencing that assistant.
-
-    If the history does not end with tool messages, ``None`` is returned.
-    """
-
-    if not messages:
+def extract_tool_exchange_slice(msgs: List[MessageLike]) -> Optional[List[Dict[str, Any]]]:
+    n = len(msgs)
+    if n == 0:
         return None
-
-    i = len(messages) - 1
-    tool_msgs: List[Dict] = []
-    while i >= 0 and messages[i].get("role") == "tool":
-        tool_msgs.insert(0, messages[i])
+    nd = normalize_history(msgs)
+    i = n - 1
+    tools_tail: List[Dict[str, Any]] = []
+    while i >= 0 and nd[i].get("role") == "tool":
+        tools_tail.append(nd[i])
         i -= 1
+    if i >= 0 and nd[i].get("role") == "assistant" and _assistant_tool_ids(nd[i]):
+        tail = [nd[i]] + list(reversed(tools_tail))
+        head: List[Dict[str, Any]] = []
+        for j in range(i - 1, -1, -1):
+            if nd[j].get("role") == "system":
+                head = [nd[j]]
+                break
+        if i - 1 >= 0 and nd[i - 1].get("role") in ("user", "assistant"):
+            head.append(nd[i - 1])
+        slice_msgs = head + tail
+        return preflight_validate_messages(slice_msgs)
+    return None
 
-    if not tool_msgs:
-        return None
-
-    # Find the assistant with tool_calls preceding the tool messages.
-    j = i
-    assistant_idx: Optional[int] = None
-    while j >= 0:
-        msg = messages[j]
-        if msg.get("role") == "assistant" and msg.get("tool_calls"):
-            assistant_idx = j
-            break
-        j -= 1
-
-    if assistant_idx is None:
-        return None
-
-    # Last system and dialog messages before the assistant.
-    idx_system: Optional[int] = None
-    idx_dialog: Optional[int] = None
-    for idx in range(assistant_idx - 1, -1, -1):
-        role = messages[idx].get("role")
-        if idx_system is None and role == "system":
-            idx_system = idx
-        if idx_dialog is None and role in ("user", "assistant"):
-            idx_dialog = idx
-        if idx_system is not None and idx_dialog is not None:
-            break
-
-    indices = [i for i in (idx_system, idx_dialog) if i is not None]
-    indices.sort()
-
-    slice_msgs = [messages[idx] for idx in indices]
-    slice_msgs.append(messages[assistant_idx])
-    slice_msgs.extend(tool_msgs)
-    return slice_msgs
-
-
-def chat_completions_create(client, messages: List[Dict], **kwargs):
-    """Wrapper around ``client.chat.completions.create`` with message preflight."""
-    clean = preflight_validate_messages(messages)
-    return client.chat.completions.create(messages=clean, **kwargs)

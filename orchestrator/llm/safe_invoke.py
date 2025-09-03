@@ -6,7 +6,11 @@ from typing import Any, Sequence
 from .errors import RateLimitedError, QuotaExceededError, ProviderExhaustedError
 from .backoff import sleep_backoff, parse_retry_after
 from .throttle import TokenBucket
-from .preflight import preflight_validate_messages, extract_tool_exchange_slice
+from .preflight import (
+    extract_tool_exchange_slice,
+    normalize_history,
+    preflight_validate_messages,
+)
 from orchestrator.settings import (
     LLM_MAX_RETRIES,
     LLM_BACKOFF_CAP,
@@ -18,6 +22,16 @@ log = logging.getLogger(__name__)
 _bucket = TokenBucket(rate_per_sec=LLM_RATE_PER_SEC, capacity=LLM_BUCKET_CAP)
 in_tool_exchange = False
 TOOL_EXCHANGE_MODEL = "gpt-4o-mini"
+
+
+def build_payload_messages(history):
+    """Return sanitized messages and whether a trailing tool exchange slice was used."""
+    slice_msgs = extract_tool_exchange_slice(history)
+    if slice_msgs is not None:
+        return slice_msgs, True
+    normalized = normalize_history(history)
+    sanitized = preflight_validate_messages(normalized)
+    return sanitized, False
 
 
 async def _invoke_threaded(llm, messages: Sequence[Any]):
@@ -84,8 +98,8 @@ async def safe_invoke_with_fallback(providers, messages: Sequence[Any]):
     last_err = None
 
     history = list(messages)
-    slice_msgs = extract_tool_exchange_slice(history)
-    to_send = preflight_validate_messages(slice_msgs or history)
+    to_send, slice_flag = build_payload_messages(history)
+    send_in_tool_exchange = in_tool_exchange or slice_flag
 
     for idx, llm in enumerate(providers):
         name = (
@@ -94,20 +108,23 @@ async def safe_invoke_with_fallback(providers, messages: Sequence[Any]):
             or f"provider_{idx}"
         )
         try:
+            model_override = None
+            if send_in_tool_exchange:
+                model_override = getattr(llm, "tool_exchange_model", TOOL_EXCHANGE_MODEL)
             rsp = await try_invoke_single(
                 llm,
                 to_send,
-                model_override=TOOL_EXCHANGE_MODEL if in_tool_exchange else None,
+                model_override=model_override,
             )
         except QuotaExceededError as e:
-            if in_tool_exchange:
+            if send_in_tool_exchange:
                 log.warning("Quota exceeded on %s during tool exchange; skipping fallback", name)
                 raise
             log.warning("Quota exceeded on %s, trying next provider…", name)
             last_err = e
             continue
         except RateLimitedError as e:
-            if in_tool_exchange:
+            if send_in_tool_exchange:
                 log.warning("Rate limit exhausted on %s during tool exchange; skipping fallback", name)
                 raise
             log.warning(
@@ -116,7 +133,7 @@ async def safe_invoke_with_fallback(providers, messages: Sequence[Any]):
             last_err = e
             continue
         except Exception as e:
-            if in_tool_exchange:
+            if send_in_tool_exchange:
                 log.exception("Unexpected error on %s during tool exchange; skipping fallback", name)
                 raise
             log.exception("Unexpected error on %s, trying next provider…", name)

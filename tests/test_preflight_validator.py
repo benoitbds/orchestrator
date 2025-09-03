@@ -1,4 +1,3 @@
-import json
 import logging
 import pytest
 from orchestrator.llm.preflight import (
@@ -38,11 +37,11 @@ def test_invalid_tool_dropped(caplog):
         out = preflight_validate_messages(msgs)
     assert out == [msgs[0]]
     rec = caplog.records[0]
-    data = json.loads(rec.message)
-    assert data["event"] == "drop_orphan_tool"
-    assert data["tool_call_id"] == "oops"
-    assert data["reason"] == "missing parent assistant"
-    assert data["idx"] == 1
+    assert rec.message == "drop_orphan_tool"
+    payload = rec.__dict__["payload"]
+    assert payload["tool_call_id"] == "oops"
+    assert payload["reason"] == "no_adjacent_parent"
+    assert payload["idx"] == 1
 
 
 def test_mixed_valid_invalid_tools(caplog):
@@ -61,11 +60,12 @@ def test_mixed_valid_invalid_tools(caplog):
         out = preflight_validate_messages(msgs)
     assert out == msgs[:2]
     assert len(caplog.records) == 1
-    data = json.loads(caplog.records[0].message)
-    assert data["event"] == "drop_orphan_tool"
-    assert data["tool_call_id"] == "missing"
-    assert data["reason"] == "unknown tool_call_id"
-    assert data["idx"] == 2
+    rec = caplog.records[0]
+    assert rec.message == "drop_orphan_tool"
+    payload = rec.__dict__["payload"]
+    assert payload["tool_call_id"] == "missing"
+    assert payload["reason"] == "no_adjacent_parent"
+    assert payload["idx"] == 2
 
 
 def test_non_adjacent_tool_slice(caplog):
@@ -87,10 +87,8 @@ def test_non_adjacent_tool_slice(caplog):
         full = preflight_validate_messages(msgs)
     # tool dropped because it's not adjacent
     assert full == msgs[:-1]
-    data = json.loads(caplog.records[0].message)
-    assert data["reason"] == "missing parent assistant"
+    payload = caplog.records[0].__dict__["payload"]
+    assert payload["reason"] == "no_adjacent_parent"
 
     slice_msgs = extract_tool_exchange_slice(msgs)
-    assert slice_msgs == [msgs[0], msgs[1], msgs[2], msgs[4]]
-    out = preflight_validate_messages(slice_msgs)
-    assert out == slice_msgs
+    assert slice_msgs is None
