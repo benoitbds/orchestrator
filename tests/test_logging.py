@@ -26,7 +26,7 @@ def test_setup_logging_debug():
     env["LOGLEVEL"] = "DEBUG"
     level, count = run_script("logging.getLogger().handlers=[]", env)
     assert int(level) == logging.DEBUG
-    assert int(count) == 1
+    assert int(count) == 2
 
 
 def test_setup_logging_invalid_level():
@@ -34,7 +34,7 @@ def test_setup_logging_invalid_level():
     env["LOGLEVEL"] = "NOPE"
     level, count = run_script("logging.getLogger().handlers=[]", env)
     assert int(level) == logging.INFO
-    assert int(count) == 1
+    assert int(count) == 2
 
 
 def test_setup_logging_existing_handler():
@@ -42,4 +42,27 @@ def test_setup_logging_existing_handler():
     pre = "l=logging.getLogger(); l.handlers=[logging.NullHandler()]"
     level, count = run_script(pre, env)
     assert int(level) == logging.INFO
-    assert int(count) == 1
+    assert int(count) == 2
+
+
+def test_json_handler_writes_line(tmp_path):
+    from datetime import datetime
+    import json
+    from orchestrator.logging_utils import log_extra
+    from api.main import setup_logging
+
+    logging.getLogger().handlers = []
+    setup_logging(log_dir=str(tmp_path))
+
+    logger = logging.getLogger("test")
+    logger.info(
+        "hello",
+        extra=log_extra(area="unit", run_id="1", payload={"x": object()}),
+    )
+
+    logfile = tmp_path / f"app-{datetime.utcnow().strftime('%Y%m%d')}.jsonl"
+    assert logfile.exists()
+    data = json.loads(logfile.read_text().splitlines()[0])
+    assert data["message"] == "hello"
+    assert data["area"] == "unit"
+    assert isinstance(data["payload"]["x"], str)
