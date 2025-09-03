@@ -8,13 +8,14 @@ try:  # soft import
     from langchain_core.messages import (
         AIMessage,
         BaseMessage,
+        ChatMessage,
         HumanMessage,
         SystemMessage,
         ToolMessage,
     )
 except Exception:  # pragma: no cover - langchain not installed
     BaseMessage = object  # type: ignore
-    AIMessage = HumanMessage = SystemMessage = ToolMessage = object  # type: ignore
+    AIMessage = HumanMessage = SystemMessage = ToolMessage = ChatMessage = object  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,10 @@ def _normalize_assistant_with_tool_calls(raw_message: dict | Any) -> Dict[str, A
     if isinstance(raw_message, dict):
         raw_tcs = raw_message.get("tool_calls") or []
     else:
+        # For BaseMessage objects, check both tool_calls attr and additional_kwargs
         raw_tcs = getattr(raw_message, "tool_calls", None) or []
+        extra_tcs = (getattr(raw_message, "additional_kwargs", {}) or {}).get("tool_calls") or []
+        raw_tcs = list(raw_tcs) + list(extra_tcs)
 
     tcs = []
     for tc in raw_tcs:
@@ -154,8 +158,6 @@ def normalize_history(history: List[MessageLike]) -> List[Dict[str, Any]]:
     return [_to_openai_dict(m) for m in history]
 
 
-
-
 def preflight_validate_messages(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     last_ids: Optional[Set[str]] = None
@@ -169,7 +171,8 @@ def preflight_validate_messages(msgs: List[Dict[str, Any]]) -> List[Dict[str, An
             if last_ids and tcid in last_ids:
                 out.append(m)
             else:
-                level = logging.WARNING if last_ids else logging.DEBUG
+                # WARNING only when tool_call_id appears to belong to immediately preceding assistant but is non-adjacent
+                level = logging.WARNING if (last_ids and tcid) else logging.DEBUG
                 logger.log(
                     level,
                     "drop_orphan_tool",
@@ -223,18 +226,25 @@ def build_payload_messages(
 
 
 def to_langchain_messages(
-    msgs: Sequence[Union[Dict[str, Any], BaseMessage]]
+    msgs: Sequence[Union[Dict[str, Any], BaseMessage]],
 ) -> List[BaseMessage]:
-    """Accept sanitized dicts or BaseMessages and return LangChain messages."""
+    """Accept either dicts or BaseMessages and always return BaseMessages.
+
+    When input is BaseMessages, do not break; just normalize AI tool calls.
+    When input is dicts, convert to appropriate BaseMessage types.
+    """
     out: List[BaseMessage] = []
     for msg in msgs:
         if isinstance(msg, BaseMessage):
             if isinstance(msg, AIMessage):
+                # Normalize AI tool calls but keep the message as BaseMessage
                 out.append(_normalize_ai_tool_calls(msg))
             else:
+                # System/Human/Tool unchanged
                 out.append(msg)
             continue
 
+        # Handle dict inputs - convert to BaseMessage
         role = msg.get("role", "")
         content = msg.get("content", "") or ""
         if role == "system":
@@ -253,7 +263,6 @@ def to_langchain_messages(
                 ToolMessage(content=content, tool_call_id=msg.get("tool_call_id") or "")
             )
         else:
-            out.append(HumanMessage(content=content))
+            # Handle custom roles with ChatMessage
+            out.append(ChatMessage(content=content, role=role))
     return out
-
-

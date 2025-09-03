@@ -20,7 +20,9 @@ in_tool_exchange = False
 
 
 async def _invoke_threaded(llm, messages: Sequence[Any]):
-    lc_messages = to_langchain_messages(messages)
+    # Use preflight pipeline: normalize → validate/slice → convert → invoke
+    sanitized, in_tool_exchange = build_payload_messages(messages)
+    lc_messages = to_langchain_messages(sanitized)
 
     def _call():
         return llm.invoke(lc_messages)
