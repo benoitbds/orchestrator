@@ -42,6 +42,18 @@ def test_span_lifecycle_and_message_and_tools():
         assert result.run_id == "run1"
 
 
+def test_save_message_with_content_ref():
+    engine = setup_db()
+    with Session(engine) as session:
+        run = models.Run(id="run2")
+        session.add(run)
+        session.commit()
+        ref = services.save_blob("txt", "hello", session=session)
+        msg_id = services.save_message("run2", role="assistant", content_ref=ref, session=session)
+        msg = session.get(models.Message, msg_id)
+        assert msg.content_ref == ref and msg.role == "assistant"
+
+
 def test_end_span_missing_raises():
     engine = setup_db()
     with Session(engine) as session:
