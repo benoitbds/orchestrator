@@ -31,7 +31,7 @@ def _tc_to_lc_shape(tc: dict) -> dict | None:
     args = tc.get("args")
     if name and isinstance(args, dict):
         return {"id": tcid, "type": "tool_call", "name": name, "args": args}
-    fn = (tc.get("function") or {})
+    fn = tc.get("function") or {}
     name = name or fn.get("name")
     arguments = args if isinstance(args, dict) else fn.get("arguments")
     if isinstance(arguments, str):
@@ -122,7 +122,11 @@ def _to_openai_dict(m: MessageLike) -> Dict[str, Any]:
     if role == "assistant":
         return _normalize_assistant_with_tool_calls(m)
     if role == "tool":
-        return {"role": "tool", "content": _content_of(m), "tool_call_id": _tool_call_id_of(m)}
+        return {
+            "role": "tool",
+            "content": _content_of(m),
+            "tool_call_id": _tool_call_id_of(m),
+        }
     if role == "system":
         return {"role": "system", "content": _content_of(m)}
     if role == "user":
@@ -175,14 +179,20 @@ def preflight_validate_messages(msgs: List[Dict[str, Any]]) -> List[Dict[str, An
                 out.append(m)
             else:
                 level = logging.WARNING if last_ids else logging.DEBUG
-                logger.log(level, "drop_orphan_tool", extra={"payload": {"tool_call_id": tcid, "idx": i}})
+                logger.log(
+                    level,
+                    "drop_orphan_tool",
+                    extra={"payload": {"tool_call_id": tcid, "idx": i}},
+                )
         else:
             last_ids = None
             out.append(m)
     return out
 
 
-def extract_tool_exchange_slice(msgs: List[MessageLike]) -> Optional[List[Dict[str, Any]]]:
+def extract_tool_exchange_slice(
+    msgs: List[MessageLike],
+) -> Optional[List[Dict[str, Any]]]:
     n = len(msgs)
     if n == 0:
         return None
@@ -208,3 +218,28 @@ def extract_tool_exchange_slice(msgs: List[MessageLike]) -> Optional[List[Dict[s
         return validated
     return None
 
+
+def to_langchain_messages(msgs: List[Dict[str, Any]]) -> List["BaseMessage"]:
+    """Convert sanitized message dicts to LangChain BaseMessages."""
+    result = []
+    for msg in msgs:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+
+        if role == "assistant":
+            tool_calls = msg.get("tool_calls", [])
+            if tool_calls:
+                result.append(AIMessage(content=content, tool_calls=tool_calls))
+            else:
+                result.append(AIMessage(content=content))
+        elif role == "user":
+            result.append(HumanMessage(content=content))
+        elif role == "system":
+            result.append(SystemMessage(content=content))
+        elif role == "tool":
+            tool_call_id = msg.get("tool_call_id", "")
+            result.append(ToolMessage(content=content, tool_call_id=tool_call_id))
+        else:
+            result.append(ChatMessage(role=role, content=content))
+
+    return result

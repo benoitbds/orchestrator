@@ -41,7 +41,7 @@ async def test_preflight_debug_logged(caplog, monkeypatch):
     monkeypatch.setattr(safe_invoke._bucket, "take", lambda: True)
 
     provider = DummyProvider()
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         await safe_invoke_with_fallback([provider], history)
 
     rec = next(r for r in caplog.records if r.message == "preflight_debug")

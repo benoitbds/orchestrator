@@ -52,7 +52,13 @@ async def _invoke_threaded(llm, messages: Sequence[Any]):
         raise
 
 
-async def try_invoke_single(provider, messages: Sequence[Any], *, tool_phase: bool, tools: list[Any] | None = None):
+async def try_invoke_single(
+    provider,
+    messages: Sequence[Any],
+    *,
+    tool_phase: bool,
+    tools: list[Any] | None = None,
+):
     attempt = 0
     while True:
         attempt += 1
@@ -72,7 +78,9 @@ async def try_invoke_single(provider, messages: Sequence[Any], *, tool_phase: bo
             raise
 
 
-async def safe_invoke_with_fallback(providers, messages: Sequence[Any], *, tools: list[Any] | None = None):
+async def safe_invoke_with_fallback(
+    providers, messages: Sequence[Any], *, tools: list[Any] | None = None
+):
     global in_tool_exchange
     last_err = None
 
@@ -85,9 +93,22 @@ async def safe_invoke_with_fallback(providers, messages: Sequence[Any], *, tools
         sanitized = preflight_validate_messages(normalize_history(history))
         slice_flag = False
 
+    # Convert to LC messages for model consumption
+    lc_messages = to_langchain_messages(sanitized)
+
+    # Extract assistant tool call IDs for logging
+    assistant_tc_ids = []
+    for msg in sanitized:
+        if msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls", []):
+                if tc.get("id"):
+                    assistant_tc_ids.append(tc["id"])
+
     roles = [m.get("role") for m in sanitized]
-    tc_ids = [tc.get("id") for tc in (sanitized[-2].get("tool_calls") or [])] if len(sanitized) >= 2 else []
-    log.info("preflight_debug", extra={"payload": {"roles": roles, "assistant_tc_ids": tc_ids}})
+    log.debug(
+        "preflight_debug",
+        extra={"payload": {"roles": roles, "assistant_tc_ids": assistant_tc_ids}},
+    )
 
     send_in_tool_exchange = in_tool_exchange or slice_flag
 
@@ -96,20 +117,25 @@ async def safe_invoke_with_fallback(providers, messages: Sequence[Any], *, tools
         try:
             rsp = await try_invoke_single(
                 provider,
-                sanitized,
+                lc_messages,
                 tool_phase=send_in_tool_exchange,
                 tools=tools,
             )
         except QuotaExceededError as e:
             if send_in_tool_exchange:
-                log.warning("Quota exceeded on %s during tool exchange; skipping fallback", name)
+                log.warning(
+                    "Quota exceeded on %s during tool exchange; skipping fallback", name
+                )
                 raise
             log.warning("Quota exceeded on %s, trying next provider…", name)
             last_err = e
             continue
         except RateLimitedError as e:
             if send_in_tool_exchange:
-                log.warning("Rate limit exhausted on %s during tool exchange; skipping fallback", name)
+                log.warning(
+                    "Rate limit exhausted on %s during tool exchange; skipping fallback",
+                    name,
+                )
                 raise
             log.warning(
                 "Rate limit exhausted on %s after retries, trying next provider…", name
@@ -118,7 +144,10 @@ async def safe_invoke_with_fallback(providers, messages: Sequence[Any], *, tools
             continue
         except Exception as e:
             if send_in_tool_exchange:
-                log.exception("Unexpected error on %s during tool exchange; skipping fallback", name)
+                log.exception(
+                    "Unexpected error on %s during tool exchange; skipping fallback",
+                    name,
+                )
                 raise
             log.exception("Unexpected error on %s, trying next provider…", name)
             last_err = e
