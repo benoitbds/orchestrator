@@ -23,16 +23,6 @@ _bucket = TokenBucket(rate_per_sec=LLM_RATE_PER_SEC, capacity=LLM_BUCKET_CAP)
 in_tool_exchange = False
 
 
-def build_payload_messages(history):
-    """Return sanitized messages and whether a trailing tool exchange slice was used."""
-    slice_msgs = extract_tool_exchange_slice(history)
-    if slice_msgs is not None:
-        return slice_msgs, True
-    normalized = normalize_history(history)
-    sanitized = preflight_validate_messages(normalized)
-    return sanitized, False
-
-
 async def _invoke_threaded(llm, messages: Sequence[Any]):
     def _call():
         return llm.invoke(messages)
@@ -84,7 +74,18 @@ async def safe_invoke_with_fallback(providers, messages: Sequence[Any], *, tools
     last_err = None
 
     history = list(messages)
-    to_send, slice_flag = build_payload_messages(history)
+    slice_msgs = extract_tool_exchange_slice(history)
+    if slice_msgs is not None:
+        sanitized = slice_msgs
+        slice_flag = True
+    else:
+        sanitized = preflight_validate_messages(normalize_history(history))
+        slice_flag = False
+
+    roles = [m.get("role") for m in sanitized]
+    tc_ids = [tc.get("id") for tc in (sanitized[-2].get("tool_calls") or [])] if len(sanitized) >= 2 else []
+    log.info("preflight_debug", extra={"payload": {"roles": roles, "assistant_tc_ids": tc_ids}})
+
     send_in_tool_exchange = in_tool_exchange or slice_flag
 
     for idx, provider in enumerate(providers):
@@ -92,7 +93,7 @@ async def safe_invoke_with_fallback(providers, messages: Sequence[Any], *, tools
         try:
             rsp = await try_invoke_single(
                 provider,
-                to_send,
+                sanitized,
                 tool_phase=send_in_tool_exchange,
                 tools=tools,
             )
