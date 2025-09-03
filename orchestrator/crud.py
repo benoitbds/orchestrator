@@ -1,6 +1,7 @@
 # orchestrator/crud.py
 import json
 import sqlite3
+from datetime import datetime
 from typing import List, Optional
 from .models import (
     Project,
@@ -229,6 +230,78 @@ def init_db():
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, ts)"
     )
+
+    # Tables for detailed timeline and cost tracking
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_spans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            agent_name TEXT,
+            label TEXT NOT NULL,
+            start_ts TEXT NOT NULL,
+            end_ts TEXT NOT NULL,
+            ref TEXT,
+            meta TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_spans_run ON agent_spans(run_id)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            agent_name TEXT,
+            label TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            ref TEXT,
+            meta TEXT,
+            token_count INTEGER DEFAULT 0,
+            cost_eur REAL DEFAULT 0
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_run ON messages(run_id, ts)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tool_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            agent_name TEXT,
+            label TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            ref TEXT,
+            meta TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_calls_run ON tool_calls(run_id, ts)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tool_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            agent_name TEXT,
+            label TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            ref TEXT,
+            meta TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_results_run ON tool_results(run_id, ts)"
+    )
     conn.close()
 
 
@@ -336,6 +409,93 @@ def get_run_steps(run_id: str, limit: int = 200) -> list[dict]:
         {"order": idx + 1, "node": r[0], "content": r[1], "timestamp": r[2]}
         for idx, r in enumerate(rows)
     ]
+
+
+def get_run_timeline(
+    run_id: str, limit: int = 1000, cursor: str | None = None
+) -> list[dict]:
+    """Return unified timeline events for a run."""
+    conn = get_conn()
+    try:
+        events: list[dict] = []
+
+        rows = conn.execute(
+            "SELECT agent_name, label, start_ts, end_ts, ref, meta FROM agent_spans WHERE run_id=?",
+            (run_id,),
+        ).fetchall()
+        for r in rows:
+            ref = json.loads(r[4]) if r[4] else {}
+            meta = json.loads(r[5]) if r[5] else {}
+            start = {
+                "type": "agent.span.start",
+                "ts": datetime.fromisoformat(r[2]),
+                "run_id": run_id,
+                "agent": r[0],
+                "label": r[1],
+                "ref": ref,
+                "meta": meta,
+            }
+            end = start.copy()
+            end["type"] = "agent.span.end"
+            end["ts"] = datetime.fromisoformat(r[3])
+            events.extend([start, end])
+
+        def _load(table: str, ev_type: str):
+            rows = conn.execute(
+                f"SELECT agent_name, label, ts, ref, meta FROM {table} WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+            for r in rows:
+                events.append(
+                    {
+                        "type": ev_type,
+                        "ts": datetime.fromisoformat(r[2]),
+                        "run_id": run_id,
+                        "agent": r[0],
+                        "label": r[1],
+                        "ref": json.loads(r[3]) if r[3] else {},
+                        "meta": json.loads(r[4]) if r[4] else {},
+                    }
+                )
+
+        _load("messages", "message")
+        _load("tool_calls", "tool.call")
+        _load("tool_results", "tool.result")
+
+        events.sort(key=lambda e: e["ts"])
+        return events[:limit]
+    finally:
+        conn.close()
+
+
+def get_run_cost(run_id: str) -> dict:
+    """Aggregate token and cost information for a run."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT agent_name, SUM(token_count) AS tokens, SUM(cost_eur) AS cost
+            FROM messages WHERE run_id=? GROUP BY agent_name
+            """,
+            (run_id,),
+        ).fetchall()
+        by_agent: list[dict] = []
+        total_tokens = 0
+        total_cost = 0.0
+        for r in rows:
+            tokens = r[1] or 0
+            cost = r[2] or 0.0
+            by_agent.append(
+                {"agent": r[0], "tokens": int(tokens), "cost_eur": float(cost)}
+            )
+            total_tokens += int(tokens)
+            total_cost += float(cost)
+        return {
+            "by_agent": by_agent,
+            "total": {"agent": None, "tokens": total_tokens, "cost_eur": total_cost},
+        }
+    finally:
+        conn.close()
 
 
 

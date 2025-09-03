@@ -26,6 +26,8 @@ from orchestrator.models import (
     DocumentOut,
     RunDetail,
     RunSummary,
+    TimelineEvent,
+    RunCost,
     FeatureCreate,
     EpicCreate,
     CapabilityCreate,
@@ -174,6 +176,26 @@ async def get_run_steps(run_id: str, limit: int = Query(200, ge=1, le=1000)):
         raise HTTPException(status_code=404, detail="Run not found")
     steps = crud.get_run_steps(run_id, limit)
     return {"run_id": run_id, "steps": steps, "total_steps": len(steps)}
+
+
+@app.get("/runs/{run_id}/timeline", response_model=list[TimelineEvent])
+async def get_run_timeline(
+    run_id: str,
+    limit: int = Query(1000, ge=1, le=1000),
+    cursor: str | None = None,
+):
+    run = crud.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return crud.get_run_timeline(run_id, limit=limit, cursor=cursor)
+
+
+@app.get("/runs/{run_id}/cost", response_model=RunCost)
+async def get_run_cost(run_id: str):
+    run = crud.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return crud.get_run_cost(run_id)
 
 
 @app.get("/runs", response_model=list[RunSummary])

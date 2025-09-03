@@ -1,7 +1,7 @@
 # orchestrator/models.py
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Literal, Union
+from typing import Any, Literal, Union
 
 class Project(BaseModel):
     id: int
@@ -80,6 +80,34 @@ class RunSummary(BaseModel):
     status: Literal["running", "done"]
     created_at: datetime
     completed_at: datetime | None = None
+
+
+# Unified timeline event model
+class TimelineEvent(BaseModel):
+    type: Literal[
+        "agent.span.start",
+        "agent.span.end",
+        "message",
+        "tool.call",
+        "tool.result",
+    ]
+    ts: datetime
+    run_id: str
+    agent: str | None = None
+    label: str
+    ref: dict[str, Any] = Field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentCost(BaseModel):
+    agent: str | None
+    tokens: int = 0
+    cost_eur: float = 0.0
+
+
+class RunCost(BaseModel):
+    by_agent: list[AgentCost]
+    total: AgentCost
 
 
 # Backward compatibility for existing imports
