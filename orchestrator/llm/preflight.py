@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-"""Preflight validation for OpenAI chat messages.
+"""Preflight helpers for OpenAI chat messages.
 
-Ensures tool messages are only sent when the immediately preceding assistant
-message contains a matching tool_calls entry.
+``preflight_validate_messages`` ensures tool messages are only sent when the
+immediately preceding assistant message contains a matching ``tool_calls``
+entry. ``extract_tool_exchange_slice`` trims the history to the minimal slice
+required for a trailing tool exchange.
 """
 
-from typing import List, Dict
+from typing import Dict, List, Optional
 import logging
 import json
 
@@ -51,16 +53,13 @@ def preflight_validate_messages(messages: List[Dict]) -> List[Dict]:
                     if not expecting_tool
                     else "unknown tool_call_id"
                 )
-                excerpt = [
-                    {"index": i, "role": messages[i].get("role")}
-                    for i in range(max(0, idx - 2), min(len(messages), idx + 3))
-                ]
                 logger.warning(
                     json.dumps(
                         {
+                            "event": "drop_orphan_tool",
                             "tool_call_id": tool_id,
                             "reason": reason,
-                            "excerpt": excerpt,
+                            "idx": idx,
                         }
                     )
                 )
@@ -72,6 +71,65 @@ def preflight_validate_messages(messages: List[Dict]) -> List[Dict]:
             expecting_tool = False
 
     return sanitized
+
+
+def extract_tool_exchange_slice(messages: List[Dict]) -> Optional[List[Dict]]:
+    """Return minimal slice if *messages* ends with a tool exchange.
+
+    The slice contains, in chronological order:
+
+    * Last system message before the assistant (if any).
+    * Last user/assistant message before the assistant (if any).
+    * The assistant message with ``tool_calls``.
+    * The trailing tool messages referencing that assistant.
+
+    If the history does not end with tool messages, ``None`` is returned.
+    """
+
+    if not messages:
+        return None
+
+    i = len(messages) - 1
+    tool_msgs: List[Dict] = []
+    while i >= 0 and messages[i].get("role") == "tool":
+        tool_msgs.insert(0, messages[i])
+        i -= 1
+
+    if not tool_msgs:
+        return None
+
+    # Find the assistant with tool_calls preceding the tool messages.
+    j = i
+    assistant_idx: Optional[int] = None
+    while j >= 0:
+        msg = messages[j]
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            assistant_idx = j
+            break
+        j -= 1
+
+    if assistant_idx is None:
+        return None
+
+    # Last system and dialog messages before the assistant.
+    idx_system: Optional[int] = None
+    idx_dialog: Optional[int] = None
+    for idx in range(assistant_idx - 1, -1, -1):
+        role = messages[idx].get("role")
+        if idx_system is None and role == "system":
+            idx_system = idx
+        if idx_dialog is None and role in ("user", "assistant"):
+            idx_dialog = idx
+        if idx_system is not None and idx_dialog is not None:
+            break
+
+    indices = [i for i in (idx_system, idx_dialog) if i is not None]
+    indices.sort()
+
+    slice_msgs = [messages[idx] for idx in indices]
+    slice_msgs.append(messages[assistant_idx])
+    slice_msgs.extend(tool_msgs)
+    return slice_msgs
 
 
 def chat_completions_create(client, messages: List[Dict], **kwargs):
