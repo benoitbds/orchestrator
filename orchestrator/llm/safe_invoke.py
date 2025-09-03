@@ -10,6 +10,7 @@ from .preflight import (
     extract_tool_exchange_slice,
     normalize_history,
     preflight_validate_messages,
+    to_langchain_messages,
 )
 from orchestrator.settings import (
     LLM_MAX_RETRIES,
@@ -24,8 +25,10 @@ in_tool_exchange = False
 
 
 async def _invoke_threaded(llm, messages: Sequence[Any]):
+    lc_messages = to_langchain_messages(list(messages))
+
     def _call():
-        return llm.invoke(messages)
+        return llm.invoke(lc_messages)
 
     try:
         return await asyncio.to_thread(_call)

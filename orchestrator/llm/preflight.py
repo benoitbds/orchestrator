@@ -116,6 +116,33 @@ def normalize_history(history: List[MessageLike]) -> List[Dict[str, Any]]:
     return [_to_openai_dict(m) for m in history]
 
 
+def to_langchain_messages(msgs: List[Dict[str, Any]]) -> List[BaseMessage]:
+    out: List[BaseMessage] = []
+    for m in msgs:
+        r = m.get("role")
+        if r == "system":
+            out.append(SystemMessage(content=m.get("content", "")))
+        elif r == "user":
+            out.append(HumanMessage(content=m.get("content", "")))
+        elif r == "assistant":
+            out.append(
+                AIMessage(
+                    content=m.get("content", ""),
+                    tool_calls=m.get("tool_calls") or [],  # expects LC shape
+                )
+            )
+        elif r == "tool":
+            out.append(
+                ToolMessage(
+                    content=m.get("content", ""),
+                    tool_call_id=m.get("tool_call_id") or "",
+                )
+            )
+        else:
+            out.append(HumanMessage(content=m.get("content", "")))
+    return out
+
+
 def preflight_validate_messages(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     last_assistant_tool_ids: Optional[Set[str]] = None
