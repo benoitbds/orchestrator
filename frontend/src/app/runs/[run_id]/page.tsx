@@ -98,7 +98,7 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
           </p>
         )}
       </div>
-      <RunTimeline runId={run.run_id} />
+      <RunTimeline runId={run.run_id} refreshKey={run.status} />
       {run.status === "done" && (
         <div className="space-y-4">
           {run.summary && <p>{run.summary}</p>}

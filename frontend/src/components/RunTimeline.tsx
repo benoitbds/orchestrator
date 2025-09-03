@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { http } from "@/lib/api";
+import { getRunCost, RunCost } from "@/lib/runs";
 import { Bot, ChevronDown, ChevronUp, User, Wrench } from "lucide-react";
 
 interface BaseEvent {
@@ -47,48 +48,70 @@ export type TimelineEvent =
   | ToolCall
   | ToolResult;
 
-interface CostInfo {
-  tokens: number;
-  cost: number;
-  by_agent: Record<string, { tokens: number; cost: number }>;
-}
-
-export default function RunTimeline({ runId }: { runId: string }) {
+export default function RunTimeline({
+  runId,
+  refreshKey,
+}: {
+  runId: string;
+  refreshKey?: unknown;
+}) {
   const [events, setEvents] = useState<TimelineEvent[]>([]);
-  const [cost, setCost] = useState<CostInfo | null>(null);
+  const [cost, setCost] = useState<RunCost | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [costLoading, setCostLoading] = useState(true);
+  const [costError, setCostError] = useState(false);
   const [showCost, setShowCost] = useState(false);
   const [modal, setModal] = useState<{ title: string; content: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
+    async function loadTimeline() {
       try {
         setLoading(true);
-        const [tRes, cRes] = await Promise.all([
-          http(`/runs/${runId}/timeline`),
-          http(`/runs/${runId}/cost`),
-        ]);
-        if (!tRes.ok || !cRes.ok) throw new Error("fetch failed");
-        const tData = await tRes.json();
-        const cData = await cRes.json();
+        const res = await http(`/runs/${runId}/timeline`);
+        if (!res.ok) throw new Error('failed');
+        const data = await res.json();
         if (!cancelled) {
-          setEvents(tData.events || []);
-          setCost(cData);
+          setEvents(data.events || []);
           setError(null);
         }
-      } catch (e) {
-        if (!cancelled) setError("Failed to load timeline");
+      } catch {
+        if (!cancelled) setError('Failed to load timeline');
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
-    load();
+    loadTimeline();
     return () => {
       cancelled = true;
     };
   }, [runId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCost() {
+      try {
+        setCostLoading(true);
+        const data = await getRunCost(runId);
+        if (!cancelled) {
+          setCost(data);
+          setCostError(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setCost(null);
+          setCostError(true);
+        }
+      } finally {
+        if (!cancelled) setCostLoading(false);
+      }
+    }
+    loadCost();
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, refreshKey]);
 
   function roleIcon(role: string) {
     switch (role) {
@@ -161,36 +184,59 @@ export default function RunTimeline({ runId }: { runId: string }) {
 
   return (
     <div className="relative">
-      {cost && (
-        <div className="absolute right-0 -top-2">
-          <Badge
-            className="cursor-pointer"
-            onClick={() => setShowCost((c) => !c)}
-          >
-            Tokens: {cost.tokens} | Cost: €{cost.cost.toFixed(2)}
-            {showCost ? (
-              <ChevronUp className="ml-1 size-3" />
-            ) : (
-              <ChevronDown className="ml-1 size-3" />
+      <div className="absolute right-0 -top-2">
+        {costLoading && (
+          <Badge className="animate-pulse">Loading...</Badge>
+        )}
+        {!costLoading && cost && (
+          <div>
+            <Badge
+              className="cursor-pointer"
+              onClick={() => setShowCost((c) => !c)}
+            >
+              Tokens: {cost.total_tokens} | Cost: €{cost.cost_eur.toFixed(4)}
+              {showCost ? (
+                <ChevronUp className="ml-1 size-3" />
+              ) : (
+                <ChevronDown className="ml-1 size-3" />
+              )}
+            </Badge>
+            {showCost && (
+              <div className="mt-2 rounded border bg-background p-2">
+                {cost.by_agent.length > 0 ? (
+                  <table className="text-xs">
+                    <thead>
+                      <tr>
+                        <th className="pr-2 text-left">agent</th>
+                        <th className="pr-2 text-right">prompt</th>
+                        <th className="pr-2 text-right">completion</th>
+                        <th className="pr-2 text-right">total</th>
+                        <th className="text-right">€</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cost.by_agent.map((row) => (
+                        <tr key={row.agent}>
+                          <td className="pr-2">{row.agent}</td>
+                          <td className="pr-2 text-right">{row.prompt_tokens}</td>
+                          <td className="pr-2 text-right">{row.completion_tokens}</td>
+                          <td className="pr-2 text-right">{row.total_tokens}</td>
+                          <td className="text-right">€{row.cost_eur.toFixed(4)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className="text-xs text-muted-foreground">No cost data</div>
+                )}
+              </div>
             )}
-          </Badge>
-          {showCost && (
-            <div className="mt-2 rounded border bg-background p-2">
-              <table className="text-xs">
-                <tbody>
-                  {Object.entries(cost.by_agent || {}).map(([agent, info]) => (
-                    <tr key={agent}>
-                      <td className="pr-2">{agent}</td>
-                      <td className="pr-2 text-right">{info.tokens}</td>
-                      <td className="text-right">€{info.cost.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+        {!costLoading && costError && (
+          <Badge variant="destructive">Cost unavailable</Badge>
+        )}
+      </div>
       <ul className="space-y-4 border-l pl-4">
         {events.map((evt, idx) => (
           <li key={evt.id || idx} className="relative">
