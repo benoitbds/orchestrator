@@ -21,7 +21,6 @@ from orchestrator.settings import (
 log = logging.getLogger(__name__)
 _bucket = TokenBucket(rate_per_sec=LLM_RATE_PER_SEC, capacity=LLM_BUCKET_CAP)
 in_tool_exchange = False
-TOOL_EXCHANGE_MODEL = "gpt-4o-mini"
 
 
 def build_payload_messages(history):
@@ -60,21 +59,14 @@ async def _invoke_threaded(llm, messages: Sequence[Any]):
         raise
 
 
-async def try_invoke_single(llm, messages: Sequence[Any], model_override: str | None = None):
+async def try_invoke_single(provider, messages: Sequence[Any], *, tool_phase: bool, tools: list[Any] | None = None):
     attempt = 0
     while True:
         attempt += 1
         if not _bucket.take():
             await sleep_backoff(1, base=0.2, cap=1.5)
-        orig_model = orig_model_name = None
+        llm = provider.make_llm(tool_phase=tool_phase, tools=tools)
         try:
-            if model_override:
-                if hasattr(llm, "model"):
-                    orig_model = getattr(llm, "model")
-                    llm.model = model_override
-                if hasattr(llm, "model_name"):
-                    orig_model_name = getattr(llm, "model_name")
-                    llm.model_name = model_override
             return await _invoke_threaded(llm, messages)
         except RateLimitedError as e:
             if attempt > LLM_MAX_RETRIES:
@@ -85,15 +77,9 @@ async def try_invoke_single(llm, messages: Sequence[Any], model_override: str | 
                 await sleep_backoff(attempt, cap=LLM_BACKOFF_CAP)
         except QuotaExceededError:
             raise
-        finally:
-            if model_override:
-                if orig_model is not None:
-                    llm.model = orig_model
-                if orig_model_name is not None:
-                    llm.model_name = orig_model_name
 
 
-async def safe_invoke_with_fallback(providers, messages: Sequence[Any]):
+async def safe_invoke_with_fallback(providers, messages: Sequence[Any], *, tools: list[Any] | None = None):
     global in_tool_exchange
     last_err = None
 
@@ -101,20 +87,14 @@ async def safe_invoke_with_fallback(providers, messages: Sequence[Any]):
     to_send, slice_flag = build_payload_messages(history)
     send_in_tool_exchange = in_tool_exchange or slice_flag
 
-    for idx, llm in enumerate(providers):
-        name = (
-            getattr(llm, "name", None)
-            or getattr(llm, "model_name", None)
-            or f"provider_{idx}"
-        )
+    for idx, provider in enumerate(providers):
+        name = getattr(provider, "name", None) or f"provider_{idx}"
         try:
-            model_override = None
-            if send_in_tool_exchange:
-                model_override = getattr(llm, "tool_exchange_model", TOOL_EXCHANGE_MODEL)
             rsp = await try_invoke_single(
-                llm,
+                provider,
                 to_send,
-                model_override=model_override,
+                tool_phase=send_in_tool_exchange,
+                tools=tools,
             )
         except QuotaExceededError as e:
             if send_in_tool_exchange:

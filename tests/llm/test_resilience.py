@@ -30,10 +30,18 @@ class DummyLLM:
         return {"ok": True}
 
 
+class DummyProvider:
+    def __init__(self, llm):
+        self.llm = llm
+
+    def make_llm(self, *, tool_phase: bool, tools=None):
+        return self.llm
+
+
 @pytest.mark.asyncio
 async def test_quota_fallback():
-    a = DummyLLM("quota")
-    b = DummyLLM("ok")
+    a = DummyProvider(DummyLLM("quota"))
+    b = DummyProvider(DummyLLM("ok"))
     out = await safe_invoke_with_fallback([a, b], [{"role": "user", "content": "hi"}])
     assert out["ok"] is True
     assert out["provider"] == "ok_dummy"
@@ -41,16 +49,17 @@ async def test_quota_fallback():
 
 @pytest.mark.asyncio
 async def test_rate_limit_then_success():
-    a = DummyLLM("ratelimit", succeed_on_attempt=3)
-    out = await try_invoke_single(a, [{"role": "user", "content": "hi"}])
+    llm = DummyLLM("ratelimit", succeed_on_attempt=3)
+    provider = DummyProvider(llm)
+    out = await try_invoke_single(provider, [{"role": "user", "content": "hi"}], tool_phase=False)
     assert out["ok"] is True
-    assert a.counter >= 3
+    assert llm.counter >= 3
 
 
 @pytest.mark.asyncio
 async def test_all_providers_exhausted():
-    a = DummyLLM("quota")
-    b = DummyLLM("ratelimit", succeed_on_attempt=None)  # always 429
+    a = DummyProvider(DummyLLM("quota"))
+    b = DummyProvider(DummyLLM("ratelimit", succeed_on_attempt=None))  # always 429
     with pytest.raises(ProviderExhaustedError):
         await safe_invoke_with_fallback([a, b], [{"role": "user", "content": "hi"}])
 
@@ -91,19 +100,42 @@ async def test_no_fallback_during_tool_exchange():
     plain_msg = Msg()
 
     # provider_a: tool call -> error -> ok -> error
-    provider_a = SeqLLM([tool_msg, Exception("boom"), plain_msg, Exception("boom2")])
-    provider_b = SeqLLM([plain_msg, plain_msg])
+    provider_a = DummyProvider(SeqLLM([tool_msg, Exception("boom"), plain_msg, Exception("boom2")]))
+    provider_b = DummyProvider(SeqLLM([plain_msg, plain_msg]))
 
     await safe_invoke_with_fallback([provider_a], [{}])
     assert mod.in_tool_exchange is True
 
     with pytest.raises(Exception):
         await safe_invoke_with_fallback([provider_a, provider_b], [{}])
-    assert provider_b.calls == 0
+    # provider_b.llm.calls
+    assert provider_b.llm.calls == 0
 
     await safe_invoke_with_fallback([provider_a], [{}])
     assert mod.in_tool_exchange is False
 
     out = await safe_invoke_with_fallback([provider_a, provider_b], [{}])
-    assert provider_b.calls == 1
+    assert provider_b.llm.calls == 1
     assert out is plain_msg
+
+
+class RaisingBinding:
+    def __getattr__(self, name):
+        raise ValueError("no field " + name)
+
+    def invoke(self, messages):
+        return {"ok": True}
+
+
+class RaisingProvider:
+    def make_llm(self, *, tool_phase: bool, tools=None):
+        return RaisingBinding()
+
+
+@pytest.mark.asyncio
+async def test_no_attribute_mutation_on_binding():
+    from orchestrator.llm import safe_invoke as mod
+
+    mod.in_tool_exchange = True
+    out = await safe_invoke_with_fallback([RaisingProvider()], [{"role": "user", "content": "hi"}])
+    assert out["ok"] is True
