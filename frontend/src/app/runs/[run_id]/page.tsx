@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import RunTimeline, { TimelineStep } from "@/components/RunTimeline";
+import RunTimeline from "@/components/RunTimeline";
 import { http } from "@/lib/api";
 import { connectWS } from "@/lib/ws";
 
@@ -13,7 +13,6 @@ interface Run {
   completed_at?: string | null;
   html?: string | null;
   summary?: string | null;
-  steps: TimelineStep[];
 }
 
 export default function RunDetail({ params }: { params: { run_id: string } }) {
@@ -62,15 +61,6 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
             completed_at: msg.completed_at ?? prev.completed_at,
           };
         }
-        if (msg.node) {
-          const step: TimelineStep = {
-            order: msg.order ?? prev.steps.length + 1,
-            node: msg.node,
-            timestamp: msg.timestamp ?? new Date().toISOString(),
-            content: msg.content ?? "",
-          };
-          return { ...prev, steps: [...prev.steps, step] };
-        }
         return prev;
       });
     };
@@ -108,7 +98,7 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
           </p>
         )}
       </div>
-      <RunTimeline steps={run.steps} />
+      <RunTimeline runId={run.run_id} />
       {run.status === "done" && (
         <div className="space-y-4">
           {run.summary && <p>{run.summary}</p>}
