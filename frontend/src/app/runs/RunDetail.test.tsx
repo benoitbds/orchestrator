@@ -25,17 +25,26 @@ afterEach(() => {
 });
 
 it('shows run details when run exists', async () => {
-  global.fetch = vi.fn().mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: async () => ({
-      run_id: '1',
-      objective: 'test',
-      status: 'running',
-      created_at: new Date().toISOString(),
-      steps: [],
-    }),
-  });
+  global.fetch = vi
+    .fn()
+    .mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        run_id: '1',
+        objective: 'test',
+        status: 'running',
+        created_at: new Date().toISOString(),
+      }),
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ events: [] }),
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ tokens: 0, cost: 0, by_agent: {} }),
+    });
   render(<RunDetail params={{ run_id: '1' }} />);
   expect(await screen.findByText('Run 1')).toBeInTheDocument();
 });
