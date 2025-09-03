@@ -6,12 +6,7 @@ from typing import Any, Sequence
 from .errors import RateLimitedError, QuotaExceededError, ProviderExhaustedError
 from .backoff import sleep_backoff, parse_retry_after
 from .throttle import TokenBucket
-from .preflight import (
-    extract_tool_exchange_slice,
-    normalize_history,
-    preflight_validate_messages,
-    to_langchain_messages,
-)
+from .preflight import build_payload_messages, to_langchain_messages
 from orchestrator.settings import (
     LLM_MAX_RETRIES,
     LLM_BACKOFF_CAP,
@@ -25,7 +20,7 @@ in_tool_exchange = False
 
 
 async def _invoke_threaded(llm, messages: Sequence[Any]):
-    lc_messages = to_langchain_messages(list(messages))
+    lc_messages = to_langchain_messages(messages)
 
     def _call():
         return llm.invoke(lc_messages)
@@ -84,17 +79,7 @@ async def safe_invoke_with_fallback(
     global in_tool_exchange
     last_err = None
 
-    history = list(messages)
-    slice_msgs = extract_tool_exchange_slice(history)
-    if slice_msgs is not None:
-        sanitized = slice_msgs
-        slice_flag = True
-    else:
-        sanitized = preflight_validate_messages(normalize_history(history))
-        slice_flag = False
-
-    # Convert to LC messages for model consumption
-    lc_messages = to_langchain_messages(sanitized)
+    sanitized, slice_flag = build_payload_messages(messages)
 
     # Extract assistant tool call IDs for logging
     assistant_tc_ids = []
@@ -117,7 +102,7 @@ async def safe_invoke_with_fallback(
         try:
             rsp = await try_invoke_single(
                 provider,
-                lc_messages,
+                sanitized,
                 tool_phase=send_in_tool_exchange,
                 tools=tools,
             )

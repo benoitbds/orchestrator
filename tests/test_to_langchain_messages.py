@@ -43,6 +43,28 @@ def test_to_langchain_messages_missing_content_empty_string():
     assert lc[0].content == ""
 
 
+def test_to_langchain_messages_accepts_base_messages():
+    msgs = [SystemMessage(content="sys"), {"role": "user", "content": "hi"}]
+    lc = to_langchain_messages(msgs)
+    assert isinstance(lc[0], SystemMessage)
+    assert isinstance(lc[1], HumanMessage)
+
+
+def test_to_langchain_messages_normalizes_openai_tool_calls():
+    ai = AIMessage(
+        content="ok",
+        additional_kwargs={
+            "tool_calls": [
+                {"id": "1", "function": {"name": "foo", "arguments": "{\"x\":1}"}}
+            ]
+        },
+    )
+    lc = to_langchain_messages([ai])
+    assert lc[0].tool_calls == [
+        {"id": "1", "type": "tool_call", "name": "foo", "args": {"x": 1}}
+    ]
+
+
 class DummyLLM:
     def __init__(self):
         self.received = None

@@ -2,20 +2,19 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Union
 
 try:  # soft import
     from langchain_core.messages import (
         AIMessage,
         BaseMessage,
-        ChatMessage,
         HumanMessage,
         SystemMessage,
         ToolMessage,
     )
 except Exception:  # pragma: no cover - langchain not installed
     BaseMessage = object  # type: ignore
-    AIMessage = HumanMessage = SystemMessage = ToolMessage = ChatMessage = object  # type: ignore
+    AIMessage = HumanMessage = SystemMessage = ToolMessage = object  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +41,23 @@ def _tc_to_lc_shape(tc: dict) -> dict | None:
     if isinstance(arguments, dict) and name:
         return {"id": tcid, "type": "tool_call", "name": name, "args": arguments}
     return None
+
+
+def _normalize_ai_tool_calls(ai: AIMessage) -> AIMessage:
+    """Ensure AIMessage.tool_calls follow LangChain's shape."""
+    tcs: List[dict] = []
+    seen: Set[str] = set()
+    raw_tcs = getattr(ai, "tool_calls", None) or []
+    extra_tcs = (getattr(ai, "additional_kwargs", {}) or {}).get("tool_calls") or []
+    for tc in list(raw_tcs) + list(extra_tcs):
+        coerced = _tc_to_lc_shape(tc or {})
+        if coerced:
+            key = json.dumps(coerced, sort_keys=True)
+            if key not in seen:
+                seen.add(key)
+                tcs.append(coerced)
+
+    return AIMessage(content=ai.content or "", tool_calls=tcs)
 
 
 def _normalize_assistant_with_tool_calls(raw_message: dict | Any) -> Dict[str, Any]:
@@ -138,31 +154,6 @@ def normalize_history(history: List[MessageLike]) -> List[Dict[str, Any]]:
     return [_to_openai_dict(m) for m in history]
 
 
-def to_langchain_messages(msgs: List[Dict[str, Any]]) -> List[BaseMessage]:
-    out: List[BaseMessage] = []
-    for m in msgs:
-        r = m.get("role")
-        if r == "system":
-            out.append(SystemMessage(content=m.get("content", "")))
-        elif r == "user":
-            out.append(HumanMessage(content=m.get("content", "")))
-        elif r == "assistant":
-            out.append(
-                AIMessage(
-                    content=m.get("content", ""),
-                    tool_calls=m.get("tool_calls") or [],  # expects LC shape
-                )
-            )
-        elif r == "tool":
-            out.append(
-                ToolMessage(
-                    content=m.get("content", ""),
-                    tool_call_id=m.get("tool_call_id") or "",
-                )
-            )
-        else:
-            out.append(HumanMessage(content=m.get("content", "")))
-    return out
 
 
 def preflight_validate_messages(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -219,27 +210,50 @@ def extract_tool_exchange_slice(
     return None
 
 
-def to_langchain_messages(msgs: List[Dict[str, Any]]) -> List["BaseMessage"]:
-    """Convert sanitized message dicts to LangChain BaseMessages."""
-    result = []
+def build_payload_messages(
+    msgs: Sequence[MessageLike],
+) -> tuple[List[Dict[str, Any]], bool]:
+    """Sanitize incoming messages and detect tool exchange slice."""
+    history = list(msgs)
+    slice_msgs = extract_tool_exchange_slice(history)
+    if slice_msgs is not None:
+        return slice_msgs, True
+    sanitized = preflight_validate_messages(normalize_history(history))
+    return sanitized, False
+
+
+def to_langchain_messages(
+    msgs: Sequence[Union[Dict[str, Any], BaseMessage]]
+) -> List[BaseMessage]:
+    """Accept sanitized dicts or BaseMessages and return LangChain messages."""
+    out: List[BaseMessage] = []
     for msg in msgs:
-        role = msg.get("role", "")
-        content = msg.get("content", "")
-
-        if role == "assistant":
-            tool_calls = msg.get("tool_calls", [])
-            if tool_calls:
-                result.append(AIMessage(content=content, tool_calls=tool_calls))
+        if isinstance(msg, BaseMessage):
+            if isinstance(msg, AIMessage):
+                out.append(_normalize_ai_tool_calls(msg))
             else:
-                result.append(AIMessage(content=content))
-        elif role == "user":
-            result.append(HumanMessage(content=content))
-        elif role == "system":
-            result.append(SystemMessage(content=content))
-        elif role == "tool":
-            tool_call_id = msg.get("tool_call_id", "")
-            result.append(ToolMessage(content=content, tool_call_id=tool_call_id))
-        else:
-            result.append(ChatMessage(role=role, content=content))
+                out.append(msg)
+            continue
 
-    return result
+        role = msg.get("role", "")
+        content = msg.get("content", "") or ""
+        if role == "system":
+            out.append(SystemMessage(content=content))
+        elif role == "user":
+            out.append(HumanMessage(content=content))
+        elif role == "assistant":
+            tcs = []
+            for tc in msg.get("tool_calls") or []:
+                coerced = _tc_to_lc_shape(tc or {})
+                if coerced:
+                    tcs.append(coerced)
+            out.append(AIMessage(content=content, tool_calls=tcs))
+        elif role == "tool":
+            out.append(
+                ToolMessage(content=content, tool_call_id=msg.get("tool_call_id") or "")
+            )
+        else:
+            out.append(HumanMessage(content=content))
+    return out
+
+
