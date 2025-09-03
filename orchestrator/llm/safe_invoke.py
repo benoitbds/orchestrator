@@ -15,6 +15,7 @@ from orchestrator.settings import (
 
 log = logging.getLogger(__name__)
 _bucket = TokenBucket(rate_per_sec=LLM_RATE_PER_SEC, capacity=LLM_BUCKET_CAP)
+in_tool_exchange = False
 
 
 async def _invoke_threaded(llm, messages: Sequence[Any]):
@@ -63,6 +64,7 @@ async def try_invoke_single(llm, messages: Sequence[Any]):
 
 
 async def safe_invoke_with_fallback(providers, messages: Sequence[Any]):
+    global in_tool_exchange
     last_err = None
     for idx, llm in enumerate(providers):
         name = (
@@ -71,19 +73,37 @@ async def safe_invoke_with_fallback(providers, messages: Sequence[Any]):
             or f"provider_{idx}"
         )
         try:
-            return await try_invoke_single(llm, messages)
+            rsp = await try_invoke_single(llm, messages)
         except QuotaExceededError as e:
+            if in_tool_exchange:
+                log.warning("Quota exceeded on %s during tool exchange; skipping fallback", name)
+                raise
             log.warning("Quota exceeded on %s, trying next provider…", name)
             last_err = e
             continue
         except RateLimitedError as e:
+            if in_tool_exchange:
+                log.warning("Rate limit exhausted on %s during tool exchange; skipping fallback", name)
+                raise
             log.warning(
                 "Rate limit exhausted on %s after retries, trying next provider…", name
             )
             last_err = e
             continue
         except Exception as e:
+            if in_tool_exchange:
+                log.exception("Unexpected error on %s during tool exchange; skipping fallback", name)
+                raise
             log.exception("Unexpected error on %s, trying next provider…", name)
             last_err = e
             continue
+
+        tcs = getattr(rsp, "tool_calls", None) or []
+        if tcs and not in_tool_exchange:
+            log.info("Entering tool exchange")
+            in_tool_exchange = True
+        elif in_tool_exchange and not tcs:
+            log.info("Exiting tool exchange")
+            in_tool_exchange = False
+        return rsp
     raise ProviderExhaustedError() from last_err
