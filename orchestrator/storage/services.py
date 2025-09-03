@@ -105,6 +105,7 @@ def save_message(
     model: str | None = None,
     tokens: Mapping[str, int] | None = None,
     cost_eur: float | None = None,
+    ts: datetime | None = None,
     session: Session | None = None,
 ) -> str:
     """Persist a chat message.
@@ -129,6 +130,7 @@ def save_message(
                 content_ref=content_ref,
                 model=model,
                 cost_eur=cost_eur,
+                ts=ts or datetime.utcnow(),
             )
             if tokens:
                 msg.prompt_tokens = tokens.get("prompt")
@@ -148,6 +150,7 @@ def save_message(
         content_ref=content_ref,
         model=model,
         cost_eur=cost_eur,
+        ts=ts or datetime.utcnow(),
     )
     if tokens:
         msg.prompt_tokens = tokens.get("prompt")
@@ -231,3 +234,142 @@ def save_tool_result(
     session.commit()
     session.refresh(result)
     return result.id
+
+
+def get_run_timeline(
+    run_id: str, *, limit: int = 1000, session: Session | None = None
+) -> list[dict]:
+    """Return unified timeline events for a run from SQLModel storage."""
+    if session is None:
+        with get_session() as s:
+            return _get_timeline_data(run_id, limit, s)
+    return _get_timeline_data(run_id, limit, session)
+
+
+def _get_timeline_data(run_id: str, limit: int, session: Session) -> list[dict]:
+    """Internal helper to get timeline data."""
+    from sqlmodel import select
+    events: list[dict] = []
+    
+    # Get agent spans
+    spans = session.exec(select(AgentSpan).where(AgentSpan.run_id == run_id)).all()
+    for span in spans:
+        # Agent span start event
+        start_event = {
+            "type": "agent.span.start",
+            "ts": span.start_ts,
+            "run_id": run_id,
+            "agent": span.agent_name,
+            "label": f"▶ {span.agent_name}",
+            "ref": {"span_id": span.id},
+            "meta": span.meta or {},
+        }
+        events.append(start_event)
+        
+        # Agent span end event (if completed)
+        if span.end_ts:
+            duration = (span.end_ts - span.start_ts).total_seconds()
+            end_event = {
+                "type": "agent.span.end",
+                "ts": span.end_ts,
+                "run_id": run_id,
+                "agent": span.agent_name,
+                "label": f"■ {span.agent_name} ({duration:.2f}s)",
+                "ref": {"span_id": span.id},
+                "meta": {"status": span.status or "ok", **(span.meta or {})},
+            }
+            events.append(end_event)
+    
+    # Get messages
+    messages = session.exec(select(Message).where(Message.run_id == run_id)).all()
+    for msg in messages:
+        event = {
+            "type": "message",
+            "ts": msg.ts,
+            "run_id": run_id,
+            "agent": msg.agent_name,
+            "label": f"{msg.role} message",
+            "ref": {"message_id": msg.id},
+            "meta": {
+                "model": msg.model,
+                "tokens": msg.total_tokens,
+                "cost_eur": msg.cost_eur,
+            },
+        }
+        events.append(event)
+    
+    # Get tool calls
+    tool_calls = session.exec(select(ToolCall).where(ToolCall.run_id == run_id)).all()
+    for call in tool_calls:
+        event = {
+            "type": "tool.call",
+            "ts": call.ts,
+            "run_id": run_id,
+            "agent": call.agent_name,
+            "label": f"call {call.tool_name}",
+            "ref": {"tool_call_id": call.id},
+            "meta": {},
+        }
+        events.append(event)
+    
+    # Get tool results
+    tool_results = session.exec(select(ToolResult).where(ToolResult.run_id == run_id)).all()
+    for result in tool_results:
+        event = {
+            "type": "tool.result",
+            "ts": result.ts,
+            "run_id": run_id,
+            "agent": None,  # Will be derived from tool call
+            "label": f"result",
+            "ref": {"tool_result_id": result.id},
+            "meta": {"status": result.status},
+        }
+        events.append(event)
+    
+    # Sort by timestamp and limit
+    events.sort(key=lambda e: e["ts"])
+    return events[:limit]
+
+
+def get_run_cost(run_id: str, *, session: Session | None = None) -> dict:
+    """Aggregate token and cost information for a run from SQLModel storage."""
+    if session is None:
+        with get_session() as s:
+            return _get_cost_data(run_id, s)
+    return _get_cost_data(run_id, session)
+
+
+def _get_cost_data(run_id: str, session: Session) -> dict:
+    """Internal helper to get cost data."""
+    from sqlmodel import select, func
+    
+    # Get aggregated costs by agent
+    query = select(
+        Message.agent_name,
+        func.coalesce(func.sum(Message.total_tokens), 0).label("tokens"),
+        func.coalesce(func.sum(Message.cost_eur), 0.0).label("cost_eur"),
+    ).where(Message.run_id == run_id).group_by(Message.agent_name)
+    
+    results = session.exec(query).all()
+    
+    by_agent = []
+    total_tokens = 0
+    total_cost = 0.0
+    
+    for agent_name, tokens, cost_eur in results:
+        by_agent.append({
+            "agent": agent_name,
+            "tokens": int(tokens or 0),
+            "cost_eur": float(cost_eur or 0.0),
+        })
+        total_tokens += int(tokens or 0)
+        total_cost += float(cost_eur or 0.0)
+    
+    return {
+        "by_agent": by_agent,
+        "total": {
+            "agent": None,
+            "tokens": total_tokens,
+            "cost_eur": total_cost,
+        },
+    }

@@ -107,6 +107,9 @@ async def run_agent(payload: RunAgentPayload):
 @app.on_event("startup")
 def startup_event():
     crud.init_db()
+    # Also initialize the new SQLModel storage system
+    from orchestrator.storage.db import init_db
+    init_db()
 
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
@@ -184,18 +187,48 @@ async def get_run_timeline(
     limit: int = Query(1000, ge=1, le=1000),
     cursor: str | None = None,
 ):
-    run = crud.get_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    return crud.get_run_timeline(run_id, limit=limit, cursor=cursor)
+    # Check if run exists in the new SQLModel storage
+    from orchestrator.storage.db import get_session
+    from orchestrator.storage.models import Run
+    from orchestrator.storage.services import get_run_timeline as get_timeline_sqlmodel
+    from sqlmodel import select
+    
+    with get_session() as session:
+        run = session.exec(select(Run).where(Run.id == run_id)).first()
+        if not run:
+            # Fallback to old system for backward compatibility
+            old_run = crud.get_run(run_id)
+            if not old_run:
+                raise HTTPException(status_code=404, detail="Run not found")
+            return crud.get_run_timeline(run_id, limit=limit, cursor=cursor)
+        
+        # Use new SQLModel storage system
+        events = get_timeline_sqlmodel(run_id, limit=limit, session=session)
+        # Convert datetime objects to ISO format for JSON serialization
+        for event in events:
+            event["ts"] = event["ts"].isoformat()
+        return events
 
 
 @app.get("/runs/{run_id}/cost", response_model=RunCost)
 async def get_run_cost(run_id: str):
-    run = crud.get_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    return crud.get_run_cost(run_id)
+    # Check if run exists in the new SQLModel storage
+    from orchestrator.storage.db import get_session
+    from orchestrator.storage.models import Run
+    from orchestrator.storage.services import get_run_cost as get_cost_sqlmodel
+    from sqlmodel import select
+    
+    with get_session() as session:
+        run = session.exec(select(Run).where(Run.id == run_id)).first()
+        if not run:
+            # Fallback to old system for backward compatibility
+            old_run = crud.get_run(run_id)
+            if not old_run:
+                raise HTTPException(status_code=404, detail="Run not found")
+            return crud.get_run_cost(run_id)
+        
+        # Use new SQLModel storage system
+        return get_cost_sqlmodel(run_id, session=session)
 
 
 @app.get("/runs", response_model=list[RunSummary])

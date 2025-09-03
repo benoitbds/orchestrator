@@ -294,9 +294,14 @@ Current project_id: {project_id if project_id else 'Not specified'}
                     stream.discard(run_id)
                     return {"html": html}
 
+                # Start span for tool execution
+                tool_span_id = start_span(
+                    run_id, f"tool_{name}", input_ref=save_blob("json", args)
+                )
+                
                 call_ref = save_blob("json", args)
                 call_id = save_tool_call(
-                    run_id, AGENT_NAME, name, input_ref=call_ref, span_id=None
+                    run_id, AGENT_NAME, name, input_ref=call_ref, span_id=tool_span_id
                 )
                 try:
                     logger.info("Invoking tool '%s' with args: %s", name, args)
@@ -311,6 +316,14 @@ Current project_id: {project_id if project_id else 'Not specified'}
                     )
                     result_str = json.dumps({"ok": False, "error": str(e)})
                     status = "error"
+                finally:
+                    # End tool span
+                    end_span(
+                        tool_span_id, 
+                        status=status, 
+                        output_ref=save_blob("text", result_str)
+                    )
+                
                 save_tool_result(
                     call_id, status, output_ref=save_blob("text", result_str)
                 )
