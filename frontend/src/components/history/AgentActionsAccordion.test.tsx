@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { AgentActionsAccordion } from './AgentActionsAccordion';
-import type { AgentAction } from '@/types/conversation';
+import { AgentActionsAccordion } from './actions/AgentActionsAccordion';
+import type { AgentAction } from '@/types/history';
 
 describe('AgentActionsAccordion', () => {
   const baseAction: AgentAction = {
@@ -9,15 +9,20 @@ describe('AgentActionsAccordion', () => {
     status: 'running',
   } as AgentAction;
 
-  it('is closed by default', () => {
-    render(<AgentActionsAccordion actions={[baseAction]} />);
+  it('is closed by default and shows running in header', () => {
+    render(<AgentActionsAccordion actions={[baseAction]} phase="running" />);
     expect(screen.queryByText('Test Action')).not.toBeInTheDocument();
+    expect(screen.getByText(/Running: Test Action/)).toBeInTheDocument();
   });
 
-  it('updates running indicator when action succeeds', () => {
-    const { rerender } = render(<AgentActionsAccordion actions={[baseAction]} />);
-    expect(screen.getByText(/Running: Test Action/)).toBeInTheDocument();
-    rerender(<AgentActionsAccordion actions={[{ ...baseAction, status: 'succeeded' }]} />);
+  it('removes running indicator when action completes', () => {
+    const { rerender } = render(<AgentActionsAccordion actions={[baseAction]} phase="running" />);
+    rerender(
+      <AgentActionsAccordion
+        actions={[{ ...baseAction, status: 'succeeded' }]}
+        phase="completed"
+      />,
+    );
     expect(screen.queryByText(/Running:/)).not.toBeInTheDocument();
   });
 
@@ -27,8 +32,8 @@ describe('AgentActionsAccordion', () => {
       status: 'succeeded',
       debug: { input: { foo: 'bar' } },
     };
-    render(<AgentActionsAccordion actions={[action]} />);
-    fireEvent.click(screen.getByText('Agent actions (1)'));
+    render(<AgentActionsAccordion actions={[action]} phase="completed" />);
+    fireEvent.click(screen.getByRole('button'));
     expect(screen.queryByText('foo')).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('Details'));
     expect(screen.getByText('foo')).toBeInTheDocument();

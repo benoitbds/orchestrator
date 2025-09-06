@@ -11,13 +11,13 @@ import { useAgentStream } from "@/hooks/useAgentStream";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { BacklogPanel } from "@/components/backlog/BacklogPanel";
 import { ProjectPanel } from "@/components/project/ProjectPanel";
-import { ConversationHistory } from "@/components/agent/ConversationHistory";
+import ConversationHistory from "@/components/history/ConversationHistory";
 import { useMessagesStore, type Message } from "@/stores/useMessagesStore";
+import { useHistory } from "@/store/useHistory";
 import { toast } from "sonner";
 import { APP_CONFIG } from "@/lib/constants";
 
 export function AgentShell() {
-  const [highlightItemId, setHighlightItemId] = useState<number>();
   const [activeTab, setActiveTab] = useState("backlog");
   const [isHydrated, setIsHydrated] = useState(false);
   const [pendingObjective, setPendingObjective] = useState<string>();
@@ -25,13 +25,7 @@ export function AgentShell() {
   const { currentProject } = useProjects();
   const { refreshItems } = useBacklog();
   const { currentRunId, startRun, isRunning, getCurrentRun } = useRunsStore();
-  const {
-    messages,
-    addMessage,
-    replaceRunId,
-    updateMessage,
-    getMessagesForProject,
-  } = useMessagesStore();
+  const { addMessage, replaceRunId, updateMessage } = useMessagesStore();
 
   useEffect(() => {
     const rehydrateStores = async () => {
@@ -41,10 +35,6 @@ export function AgentShell() {
     };
     rehydrateStores();
   }, []);
-
-  const currentMessages = isHydrated
-    ? getMessagesForProject(currentProject?.id)
-    : [];
 
   useAgentStream(currentRunId, {
     objective: pendingObjective,
@@ -96,6 +86,7 @@ export function AgentShell() {
     }
 
     const tempRunId = crypto.randomUUID();
+    useHistory.getState().createTurn(tempRunId, objective);
 
     const userMessage: Message = {
       id: `user-${Date.now()}`,
@@ -133,11 +124,6 @@ export function AgentShell() {
       );
     }
     return <Badge variant="outline">Idle</Badge>;
-  };
-
-  const handleItemHighlight = (itemId: number) => {
-    setHighlightItemId(itemId);
-    setTimeout(() => setHighlightItemId(undefined), 2000);
   };
 
   const [isMobile, setIsMobile] = useState(false);
@@ -193,18 +179,12 @@ export function AgentShell() {
               </div>
               {/* Backlog below */}
               <div className="flex-1">
-                <BacklogPanel
-                  highlightItemId={highlightItemId}
-                  onItemClick={setHighlightItemId}
-                />
+                <BacklogPanel />
               </div>
             </TabsContent>
 
             <TabsContent value="history" className="flex-1 m-0">
-              <ConversationHistory
-                messages={currentMessages}
-                onItemHighlight={handleItemHighlight}
-              />
+              <ConversationHistory />
             </TabsContent>
           </div>
         </Tabs>
@@ -236,17 +216,11 @@ export function AgentShell() {
             isLoading={isRunning()}
             projectId={currentProject?.id}
           />
-          <BacklogPanel
-            highlightItemId={highlightItemId}
-            onItemClick={handleItemHighlight}
-          />
+          <BacklogPanel />
         </div>
 
         <div className="w-1/4">
-          <ConversationHistory
-            messages={currentMessages}
-            onItemHighlight={handleItemHighlight}
-          />
+          <ConversationHistory />
         </div>
       </div>
     </div>

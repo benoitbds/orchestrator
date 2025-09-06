@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useRunsStore } from "@/stores/useRunsStore";
 import { connectWS } from "@/lib/ws";
+import { useHistory } from "@/store/useHistory";
+import { toLabel } from "@/lib/historyAdapter";
 
 type RunPhase =
   | "idle"
@@ -89,6 +91,7 @@ export function useAgentStream(
             current.realRunId = data.run_id;
             current.phase = "streaming";
             upgradeRunId(current.tempRunId, data.run_id);
+            useHistory.getState().promoteTurn(current.tempRunId, data.run_id);
             options.onRunIdUpdate?.(current.tempRunId, data.run_id);
           }
           return;
@@ -104,6 +107,9 @@ export function useAgentStream(
 
         if (data.error) {
           failRun(current.realRunId ?? current.tempRunId, data.error);
+          useHistory
+            .getState()
+            .finalizeTurn(current.realRunId ?? current.tempRunId, false);
           options.onError?.(data.error);
           current.phase = "error";
           cleanupRun();
@@ -111,15 +117,39 @@ export function useAgentStream(
         }
 
         if (data.node?.startsWith("tool:")) {
+          const turnId = current.realRunId ?? current.tempRunId;
+          if (data.node.endsWith(":request")) {
+            useHistory.getState().appendAction(turnId, {
+              id: data.id || crypto.randomUUID(),
+              label: toLabel(data.node),
+              technicalName: data.node,
+              startedAt: data.ts ? Date.parse(data.ts) : Date.now(),
+              status: "running",
+              debug: { input: data.args },
+            });
+          } else if (data.node.endsWith(":response")) {
+            const finished = data.ts ? Date.parse(data.ts) : Date.now();
+            const state = useHistory.getState();
+            const real = state.promoted[turnId] || turnId;
+            const action = state.turns[real]?.actions.find((a) => a.id === data.id);
+            const duration = action?.startedAt
+              ? finished - action.startedAt
+              : undefined;
+            state.patchAction(turnId, data.id, {
+              status: data.error || data.ok === false ? "failed" : "succeeded",
+              finishedAt: finished,
+              durationMs: duration,
+              debug: { output: data.result, error: data.error },
+            });
+          }
           pushEvent(current.realRunId ?? current.tempRunId, data);
           return;
         }
 
         if (data.node === "write" && data.summary) {
-          appendSummaryOnce(
-            current.realRunId ?? current.tempRunId,
-            data.summary,
-          );
+          const id = current.realRunId ?? current.tempRunId;
+          appendSummaryOnce(id, data.summary);
+          useHistory.getState().setAgentTextOnce(id, data.summary);
           return;
         }
 
@@ -128,6 +158,7 @@ export function useAgentStream(
           const { runs } = useRunsStore.getState();
           const summary = runs[id]?.summary || data.summary || "Task completed";
           finishRun(id, summary);
+          useHistory.getState().finalizeTurn(id, true);
           options.onFinish?.(summary);
           current.phase = "finished";
           cleanupRun();
