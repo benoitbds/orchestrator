@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ConversationRun, RunEvent } from '@/types/events';
+import { safeId } from '@/lib/safeId';
 
 export interface UseConversationHistoryOptions {
   autoRefresh?: boolean;
@@ -143,7 +144,7 @@ export function useConversationHistory(options: UseConversationHistoryOptions = 
   // Start a new conversation run
   const startConversation = useCallback(async (objective: string, projectId?: number) => {
     try {
-      const requestId = crypto.randomUUID();
+      const requestId = safeId();
       
       const response = await fetch('/api/agent/run_chat_tools', {
         method: 'POST',
