@@ -20,3 +20,26 @@ export type HistoryRun = {
   modelMeta?: { provider: 'openai' | 'anthropic' | 'mistral'; model: string; tokens?: number };
   stats?: { durationMs?: number; toolCount: number; errorCount: number };
 };
+
+export type ActionStatus = "pending" | "running" | "succeeded" | "failed";
+
+export type AgentAction = {
+  id: string;
+  label: string;
+  technicalName?: string;
+  startedAt?: number;
+  finishedAt?: number;
+  status: ActionStatus;
+  durationMs?: number;
+  debug?: { input?: any; output?: any; error?: any };
+};
+
+export type ConversationTurn = {
+  turnId: string;
+  createdAt: number;
+  userText: string;
+  actions: AgentAction[];
+  agentText?: string;
+  phase: "running" | "completed" | "failed";
+  lastSummaryHash?: string;
+};
