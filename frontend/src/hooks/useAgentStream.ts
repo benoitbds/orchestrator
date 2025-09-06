@@ -3,6 +3,7 @@ import { useRunsStore } from "@/stores/useRunsStore";
 import { connectWS } from "@/lib/ws";
 import { useHistory } from "@/store/useHistory";
 import { toLabel } from "@/lib/historyAdapter";
+import { safeId } from "@/lib/safeId";
 
 type RunPhase =
   | "idle"
@@ -120,7 +121,7 @@ export function useAgentStream(
           const turnId = current.realRunId ?? current.tempRunId;
           if (data.node.endsWith(":request")) {
             useHistory.getState().appendAction(turnId, {
-              id: data.id || crypto.randomUUID(),
+              id: data.id || safeId(),
               label: toLabel(data.node),
               technicalName: data.node,
               startedAt: data.ts ? Date.parse(data.ts) : Date.now(),
