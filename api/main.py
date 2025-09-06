@@ -1,30 +1,25 @@
 import os
-import json
 import asyncio
 import logging
 from datetime import datetime
 from importlib import metadata
 from uuid import uuid4
+
+import httpx
 from dotenv import load_dotenv
-
-# Load environment variables first
-load_dotenv()
-
 from fastapi import File, FastAPI, HTTPException, Query, UploadFile, Response
 from fastapi.middleware.cors import CORSMiddleware
-from api.ws import router as ws_router
 from pydantic import BaseModel
 
-from orchestrator import crud, stream
+from api.ws import router as ws_router
+from orchestrator import crud
 from orchestrator.core_loop import run_chat_tools
 from agents import writer, planner
 from orchestrator.models import (
     ProjectCreate,
-    BacklogItemCreate,
     BacklogItemUpdate,
     BacklogItem,
     DocumentOut,
-    RunDetail,
     RunSummary,
     TimelineEvent,
     RunCost,
@@ -35,9 +30,11 @@ from orchestrator.models import (
     UCCreate,
     LayoutUpdate,
 )
-import httpx
 from agents.embeddings import chunk_text, embed_texts
 from orchestrator.logging_utils import JSONLHandler
+
+# Load environment variables first
+load_dotenv()
 
 
 def setup_logging(log_dir: str = "logs") -> None:
@@ -235,6 +232,64 @@ async def get_run_cost(run_id: str):
 async def list_runs(project_id: int | None = Query(None)):
     return crud.get_runs(project_id)
 
+
+@app.get("/runs/{run_id}/events")
+async def get_run_events(run_id: str, since: int | None = Query(None)):
+    """Get structured events for a run, optionally since a sequence number."""
+    from orchestrator.events import get_events, get_events_from_db
+    
+    # Check if run exists
+    run = crud.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    # Try to get events from memory buffer first
+    events = get_events(run_id, since)
+    
+    # If buffer is empty or incomplete, fall back to database
+    if not events or (since is not None and len(events) == 0):
+        events = get_events_from_db(run_id, since)
+    
+    return {"events": events}
+
+
+@app.post("/agent/run_chat_tools")
+async def create_run_with_idempotency(
+    payload: dict = {"objective": "string", "project_id": None, "request_id": None}
+):
+    """Create a new run with request-based idempotency."""
+    from orchestrator.events import start_run
+    
+    objective = payload.get("objective")
+    project_id = payload.get("project_id")
+    request_id = payload.get("request_id")
+    
+    if not objective:
+        raise HTTPException(status_code=400, detail="Objective is required")
+    
+    # Check for existing run with same request_id
+    if request_id:
+        existing_run = crud.find_run_by_request_id(request_id)
+        if existing_run:
+            # Return existing run if it's still running or in tool phase
+            if existing_run["status"] == "running" or existing_run.get("tool_phase"):
+                return {"run_id": existing_run["run_id"], "status": "existing"}
+    
+    # Create new run
+    run_id = str(uuid4())
+    crud.create_run(run_id, objective, project_id, request_id)
+    start_run(run_id)
+    
+    # Start the agent in the background
+    async def runner():
+        try:
+            await run_chat_tools(objective, project_id, run_id)
+        except Exception as exc:
+            crud.finish_run(run_id, "", str(exc))
+    
+    asyncio.create_task(runner())
+    
+    return {"run_id": run_id, "status": "started"}
 
 
 # ---- Project endpoints ----
@@ -444,7 +499,6 @@ async def list_items(
 @app.post("/api/items", response_model=BacklogItem, status_code=201)
 @app.post("/items", response_model=BacklogItem, status_code=201)
 async def create_item(item_data: dict):
-    from orchestrator.models import EpicCreate, CapabilityCreate, FeatureCreate, USCreate, UCCreate
     
     # Créer le bon modèle selon le type
     item_type = item_data.get("type")

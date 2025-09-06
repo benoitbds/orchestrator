@@ -8,7 +8,7 @@ import { useRunsStore } from '@/stores/useRunsStore';
 import { useBacklog } from '@/context/BacklogContext';
 import { mutate } from 'swr';
 import { useAgentStream } from '@/hooks/useAgentStream';
-import { ChatComposer } from '@/components/agent/ChatComposer';
+import { ChatComposer } from '@/components/chat/ChatComposer';
 import { BacklogPanel } from '@/components/backlog/BacklogPanel';
 import { ProjectPanel } from '@/components/project/ProjectPanel';
 import { ConversationHistory } from '@/components/agent/ConversationHistory';
@@ -198,8 +198,8 @@ export function AgentShell() {
               {/* User Input on top */}
               <div className="border-b">
                 <ChatComposer
-                  onSend={handleSend}
-                  isSending={isRunning()}
+                  onSendMessage={handleSend}
+                  isLoading={isRunning()}
                   projectId={currentProject?.id}
                 />
               </div>
@@ -249,8 +249,8 @@ export function AgentShell() {
           {/* User Input Section */}
           <div className="border rounded-2xl shadow-sm">
             <ChatComposer
-              onSend={handleSend}
-              isSending={isRunning()}
+              onSendMessage={handleSend}
+              isLoading={isRunning()}
               projectId={currentProject?.id}
             />
           </div>

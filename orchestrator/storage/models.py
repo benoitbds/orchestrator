@@ -10,9 +10,11 @@ from sqlmodel import Column, Field, Index, JSON, SQLModel
 
 class Run(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    request_id: Optional[str] = Field(default=None, index=True)
     project_id: Optional[int] = None
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
     status: str = Field(default="running", nullable=False)
+    tool_phase: bool = Field(default=False, nullable=False)
     meta: Optional[dict] = Field(default=None, sa_column=Column(JSON))
 
 
@@ -73,3 +75,21 @@ class BlobRef(SQLModel, table=True):
     data: Any = Field(sa_column=Column(JSON))
     sha256: str
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+
+
+class RunEvent(SQLModel, table=True):
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    run_id: str = Field(foreign_key="run.id", nullable=False)
+    seq: int = Field(nullable=False)
+    event_type: str = Field(nullable=False)  # plan, tool_call, tool_result, assistant_answer, status_update
+    ts: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    elapsed_ms: Optional[int] = None
+    model: Optional[str] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    cost_eur: Optional[float] = None
+    tool_call_id: Optional[str] = None
+    data: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    
+    __table_args__ = (Index("idx_run_event_seq", "run_id", "seq"),)
