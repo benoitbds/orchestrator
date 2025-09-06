@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useRunsStore } from "@/stores/useRunsStore";
-import { connectWS } from "@/lib/ws";
 import { useHistory } from "@/store/useHistory";
 import { toLabel } from "@/lib/historyAdapter";
 import { safeId } from "@/lib/safeId";
 
-type RunPhase =
+// Phases for a run lifecycle
+export type RunPhase =
   | "idle"
   | "connecting"
   | "started"
@@ -21,197 +21,307 @@ interface UseAgentStreamOptions {
   projectId?: number;
 }
 
+interface RunState {
+  tempRunId: string;
+  realRunId?: string;
+  phase: RunPhase;
+  ws?: WebSocket | null;
+  wsId?: string;
+  objectiveSent: boolean;
+  reconnectAttempts: number;
+  keepAliveTimer?: any;
+}
+
+const now = () => Date.now();
+let startRunDebounce = 0;
+
+function backoffDelay(attempt: number) {
+  const base = Math.min(1000 * Math.pow(2, attempt), 10_000);
+  const jitter = Math.floor(Math.random() * 300);
+  return base + jitter;
+}
+
 export function useAgentStream(
   runId: string | undefined,
   options: UseAgentStreamOptions = {},
 ): { connected: boolean; disconnect: () => void } {
   const [connected, setConnected] = useState(false);
-  const runRef = useRef<{
-    tempRunId: string;
-    realRunId?: string;
-    phase: RunPhase;
-    ws?: WebSocket | null;
-    objectiveSent: boolean;
-    reconnectAttempts: number;
-  } | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
-
-  const maxReconnectAttempts = 5;
-  const baseDelay = 1000;
+  const runRef = useRef<RunState | null>(null);
 
   const { pushEvent, finishRun, failRun, upgradeRunId, appendSummaryOnce } =
     useRunsStore();
 
-  const cleanupRun = () => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = undefined;
-    }
+  // --- helpers --------------------------------------------------------------
+  const safeCloseSocket = (tag: string) => {
     const r = runRef.current;
-    if (r?.ws) {
-      try {
-        r.ws.close();
-      } catch {}
+    if (!r?.ws) return;
+    try {
+      r.ws.close();
+    } catch {
+      /* noop */
     }
+    r.ws = null;
+  };
+
+  const cleanupRun = (tag = "cleanup", wsId?: string) => {
+    const r = runRef.current;
+    if (!r) return;
+    if (wsId && r.wsId !== wsId) return; // stale caller
+
+    if (r.keepAliveTimer) {
+      clearInterval(r.keepAliveTimer);
+      r.keepAliveTimer = undefined;
+    }
+
+    safeCloseSocket(tag);
     runRef.current = null;
     setConnected(false);
   };
 
-  const connect = () => {
-    const r = runRef.current;
-    if (!r) return;
-    try {
-      const ws = connectWS("/stream");
-      r.ws = ws;
+  const openSocket = (url: string, wsId: string): Promise<WebSocket> => {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const ws = new WebSocket(url);
 
       ws.onopen = () => {
-        setConnected(true);
-        r.reconnectAttempts = 0;
-        if (r.phase === "connecting" && !r.objectiveSent) {
-          if (options.objective && options.projectId) {
-            ws.send(
-              JSON.stringify({
-                objective: options.objective,
-                project_id: options.projectId,
-              }),
-            );
-            r.objectiveSent = true;
-          }
-        } else if (r.realRunId) {
-          ws.send(JSON.stringify({ run_id: r.realRunId }));
-        }
+        if (settled) return;
+        settled = true;
+        resolve(ws);
       };
 
-      ws.onmessage = (ev) => {
-        const data = JSON.parse(ev.data);
-        const current = runRef.current;
-        if (!current) return;
+      ws.onerror = (e) => {
+        if (settled) return;
+        settled = true;
+        reject(e);
+      };
 
-        if (data.status === "started" && data.run_id) {
+      ws.onclose = (e) => {
+        if (!settled) {
+          settled = true;
+          reject(e);
+        }
+      };
+    });
+  };
+
+  const startRunInternal = async (
+    objective?: string,
+    projectId?: number,
+  ) => {
+    const t = now();
+    if (t - startRunDebounce < 300) {
+      // debounce rapid submissions
+      return;
+    }
+    startRunDebounce = t;
+
+    cleanupRun("startRun:pre");
+
+    const tempRunId = runId ?? safeId();
+    runRef.current = {
+      tempRunId,
+      phase: "connecting",
+      objectiveSent: false,
+      ws: null,
+      wsId: safeId(),
+      reconnectAttempts: 0,
+    };
+
+    const r = runRef.current;
+    const WS_URL =
+      process.env.NEXT_PUBLIC_WS_URL ?? "ws://192.168.1.93:8000/stream";
+
+    try {
+      const ws = await openSocket(WS_URL, r.wsId!);
+
+      if (!runRef.current || r.wsId !== runRef.current.wsId) {
+        try {
+          ws.close();
+        } catch {
+          /* noop */
+        }
+        return; // stale socket
+      }
+
+      r.ws = ws;
+      setConnected(true);
+
+      ws.onmessage = (ev) => {
+        if (!runRef.current || r.wsId !== runRef.current.wsId) return;
+        const msg = JSON.parse(ev.data);
+        const current = runRef.current!;
+
+        if (msg.status === "started" && msg.run_id) {
           if (!current.realRunId) {
-            current.realRunId = data.run_id;
+            current.realRunId = msg.run_id;
             current.phase = "streaming";
-            upgradeRunId(current.tempRunId, data.run_id);
-            useHistory.getState().promoteTurn(current.tempRunId, data.run_id);
-            options.onRunIdUpdate?.(current.tempRunId, data.run_id);
+            current.reconnectAttempts = 0;
+            upgradeRunId(current.tempRunId, msg.run_id);
+            useHistory.getState().promoteTurn(current.tempRunId, msg.run_id);
+            options.onRunIdUpdate?.(current.tempRunId, msg.run_id);
+            current.keepAliveTimer = setInterval(() => {
+              try {
+                current.ws?.readyState === 1 &&
+                  current.ws?.send(JSON.stringify({ type: "ping" }));
+              } catch {
+                /* noop */
+              }
+            }, 25_000);
           }
           return;
         }
 
-        if (
-          data.run_id &&
-          current.realRunId &&
-          data.run_id !== current.realRunId
-        ) {
+        if (msg.run_id && current.realRunId && msg.run_id !== current.realRunId) {
           return;
         }
 
-        if (data.error) {
-          failRun(current.realRunId ?? current.tempRunId, data.error);
+        if (msg.error) {
+          failRun(current.realRunId ?? current.tempRunId, msg.error);
           useHistory
             .getState()
             .finalizeTurn(current.realRunId ?? current.tempRunId, false);
-          options.onError?.(data.error);
+          options.onError?.(msg.error);
           current.phase = "error";
-          cleanupRun();
+          cleanupRun("error", current.wsId);
           return;
         }
 
-        if (data.node?.startsWith("tool:")) {
+        if (msg.node?.startsWith("tool:")) {
           const turnId = current.realRunId ?? current.tempRunId;
-          if (data.node.endsWith(":request")) {
+          if (msg.node.endsWith(":request")) {
             useHistory.getState().appendAction(turnId, {
-              id: data.id || safeId(),
-              label: toLabel(data.node),
-              technicalName: data.node,
-              startedAt: data.ts ? Date.parse(data.ts) : Date.now(),
+              id: msg.id || safeId(),
+              label: toLabel(msg.node),
+              technicalName: msg.node,
+              startedAt: msg.ts ? Date.parse(msg.ts) : Date.now(),
               status: "running",
-              debug: { input: data.args },
+              debug: { input: msg.args },
             });
-          } else if (data.node.endsWith(":response")) {
-            const finished = data.ts ? Date.parse(data.ts) : Date.now();
+          } else if (msg.node.endsWith(":response")) {
+            const finished = msg.ts ? Date.parse(msg.ts) : Date.now();
             const state = useHistory.getState();
             const real = state.promoted[turnId] || turnId;
-            const action = state.turns[real]?.actions.find((a) => a.id === data.id);
+            const action = state.turns[real]?.actions.find((a) => a.id === msg.id);
             const duration = action?.startedAt
               ? finished - action.startedAt
               : undefined;
-            state.patchAction(turnId, data.id, {
-              status: data.error || data.ok === false ? "failed" : "succeeded",
+            state.patchAction(turnId, msg.id, {
+              status: msg.error || msg.ok === false ? "failed" : "succeeded",
               finishedAt: finished,
               durationMs: duration,
-              debug: { output: data.result, error: data.error },
+              debug: { output: msg.result, error: msg.error },
             });
           }
-          pushEvent(current.realRunId ?? current.tempRunId, data);
+          pushEvent(current.realRunId ?? current.tempRunId, msg);
           return;
         }
 
-        if (data.node === "write" && data.summary) {
+        if (msg.node === "write" && msg.summary) {
           const id = current.realRunId ?? current.tempRunId;
-          appendSummaryOnce(id, data.summary);
-          useHistory.getState().setAgentTextOnce(id, data.summary);
+          appendSummaryOnce(id, msg.summary);
+          useHistory.getState().setAgentTextOnce(id, msg.summary);
           return;
         }
 
-        if (data.status === "done") {
-          const id = current.realRunId ?? current.tempRunId;
-          const { runs } = useRunsStore.getState();
-          const summary = runs[id]?.summary || data.summary || "Task completed";
-          finishRun(id, summary);
-          useHistory.getState().finalizeTurn(id, true);
-          options.onFinish?.(summary);
-          current.phase = "finished";
-          cleanupRun();
+        if (msg.status === "done") {
+          if (!current.realRunId || msg.run_id === current.realRunId) {
+            current.phase = "finished";
+            const id = current.realRunId ?? current.tempRunId;
+            const { runs } = useRunsStore.getState();
+            const summary = runs[id]?.summary || msg.summary || "Task completed";
+            finishRun(id, summary);
+            useHistory.getState().finalizeTurn(id, true);
+            options.onFinish?.(summary);
+            if (current.keepAliveTimer) {
+              clearInterval(current.keepAliveTimer);
+              current.keepAliveTimer = undefined;
+            }
+            safeCloseSocket("done");
+            setConnected(false);
+          }
         }
       };
 
       ws.onclose = (e) => {
+        if (!runRef.current || r.wsId !== runRef.current.wsId) return;
         setConnected(false);
-        const current = runRef.current;
+        const current = runRef.current!;
+
         if (
-          current &&
           (e.code === 1005 || e.code === 1006) &&
           current.realRunId &&
-          (current.phase === "started" || current.phase === "streaming") &&
-          current.reconnectAttempts < maxReconnectAttempts
+          (current.phase === "started" || current.phase === "streaming")
         ) {
-          const delay = baseDelay * Math.pow(2, current.reconnectAttempts);
-          reconnectTimeoutRef.current = setTimeout(() => {
-            current.reconnectAttempts += 1;
-            connect();
-          }, delay);
-          return;
+          const attempt = ++current.reconnectAttempts;
+          if (attempt <= 4) {
+            const delay = backoffDelay(attempt);
+            setTimeout(async () => {
+              if (!runRef.current || r.wsId !== runRef.current.wsId) return;
+              try {
+                const reWs = await openSocket(WS_URL, r.wsId!);
+                if (!runRef.current || r.wsId !== runRef.current.wsId) {
+                  try {
+                    reWs.close();
+                  } catch {
+                    /* noop */
+                  }
+                  return;
+                }
+                current.ws = reWs;
+                setConnected(true);
+                reWs.onmessage = ws.onmessage!;
+                reWs.onclose = ws.onclose!;
+                reWs.onerror = ws.onerror!;
+                try {
+                  reWs.send(JSON.stringify({ run_id: current.realRunId }));
+                } catch {
+                  /* noop */
+                }
+              } catch {
+                // Next attempt handled by subsequent onclose
+              }
+            }, delay);
+            return;
+          }
         }
-        cleanupRun();
+
+        if (current.keepAliveTimer) {
+          clearInterval(current.keepAliveTimer);
+          current.keepAliveTimer = undefined;
+        }
+        current.phase = current.phase === "finished" ? "finished" : "error";
+        safeCloseSocket(`close:${e.code}`);
       };
 
-      ws.onerror = (err) => {
-        console.error("WebSocket error:", err);
+      ws.onerror = () => {
+        // ignored - onclose will handle
       };
-    } catch (err) {
-      console.error("Failed to connect WebSocket:", err);
+
+      if (!r.objectiveSent) {
+        r.objectiveSent = true;
+        if (objective && projectId) {
+          ws.send(JSON.stringify({ objective, project_id: projectId }));
+        } else if (runId) {
+          ws.send(JSON.stringify({ run_id: runId }));
+        }
+      }
+    } catch (e) {
+      if (runRef.current) runRef.current.phase = "error";
       setConnected(false);
+      options.onError?.(
+        e instanceof Error ? e.message : "Failed to connect WebSocket",
+      );
     }
   };
 
+  // --- effects --------------------------------------------------------------
   useEffect(() => {
-    if (!runId) {
+    if (!runId && !options.objective) {
       cleanupRun();
       return;
     }
 
-    if (!runRef.current || runRef.current.tempRunId !== runId) {
-      cleanupRun();
-      runRef.current = {
-        tempRunId: runId,
-        phase: "connecting",
-        objectiveSent: false,
-        ws: null,
-        reconnectAttempts: 0,
-      };
-      connect();
-    }
+    startRunInternal(options.objective, options.projectId);
 
     return () => {
       cleanupRun();
@@ -219,8 +329,9 @@ export function useAgentStream(
   }, [runId, options.objective, options.projectId]);
 
   const disconnect = () => {
-    cleanupRun();
+    cleanupRun("disconnect");
   };
 
   return { connected, disconnect };
 }
+
