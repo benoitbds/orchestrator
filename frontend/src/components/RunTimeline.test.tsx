@@ -25,15 +25,24 @@ describe("RunTimeline", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          tokens: 5,
-          cost: 0.1,
-          by_agent: { alpha: { tokens: 5, cost: 0.1 } },
+          total_tokens: 5,
+          cost_eur: 0.1,
+          by_agent: [
+            {
+              agent: "alpha",
+              prompt_tokens: 2,
+              completion_tokens: 3,
+              total_tokens: 5,
+              cost_eur: 0.1,
+            },
+          ],
         }),
       });
 
     render(<RunTimeline runId="1" />);
     expect(await screen.findByText(/Agent alpha/)).toBeInTheDocument();
     expect(screen.getByText(/Tokens: 5/)).toBeInTheDocument();
+    expect(screen.getByText(/€0\.1000/)).toBeInTheDocument();
   });
 
   it("handles fetch error", async () => {
@@ -61,7 +70,11 @@ describe("RunTimeline", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ tokens: 0, cost: 0, by_agent: {} }),
+        json: async () => ({
+          total_tokens: 0,
+          cost_eur: 0,
+          by_agent: [],
+        }),
       })
       .mockResolvedValueOnce({ ok: true, text: async () => "full" });
 

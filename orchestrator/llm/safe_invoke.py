@@ -6,6 +6,7 @@ from typing import Any, Sequence
 from .errors import RateLimitedError, QuotaExceededError, ProviderExhaustedError
 from .backoff import sleep_backoff, parse_retry_after
 from .throttle import TokenBucket
+from .preflight import build_payload_messages, to_langchain_messages
 from orchestrator.settings import (
     LLM_MAX_RETRIES,
     LLM_BACKOFF_CAP,
@@ -15,11 +16,16 @@ from orchestrator.settings import (
 
 log = logging.getLogger(__name__)
 _bucket = TokenBucket(rate_per_sec=LLM_RATE_PER_SEC, capacity=LLM_BUCKET_CAP)
+in_tool_exchange = False
 
 
 async def _invoke_threaded(llm, messages: Sequence[Any]):
+    # Use preflight pipeline: normalize → validate/slice → convert → invoke
+    sanitized, in_tool_exchange = build_payload_messages(messages)
+    lc_messages = to_langchain_messages(sanitized)
+
     def _call():
-        return llm.invoke(messages)
+        return llm.invoke(lc_messages)
 
     try:
         return await asyncio.to_thread(_call)
@@ -43,12 +49,19 @@ async def _invoke_threaded(llm, messages: Sequence[Any]):
         raise
 
 
-async def try_invoke_single(llm, messages: Sequence[Any]):
+async def try_invoke_single(
+    provider,
+    messages: Sequence[Any],
+    *,
+    tool_phase: bool,
+    tools: list[Any] | None = None,
+):
     attempt = 0
     while True:
         attempt += 1
         if not _bucket.take():
             await sleep_backoff(1, base=0.2, cap=1.5)
+        llm = provider.make_llm(tool_phase=tool_phase, tools=tools)
         try:
             return await _invoke_threaded(llm, messages)
         except RateLimitedError as e:
@@ -62,28 +75,77 @@ async def try_invoke_single(llm, messages: Sequence[Any]):
             raise
 
 
-async def safe_invoke_with_fallback(providers, messages: Sequence[Any]):
+async def safe_invoke_with_fallback(
+    providers, messages: Sequence[Any], *, tools: list[Any] | None = None
+):
+    global in_tool_exchange
     last_err = None
-    for idx, llm in enumerate(providers):
-        name = (
-            getattr(llm, "name", None)
-            or getattr(llm, "model_name", None)
-            or f"provider_{idx}"
-        )
+
+    sanitized, slice_flag = build_payload_messages(messages)
+
+    # Extract assistant tool call IDs for logging
+    assistant_tc_ids = []
+    for msg in sanitized:
+        if msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls", []):
+                if tc.get("id"):
+                    assistant_tc_ids.append(tc["id"])
+
+    roles = [m.get("role") for m in sanitized]
+    log.debug(
+        "preflight_debug",
+        extra={"payload": {"roles": roles, "assistant_tc_ids": assistant_tc_ids}},
+    )
+
+    send_in_tool_exchange = in_tool_exchange or slice_flag
+
+    for idx, provider in enumerate(providers):
+        name = getattr(provider, "name", None) or f"provider_{idx}"
         try:
-            return await try_invoke_single(llm, messages)
+            rsp = await try_invoke_single(
+                provider,
+                sanitized,
+                tool_phase=send_in_tool_exchange,
+                tools=tools,
+            )
         except QuotaExceededError as e:
+            if send_in_tool_exchange:
+                log.warning(
+                    "Quota exceeded on %s during tool exchange; skipping fallback", name
+                )
+                raise
             log.warning("Quota exceeded on %s, trying next provider…", name)
             last_err = e
             continue
         except RateLimitedError as e:
+            if send_in_tool_exchange:
+                log.warning(
+                    "Rate limit exhausted on %s during tool exchange; skipping fallback",
+                    name,
+                )
+                raise
             log.warning(
                 "Rate limit exhausted on %s after retries, trying next provider…", name
             )
             last_err = e
             continue
         except Exception as e:
+            if send_in_tool_exchange:
+                log.exception(
+                    "Unexpected error on %s during tool exchange; skipping fallback",
+                    name,
+                )
+                raise
             log.exception("Unexpected error on %s, trying next provider…", name)
             last_err = e
             continue
+
+        tcs = getattr(rsp, "tool_calls", None) or []
+        if tcs and not in_tool_exchange:
+            log.info("Entering tool exchange")
+            in_tool_exchange = True
+        elif in_tool_exchange and not tcs:
+            log.info("Exiting tool exchange")
+            in_tool_exchange = False
+        return rsp
     raise ProviderExhaustedError() from last_err

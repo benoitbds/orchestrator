@@ -43,7 +43,11 @@ it('shows run details when run exists', async () => {
     })
     .mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ tokens: 0, cost: 0, by_agent: {} }),
+      json: async () => ({
+        total_tokens: 0,
+        cost_eur: 0,
+        by_agent: [],
+      }),
     });
   render(<RunDetail params={{ run_id: '1' }} />);
   expect(await screen.findByText('Run 1')).toBeInTheDocument();

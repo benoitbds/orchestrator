@@ -1,6 +1,7 @@
 # orchestrator/crud.py
 import json
 import sqlite3
+from datetime import datetime
 from typing import List, Optional
 from .models import (
     Project,
@@ -201,12 +202,27 @@ def init_db():
             summary TEXT,
             artifacts TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            completed_at TEXT
+            completed_at TEXT,
+            request_id TEXT,
+            tool_phase INTEGER DEFAULT 0
         )
         """
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)"
+    )
+    # Add new columns to existing runs table if they don't exist
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN request_id TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN tool_phase INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+        
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_runs_request ON runs(request_id)"
     )
 
     # Run steps keep a simple ordered log of what happened during the run.  Each
@@ -229,10 +245,106 @@ def init_db():
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, ts)"
     )
+    
+    # Run events for structured event tracking
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS run_events (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            ts TEXT NOT NULL DEFAULT (datetime('now')),
+            elapsed_ms INTEGER,
+            model TEXT,
+            prompt_tokens INTEGER,
+            completion_tokens INTEGER,
+            total_tokens INTEGER,
+            cost_eur REAL,
+            tool_call_id TEXT,
+            data TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_run_events_seq ON run_events(run_id, seq)"
+    )
+
+    # Tables for detailed timeline and cost tracking
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_spans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            agent_name TEXT,
+            label TEXT NOT NULL,
+            start_ts TEXT NOT NULL,
+            end_ts TEXT NOT NULL,
+            ref TEXT,
+            meta TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_spans_run ON agent_spans(run_id)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            agent_name TEXT,
+            label TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            ref TEXT,
+            meta TEXT,
+            token_count INTEGER DEFAULT 0,
+            cost_eur REAL DEFAULT 0
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_run ON messages(run_id, ts)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tool_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            agent_name TEXT,
+            label TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            ref TEXT,
+            meta TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_calls_run ON tool_calls(run_id, ts)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tool_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            agent_name TEXT,
+            label TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            ref TEXT,
+            meta TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_results_run ON tool_results(run_id, ts)"
+    )
     conn.close()
 
 
-def create_run(run_id: str, objective: str, project_id: int | None) -> None:
+def create_run(run_id: str, objective: str, project_id: int | None, request_id: str | None = None) -> None:
     """Create a new run entry.
 
     The caller provides the run_id so that it can be shared with the frontend
@@ -240,8 +352,8 @@ def create_run(run_id: str, objective: str, project_id: int | None) -> None:
     """
     conn = get_conn()
     conn.execute(
-        "INSERT INTO runs (run_id, project_id, objective, status) VALUES (?, ?, ?, 'running')",
-        (run_id, project_id, objective),
+        "INSERT INTO runs (run_id, project_id, objective, status, request_id) VALUES (?, ?, ?, 'running', ?)",
+        (run_id, project_id, objective, request_id),
     )
     conn.commit()
     conn.close()
@@ -257,10 +369,38 @@ def finish_run(run_id: str, html: str, summary: str, artifacts: dict | None = No
     conn.close()
 
 
+def find_run_by_request_id(request_id: str) -> dict | None:
+    """Find an existing run by request_id."""
+    if not request_id:
+        return None
+    
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT run_id, project_id, objective, status, tool_phase, created_at FROM runs WHERE request_id=? ORDER BY created_at DESC LIMIT 1",
+        (request_id,),
+    ).fetchone()
+    conn.close()
+    
+    if row:
+        return dict(row)
+    return None
+
+
+def update_run_tool_phase(run_id: str, tool_phase: bool) -> None:
+    """Update the tool_phase flag for a run."""
+    conn = get_conn()
+    conn.execute(
+        "UPDATE runs SET tool_phase=? WHERE run_id=?",
+        (1 if tool_phase else 0, run_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def get_run(run_id: str) -> dict | None:
     conn = get_conn()
     row = conn.execute(
-        "SELECT run_id, project_id, objective, status, html, summary, artifacts, created_at, completed_at FROM runs WHERE run_id=?",
+        "SELECT run_id, project_id, objective, status, html, summary, artifacts, created_at, completed_at, request_id, tool_phase FROM runs WHERE run_id=?",
         (run_id,),
     ).fetchone()
     if not row:
@@ -336,6 +476,93 @@ def get_run_steps(run_id: str, limit: int = 200) -> list[dict]:
         {"order": idx + 1, "node": r[0], "content": r[1], "timestamp": r[2]}
         for idx, r in enumerate(rows)
     ]
+
+
+def get_run_timeline(
+    run_id: str, limit: int = 1000, cursor: str | None = None
+) -> list[dict]:
+    """Return unified timeline events for a run."""
+    conn = get_conn()
+    try:
+        events: list[dict] = []
+
+        rows = conn.execute(
+            "SELECT agent_name, label, start_ts, end_ts, ref, meta FROM agent_spans WHERE run_id=?",
+            (run_id,),
+        ).fetchall()
+        for r in rows:
+            ref = json.loads(r[4]) if r[4] else {}
+            meta = json.loads(r[5]) if r[5] else {}
+            start = {
+                "type": "agent.span.start",
+                "ts": datetime.fromisoformat(r[2]),
+                "run_id": run_id,
+                "agent": r[0],
+                "label": r[1],
+                "ref": ref,
+                "meta": meta,
+            }
+            end = start.copy()
+            end["type"] = "agent.span.end"
+            end["ts"] = datetime.fromisoformat(r[3])
+            events.extend([start, end])
+
+        def _load(table: str, ev_type: str):
+            rows = conn.execute(
+                f"SELECT agent_name, label, ts, ref, meta FROM {table} WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+            for r in rows:
+                events.append(
+                    {
+                        "type": ev_type,
+                        "ts": datetime.fromisoformat(r[2]),
+                        "run_id": run_id,
+                        "agent": r[0],
+                        "label": r[1],
+                        "ref": json.loads(r[3]) if r[3] else {},
+                        "meta": json.loads(r[4]) if r[4] else {},
+                    }
+                )
+
+        _load("messages", "message")
+        _load("tool_calls", "tool.call")
+        _load("tool_results", "tool.result")
+
+        events.sort(key=lambda e: e["ts"])
+        return events[:limit]
+    finally:
+        conn.close()
+
+
+def get_run_cost(run_id: str) -> dict:
+    """Aggregate token and cost information for a run."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT agent_name, SUM(token_count) AS tokens, SUM(cost_eur) AS cost
+            FROM messages WHERE run_id=? GROUP BY agent_name
+            """,
+            (run_id,),
+        ).fetchall()
+        by_agent: list[dict] = []
+        total_tokens = 0
+        total_cost = 0.0
+        for r in rows:
+            tokens = r[1] or 0
+            cost = r[2] or 0.0
+            by_agent.append(
+                {"agent": r[0], "tokens": int(tokens), "cost_eur": float(cost)}
+            )
+            total_tokens += int(tokens)
+            total_cost += float(cost)
+        return {
+            "by_agent": by_agent,
+            "total": {"agent": None, "tokens": total_tokens, "cost_eur": total_cost},
+        }
+    finally:
+        conn.close()
 
 
 
