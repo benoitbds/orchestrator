@@ -12,6 +12,7 @@ import { ChatComposer } from "@/components/chat/ChatComposer";
 import { BacklogPanel } from "@/components/backlog/BacklogPanel";
 import { ProjectPanel } from "@/components/project/ProjectPanel";
 import ConversationHistory from "@/components/history/ConversationHistory";
+import { AgentActionsPanel } from "@/components/history/AgentActionsPanel";
 import { useMessagesStore, type Message } from "@/stores/useMessagesStore";
 import { useHistory } from "@/store/useHistory";
 import { toast } from "sonner";
@@ -185,7 +186,10 @@ export function AgentShell() {
             </TabsContent>
 
             <TabsContent value="history" className="flex-1 m-0">
-              <ConversationHistory />
+              <div className="p-2 flex flex-col gap-2">
+                <AgentActionsPanel runId={currentRunId} />
+                <ConversationHistory />
+              </div>
             </TabsContent>
           </div>
         </Tabs>
@@ -220,7 +224,8 @@ export function AgentShell() {
           <BacklogPanel />
         </div>
 
-        <div className="w-1/4">
+        <div className="w-1/4 p-2 flex flex-col gap-2">
+          <AgentActionsPanel runId={currentRunId} />
           <ConversationHistory />
         </div>
       </div>
