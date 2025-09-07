@@ -16,6 +16,7 @@ from agents.tools import TOOLS as LC_TOOLS  # StructuredTool list (async funcs)
 from agents.tools_context import set_current_run_id
 from orchestrator import crud, stream
 from orchestrator.crud import init_db as init_crud_db
+from orchestrator.run_registry import mark_run_done
 from orchestrator.prompt_loader import load_prompt
 from orchestrator import events
 from orchestrator.storage.services import (
@@ -166,10 +167,25 @@ async def _run_chat_tools_impl(
         logger.error("No valid tools found for binding!")
         return {"html": "<p>Error: No valid tools available</p>"}
 
+    artifacts: dict[str, list[int]] = {
+        "created_item_ids": [],
+        "updated_item_ids": [],
+        "deleted_item_ids": [],
+    }
+
     providers = await _build_provider_chain(valid_tools)
     if not providers:
         logger.error("No LLM providers configured.")
-        return {"html": "<p>Error: No LLM providers configured</p>"}
+        summary = "Error: No LLM providers configured"
+        stream.publish(run_id, {"node": "plan"})
+        stream.publish(run_id, {"node": "execute"})
+        html = _build_html(summary, artifacts)
+        clean_summary = _build_clean_summary(summary, artifacts)
+        crud.finish_run(run_id, html, clean_summary, artifacts)
+        stream.publish(run_id, {"node": "write", "summary": clean_summary})
+        stream.close(run_id)
+        stream.discard(run_id)
+        return {"html": html}
 
     logger.info("Configured %d LLM provider(s)", len(providers))
 
@@ -181,7 +197,7 @@ async def _run_chat_tools_impl(
 
 IMPORTANT: You have access to {len(valid_tools)} tools: {[t.name for t in valid_tools]}
 
-For ANY request involving backlog management, you MUST use the appropriate tool. 
+For ANY request involving backlog management, you MUST use the appropriate tool.
 DO NOT provide text-only responses like "placeholder" or "I'll help you with that".
 ALWAYS call a tool to perform the actual action.
 
@@ -208,12 +224,8 @@ Current project_id: {project_id if project_id else "Not specified"}
     logger.info("System prompt length: %d characters", len(enhanced_prompt))
     logger.info("User message: %s", user_message)
 
-    artifacts: dict[str, list[int]] = {
-        "created_item_ids": [],
-        "updated_item_ids": [],
-        "deleted_item_ids": [],
-    }
     consecutive_errors = 0
+    seen_tool_calls: set[tuple[str, ...]] = set()
 
     for iteration in range(max_tool_calls):
         logger.info("Starting iteration %d/%d", iteration + 1, max_tool_calls)
@@ -234,11 +246,11 @@ Current project_id: {project_id if project_id else "Not specified"}
             )
             logger.info("AIMessage content: %r", getattr(rsp, "content", None))
             logger.info("AIMessage tool_calls: %s", getattr(rsp, "tool_calls", None))
-            
+
             # Extract token usage and model for events
             tokens = _extract_token_usage(rsp)
             model = _extract_model_name(rsp)
-            
+
             save_message(
                 run_id,
                 role="assistant",
@@ -247,11 +259,11 @@ Current project_id: {project_id if project_id else "Not specified"}
                 model=model,
                 tokens=tokens,
             )
-            
-            # Emit assistant response event if no tool calls
+
             tcs = getattr(rsp, "tool_calls", None) or []
-            if not tcs and rsp.content:
-                events.emit_assistant_answer(run_id, rsp.content, model, tokens)
+            content = (getattr(rsp, "content", "") or "").strip()
+            if not tcs and content:
+                events.emit_assistant_answer(run_id, content, model, tokens)
         except ProviderExhaustedError:
             logger.exception("All LLM providers exhausted for run %s", run_id)
             summary = "LLM providers exhausted"
@@ -286,6 +298,35 @@ Current project_id: {project_id if project_id else "Not specified"}
             assistant_tool_call_ids,
         )
         if tcs:
+            sigs = []
+            for tc in tcs:
+                if hasattr(tc, "args"):
+                    args = getattr(tc, "args", {}) or {}
+                    name = getattr(tc, "name", None)
+                else:
+                    args = tc.get("args", {}) or {}
+                    name = tc.get("name")
+                args_sig = json.dumps(args, sort_keys=True, ensure_ascii=False)
+                sigs.append(f"{name}|{args_sig}")
+            sig_tuple = tuple(sigs)
+            if sig_tuple in seen_tool_calls:
+                logger.warning(
+                    "Repeating identical tool_calls; stopping to avoid loop: %s",
+                    sig_tuple,
+                )
+                summary = "Tool loop detected"
+                html = _build_html(summary, artifacts)
+                clean_summary = _build_clean_summary(summary, artifacts)
+                events.emit_status_update(run_id, "completed", clean_summary)
+                crud.finish_run(run_id, html, clean_summary, artifacts)
+                stream.publish(run_id, {"node": "write", "summary": clean_summary})
+                stream.close(run_id)
+                stream.discard(run_id)
+                events.cleanup_run(run_id)
+                return {"html": html}
+            seen_tool_calls.add(sig_tuple)
+
+            # Mark run as in tool phase
             # Mark run as in tool phase
             crud.update_run_tool_phase(run_id, True)
             
@@ -530,6 +571,7 @@ async def _run_chat_tools_locked(
         output = result if err is None else {"error": str(err)}
         out_ref = save_blob("json", output)
         end_span(span_id, status="error" if err else "ok", output_ref=out_ref)
+        mark_run_done(run_id)
     return result
 
 
