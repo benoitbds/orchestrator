@@ -3,6 +3,7 @@ import { useRunsStore } from "@/stores/useRunsStore";
 import { useHistory } from "@/store/useHistory";
 import { toLabel } from "@/lib/historyAdapter";
 import { safeId } from "@/lib/safeId";
+import { useAgentActionsStore } from "@/hooks/useAgentActions";
 
 // Phases for a run lifecycle
 export type RunPhase =
@@ -117,6 +118,9 @@ export function useAgentStream(
 
     cleanupRun("startRun:pre");
 
+    // reset actions for new run
+    useAgentActionsStore.getState().clear();
+
     const tempRunId = runId ?? safeId();
     runRef.current = {
       tempRunId,
@@ -150,6 +154,8 @@ export function useAgentStream(
         if (!runRef.current || r.wsId !== runRef.current.wsId) return;
         const msg = JSON.parse(ev.data);
         const current = runRef.current!;
+        // forward to agent actions store
+        useAgentActionsStore.getState().addFromMessage(msg);
 
         if (msg.status === "started" && msg.run_id) {
           if (!current.realRunId) {
