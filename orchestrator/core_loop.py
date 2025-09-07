@@ -4,7 +4,7 @@ import json
 import os
 import logging
 import asyncio
-from typing import Any
+from typing import Any, Dict, List, Tuple
 from dotenv import load_dotenv
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
 from orchestrator.llm.safe_invoke import safe_invoke_with_fallback
@@ -39,6 +39,11 @@ AGENT_NAME = "chat_tools"
 
 # Re-entrancy guard: per-run locks
 RUN_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _tool_sig(tc: Dict[str, Any]) -> str:
+    """Return a stable signature for a tool call used for deduplication."""
+    return f"{tc.get('name')}|{json.dumps(tc.get('args') or {}, sort_keys=True, ensure_ascii=False)}"
 
 
 def _sanitize(obj: Any) -> Any:
@@ -225,20 +230,13 @@ Current project_id: {project_id if project_id else "Not specified"}
     logger.info("User message: %s", user_message)
 
     consecutive_errors = 0
-    seen_tool_calls: set[tuple[str, ...]] = set()
+    seen_tool_sigs: set[tuple[str, ...]] = set()
 
-    for iteration in range(max_tool_calls):
-        logger.info("Starting iteration %d/%d", iteration + 1, max_tool_calls)
+    for iteration in range(1, max_tool_calls + 1):
+        logger.info("Starting iteration %d/%d", iteration, max_tool_calls)
 
         # Preflight validation: ensure no pending tool calls without responses
         _preflight_validate_messages(messages)
-
-        tool_phase = False
-        pending_tool_calls = 0
-        if messages and isinstance(messages[-1], AIMessage):
-            tool_calls = getattr(messages[-1], "tool_calls", None) or []
-            pending_tool_calls = len(tool_calls)
-            tool_phase = pending_tool_calls > 0
 
         try:
             rsp: AIMessage = await safe_invoke_with_fallback(
@@ -259,6 +257,9 @@ Current project_id: {project_id if project_id else "Not specified"}
                 model=model,
                 tokens=tokens,
             )
+
+            # Always append the assistant message before any decisions
+            messages.append(rsp)
 
             tcs = getattr(rsp, "tool_calls", None) or []
             content = (getattr(rsp, "content", "") or "").strip()
@@ -285,31 +286,30 @@ Current project_id: {project_id if project_id else "Not specified"}
             stream.discard(run_id)
             return {"html": html}
 
-        tcs = getattr(rsp, "tool_calls", None) or []
-        assistant_tool_call_ids = [
-            getattr(tc, "id", None) or tc.get("id", f"tool_call_{i}")
-            for i, tc in enumerate(tcs)
-        ]
-        logger.info(
-            "iteration=%d, tool_phase=%s, pending_tool_calls=%d, assistant_tool_call_ids=%s",
-            iteration + 1,
-            tool_phase,
-            len(tcs),
-            assistant_tool_call_ids,
-        )
         if tcs:
-            sigs = []
-            for tc in tcs:
-                if hasattr(tc, "args"):
-                    args = getattr(tc, "args", {}) or {}
-                    name = getattr(tc, "name", None)
-                else:
-                    args = tc.get("args", {}) or {}
-                    name = tc.get("name")
-                args_sig = json.dumps(args, sort_keys=True, ensure_ascii=False)
-                sigs.append(f"{name}|{args_sig}")
-            sig_tuple = tuple(sigs)
-            if sig_tuple in seen_tool_calls:
+            assistant_tool_call_ids = [
+                getattr(tc, "id", None) or tc.get("id", f"tool_call_{i}")
+                for i, tc in enumerate(tcs)
+            ]
+            logger.info(
+                "iteration=%d, assistant_tool_call_ids=%s",
+                iteration,
+                assistant_tool_call_ids,
+            )
+            sig_tuple = tuple(
+                _tool_sig(
+                    {
+                        "name": getattr(tc, "name", None)
+                        if hasattr(tc, "name")
+                        else tc.get("name"),
+                        "args": getattr(tc, "args", None)
+                        if hasattr(tc, "args")
+                        else tc.get("args"),
+                    }
+                )
+                for tc in tcs
+            )
+            if sig_tuple in seen_tool_sigs:
                 logger.warning(
                     "Repeating identical tool_calls; stopping to avoid loop: %s",
                     sig_tuple,
@@ -324,14 +324,10 @@ Current project_id: {project_id if project_id else "Not specified"}
                 stream.discard(run_id)
                 events.cleanup_run(run_id)
                 return {"html": html}
-            seen_tool_calls.add(sig_tuple)
+            seen_tool_sigs.add(sig_tuple)
 
             # Mark run as in tool phase
-            # Mark run as in tool phase
             crud.update_run_tool_phase(run_id, True)
-            
-            # Add the AI message with tool calls to the conversation first
-            messages.append(rsp)
 
             responded_tool_call_ids = []
 
@@ -480,10 +476,9 @@ Current project_id: {project_id if project_id else "Not specified"}
             # Continue la boucle pour un prochain appel tool / ou un résumé final
             continue
 
-        # Pas de tool call → vérifier si c'est une réponse placeholder
-        response_content = rsp.content or "No response"
+        # --- STOP CASE: no tool calls -> finalize and return
+        response_content = content or "No response"
 
-        # Detect placeholder responses and provide guidance
         if response_content.lower() in ["placeholder", "i'll help you", "i can help"]:
             logger.warning(
                 "LLM returned placeholder response instead of using tools: %s",
@@ -492,17 +487,13 @@ Current project_id: {project_id if project_id else "Not specified"}
             summary = f"Error: Agent provided placeholder response '{response_content}' instead of using available tools. This suggests the request requires tool usage but the agent didn't recognize this."
         else:
             summary = response_content
-            # Emit final assistant answer if not already emitted
-            if not tcs:
-                events.emit_assistant_answer(run_id, summary, model, tokens)
 
         html = _build_html(summary, artifacts)
         clean_summary = _build_clean_summary(summary, artifacts)
-        
-        # Mark run as completed
+
         events.emit_status_update(run_id, "completed", clean_summary)
         crud.finish_run(run_id, html, clean_summary, artifacts)
-        
+
         stream.publish(run_id, {"node": "write", "summary": clean_summary})
         stream.close(run_id)
         stream.discard(run_id)
