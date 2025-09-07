@@ -265,6 +265,17 @@ Current project_id: {project_id if project_id else "Not specified"}
             content = (getattr(rsp, "content", "") or "").strip()
             if not tcs and content:
                 events.emit_assistant_answer(run_id, content, model, tokens)
+                # No tool calls and we have content - this is a final answer, finalize and exit
+                summary = content
+                html = _build_html(summary, artifacts)
+                clean_summary = _build_clean_summary(summary, artifacts)
+                events.emit_status_update(run_id, "completed", clean_summary)
+                crud.finish_run(run_id, html, clean_summary, artifacts)
+                stream.publish(run_id, {"node": "write", "summary": clean_summary})
+                stream.close(run_id)
+                stream.discard(run_id)
+                events.cleanup_run(run_id)
+                return {"html": html}
         except ProviderExhaustedError:
             logger.exception("All LLM providers exhausted for run %s", run_id)
             summary = "LLM providers exhausted"

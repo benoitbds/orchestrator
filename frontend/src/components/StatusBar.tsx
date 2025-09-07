@@ -2,11 +2,9 @@
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { http } from "@/lib/api";
-import { connectWS } from "@/lib/ws";
 
 export default function StatusBar() {
   const [apiOk, setApiOk] = useState<boolean | null>(null);
-  const [wsOk, setWsOk] = useState<boolean | null>(null);
 
   useEffect(() => {
     const check = () => {
@@ -14,16 +12,6 @@ export default function StatusBar() {
         .then(r => r.json())
         .then(d => setApiOk(d.status === "ok"))
         .catch(() => setApiOk(false));
-      try {
-        const ws = connectWS("/stream");
-        ws.onopen = () => {
-          setWsOk(true);
-          ws.close();
-        };
-        ws.onerror = () => setWsOk(false);
-      } catch {
-        setWsOk(false);
-      }
     };
     check();
     const id = setInterval(check, 5000);
@@ -39,7 +27,6 @@ export default function StatusBar() {
   return (
     <div className="fixed top-0 left-0 right-0 flex gap-2 p-2 text-xs z-50">
       {render("API", apiOk, "OK", "Down")}
-      {render("WS", wsOk, "Connected", "Disconnected")}
     </div>
   );
 }

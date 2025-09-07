@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from uuid import uuid4
-from typing import Dict, Optional
+from typing import Dict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
@@ -16,7 +15,7 @@ from orchestrator.run_registry import get_or_create_run
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Track running tasks to cancel them when needed (keyed by client_id)
+# Track running tasks to cancel them when needed
 RUNNING_TASKS: Dict[str, asyncio.Task] = {}
 
 
@@ -26,37 +25,12 @@ async def close_ws(ws: WebSocket, code: int, reason: str | None = None) -> None:
         await ws.close(code=code, reason=reason)
 
 
-def stable_client_id(ws: WebSocket, payload: dict) -> str:
-    """
-    Build a stable client id if the frontend doesn't provide one.
-    We prefer (header/client/payload) if present, otherwise fallback to a hash of UA+IP.
-    """
-    provided = (
-        ws.headers.get("x-client-session-id")
-        or payload.get("client_session_id")
-        or ws.cookies.get("client_session_id")
-        or payload.get("temp_run_id")
-    )
-    if provided:
-        return str(provided)
-
-    ua = ws.headers.get("user-agent", "")
-    xff = ws.headers.get("x-forwarded-for", "")
-    # starlette exposes ws.client as (host, port) tuple via ws.client.host
-    ip = getattr(ws.client, "host", "") or ""
-    base = f"{ua}|{xff or ip}".encode("utf-8")
-    digest = hashlib.sha256(base).hexdigest()[:32]
-    return f"auto-{digest}"
-
-
 @router.websocket("/stream")
 async def stream_chat(ws: WebSocket):
-    # Accept exactly once per connection
     await ws.accept()
     logger.info("WebSocket connection accepted")
-
-    run_id: Optional[str] = None
-    queue: Optional[asyncio.Queue] = None
+    run_id: str | None = None
+    queue: asyncio.Queue | None = None
 
     try:
         logger.info("WebSocket waiting for JSON payload...")
@@ -67,9 +41,12 @@ async def stream_chat(ws: WebSocket):
         passed_run_id = payload.get("run_id")
         objective = payload.get("objective")
         project_id = payload.get("project_id")
-
-        client_id = stable_client_id(ws, payload)
-        logger.info("Resolved client_id=%s (action=%s)", client_id, action)
+        client_id = (
+            ws.headers.get("x-client-session-id")
+            or payload.get("client_session_id")
+            or payload.get("temp_run_id")
+            or str(uuid4())
+        )
 
         # ============
         # SUBSCRIBE
@@ -85,6 +62,7 @@ async def stream_chat(ws: WebSocket):
                 await close_ws(ws, code=4404, reason="run not found")
                 return
 
+            # Register to the stream for this run (do not start a new run)
             queue = stream.get(run_id)
             if queue is None:
                 queue = stream.register(run_id)
@@ -95,8 +73,6 @@ async def stream_chat(ws: WebSocket):
         # START
         # ========
         elif action == "start":
-            # Important: with stable client_id, this will return created=False
-            # if an unfinished run already exists for this client.
             entry, created = get_or_create_run(client_id, project_id, objective, passed_run_id)
             if not entry:
                 await close_ws(ws, code=1008, reason="objective or run_id required")
@@ -104,19 +80,50 @@ async def stream_chat(ws: WebSocket):
 
             run_id = entry["run_id"]
 
-            # If the run is already done, short-circuit.
-            if entry.get("status") == "done":
-                await ws.send_json({"status": "done", "run_id": run_id})
-                await close_ws(ws, code=1000)
-                return
+            # --- Run déjà existant ---
+            if not created:
+                # Si déjà terminé, renvoyer "done" immédiatement
+                if entry.get("status") == "done":
+                    await ws.send_json({"status": "done", "run_id": run_id})
+                    await close_ws(ws, code=1000)
+                    return
 
-            # Attach to the stream queue (create if missing)
-            queue = stream.get(run_id)
-            if queue is None:
+                queue = stream.get(run_id)
+                if queue is None:
+                    # Run pré-créé (par HTTP) mais non démarré : on le lance maintenant
+                    run = crud.get_run(run_id)
+                    if run and run.get("status") != "done":
+                        queue = stream.register(run_id)
+                        await ws.send_json({"run_id": run_id, "status": "started"})
+
+                        async def runner() -> None:
+                            try:
+                                await run_chat_tools(
+                                    objective or run["objective"],
+                                    project_id or run["project_id"],
+                                    run_id,
+                                )
+                            except Exception as exc:
+                                crud.finish_run(run_id, "", str(exc))
+                            finally:
+                                stream.close(run_id)
+
+                        asyncio.create_task(runner())
+                    else:
+                        await close_ws(ws, code=4404, reason="unknown run")
+                        return
+                else:
+                    # Run déjà en cours : signaler l'existence
+                    await ws.send_json({"run_id": run_id, "status": "existing"})
+
+            # --- Nouveau run ---
+            else:
+                # Consigner en base puis enregistrer la stream-queue
+                crud.create_run(run_id, objective, project_id, None)
                 queue = stream.register(run_id)
+                await ws.send_json({"run_id": run_id, "status": "started"})
 
-            if created:
-                # Fresh run for this client: cancel any previous task for the same client (defensive)
+                # Annuler un éventuel run en cours pour le même client
                 if client_id in RUNNING_TASKS:
                     old_task = RUNNING_TASKS[client_id]
                     if not old_task.done():
@@ -127,30 +134,23 @@ async def stream_chat(ws: WebSocket):
                         except asyncio.CancelledError:
                             pass
 
-                await ws.send_json({"run_id": run_id, "status": "started"})
-
                 async def runner() -> None:
                     try:
                         await run_chat_tools(objective, project_id, run_id)
                     except asyncio.CancelledError:
                         logger.info("Task cancelled for run_id: %s", run_id)
                         raise
-                    except Exception as exc:
-                        # Ensure run finishes with error state.
+                    except Exception as exc:  # pragma: no cover - unexpected errors
                         crud.finish_run(run_id, "", str(exc))
                     finally:
-                        # Signal end of stream to all subscribers then close queue holder.
                         stream.close(run_id)
                         # Remove from running tasks when done
                         current = asyncio.current_task()
                         if current is not None and RUNNING_TASKS.get(client_id) is current:
                             del RUNNING_TASKS[client_id]
 
-                task = asyncio.create_task(runner(), name=f"run-{run_id}")
+                task = asyncio.create_task(runner())
                 RUNNING_TASKS[client_id] = task
-            else:
-                # Existing unfinished run for this client_id → just attach/stream
-                await ws.send_json({"run_id": run_id, "status": "existing"})
 
         else:
             await close_ws(ws, code=1008, reason="invalid action")
@@ -170,23 +170,24 @@ async def stream_chat(ws: WebSocket):
             logger.info("WebSocket sending chunk: %s", chunk)
             await ws.send_json(chunk)
 
-        # End-of-run notification to the frontend
+        # Fin du run : notifier le front
         await ws.send_json({"status": "done", "run_id": run_id})
         logger.info("WebSocket sent 'done' status for run_id: %s", run_id)
 
-        # Clean up the per-run queue reference on this server
+        # Nettoyage
         stream.discard(run_id)
         logger.info("WebSocket cleaning up and closing for run_id: %s", run_id)
         await close_ws(ws, code=1000)
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for run_id: %s", run_id)
-        # Keep the run/task alive for potential re-subscribe/reconnect
+        # On garde l'état du run pour une éventuelle reconnexion
+        pass
     except Exception as e:  # pragma: no cover - runtime errors
         logger.exception("WS error for run_id: %s", run_id)
         await close_ws(ws, code=1011, reason=str(e))
     finally:
-        # Purge finished tasks (don't kill running tasks on disconnect)
+        # Purger les tasks terminées
         for cid, task in list(RUNNING_TASKS.items()):
             if task.done():
                 del RUNNING_TASKS[cid]

@@ -56,7 +56,7 @@ def get_or_create_run(
         and entry.get("objective") == objective
         and entry.get("project_id") == project_id
         and now_ts - entry.get("started_at", 0) <= REUSE_WINDOW_SEC
-        and entry.get("status") in ("running", "resuming")
+        and entry.get("status") in ("running", "resuming", "done")
     ):
         return entry, False
 

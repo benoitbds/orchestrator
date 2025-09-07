@@ -273,7 +273,7 @@ export function useAgentStream(
                 reWs.onclose = ws.onclose!;
                 reWs.onerror = ws.onerror!;
                 try {
-                  reWs.send(JSON.stringify({ run_id: current.realRunId }));
+                  reWs.send(JSON.stringify({ action: "subscribe", run_id: current.realRunId }));
                 } catch {
                   /* noop */
                 }
@@ -300,9 +300,9 @@ export function useAgentStream(
       if (!r.objectiveSent) {
         r.objectiveSent = true;
         if (objective && projectId) {
-          ws.send(JSON.stringify({ objective, project_id: projectId }));
+          ws.send(JSON.stringify({ action: "start", objective, project_id: projectId }));
         } else if (runId) {
-          ws.send(JSON.stringify({ run_id: runId }));
+          ws.send(JSON.stringify({ action: "subscribe", run_id: runId }));
         }
       }
     } catch (e) {
