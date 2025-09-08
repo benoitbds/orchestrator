@@ -1,58 +1,83 @@
 'use client';
 
 import { useState } from 'react';
-import { useAgentActions } from '@/hooks/useAgentActions';
+import { AgentStep } from '@/hooks/useRunStream';
+import { Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface Props {
-  runId?: string;
+  steps: AgentStep[];
+  status: 'idle' | 'running' | 'done' | 'error';
 }
 
-export function AgentActionsPanel({ runId }: Props) {
-  const { actions, done } = useAgentActions(runId);
-  const [openIds, setOpenIds] = useState<Record<string, boolean>>({});
+export function AgentActionsPanel({ steps, status }: Props) {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const toggle = (id: string) => setOpen((p) => ({ ...p, [id]: !p[id] }));
 
-  const toggle = (id: string) => {
-    setOpenIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  const badge =
+    status === 'running'
+      ? 'Running…'
+      : status === 'done'
+      ? 'Done'
+      : status === 'error'
+      ? 'Failed'
+      : undefined;
+
+  const iconFor = (s: AgentStep['state']) => {
+    if (s === 'running') return <Loader2 className="h-4 w-4 animate-spin" />;
+    if (s === 'success') return <CheckCircle className="h-4 w-4 text-green-600" />;
+    if (s === 'failed') return <AlertCircle className="h-4 w-4 text-rose-600" />;
+    return null;
   };
 
-  const formatTime = (ts: number) => new Date(ts).toLocaleTimeString();
-
-  const badge = (a: { phase: string; ok?: boolean }) => {
-    if (a.phase === 'request') return '→ request';
-    if (a.phase === 'response') {
-      return a.ok === false ? '✗ response' : '✓ response';
+  const preview = (obj: any) => {
+    try {
+      const str = JSON.stringify(obj);
+      return str.length > 60 ? str.slice(0, 57) + '…' : str;
+    } catch {
+      return '';
     }
-    return a.phase;
   };
 
   return (
     <div className="border rounded-md overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 border-b text-sm font-medium">
-        <span>Agent actions ({actions.length})</span>
-        {done && <span className="text-xs text-green-600">Done</span>}
+        <span>Agent actions ({steps.length})</span>
+        {badge && <span className="text-xs">{badge}</span>}
       </div>
       <div className="max-h-96 overflow-y-auto divide-y text-sm">
-        {actions.map((a) => (
-          <div key={a.id} className="px-3 py-2">
+        {steps.map((s, idx) => (
+          <div key={s.id} className="px-3 py-2">
             <button
               className="w-full text-left flex items-start justify-between"
-              onClick={() => toggle(a.id)}
+              onClick={() => toggle(s.id)}
             >
               <div className="flex items-center gap-2">
-                <span>⚙️</span>
-                <code>{a.tool}</code>
-                <span className="text-xs opacity-70">{badge(a)}</span>
+                {iconFor(s.state)}
+                <span>
+                  {s.tool} #{idx + 1}
+                </span>
+                <code className="text-xs opacity-70">
+                  {preview(s.request)}
+                </code>
+                {s.state === 'failed' && s.error ? (
+                  <span className="ml-2 text-xs text-rose-600">Failed: {s.error}</span>
+                ) : null}
               </div>
-              <span className="text-xs opacity-70">{formatTime(a.createdAt)}</span>
             </button>
-            {openIds[a.id] && (
+            {open[s.id] && (
               <pre className="mt-1 bg-muted rounded p-2 text-xs max-h-40 overflow-auto">
-                {JSON.stringify(a.payload, null, 2)}
+                {JSON.stringify(
+                  s.ok
+                    ? { request: s.request, result: s.result }
+                    : { request: s.request, error: s.error },
+                  null,
+                  2,
+                )}
               </pre>
             )}
           </div>
         ))}
-        {!actions.length && (
+        {!steps.length && (
           <div className="px-3 py-2 text-xs text-muted-foreground">
             No actions yet
           </div>
@@ -61,3 +86,4 @@ export function AgentActionsPanel({ runId }: Props) {
     </div>
   );
 }
+
