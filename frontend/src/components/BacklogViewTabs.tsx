@@ -33,7 +33,7 @@ export function BacklogViewTabs({ projectId, onEdit }: BacklogViewTabsProps) {
 
       <TabsContent value="diagram" className="flex-1 min-h-0 overflow-y-auto mt-0">
         <div className="h-full overflow-y-auto">
-          <DiagramView projectId={projectId} />
+          <DiagramView projectId={projectId} onEdit={onEdit} />
         </div>
       </TabsContent>
     </Tabs>

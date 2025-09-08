@@ -165,7 +165,12 @@ function Item({ item, onEdit, level = 0, collapsed, toggle, onDragStart, onDrop 
         </div>
 
         <div className="flex-1 flex items-center gap-2">
-          <span>{item.title}</span>
+          <span
+            className="cursor-pointer font-medium"
+            onClick={() => onEdit(item)}
+          >
+            {item.title}
+          </span>
           {item.generated_by_ai && (
             <Badge className="bg-purple-600 text-white text-xs flex items-center gap-1">
               <CpuIcon className="w-3 h-3" />

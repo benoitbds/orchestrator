@@ -267,11 +267,19 @@ export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
                 <td className="px-4 py-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{item.title}</span>
+                      <span
+                        className="font-medium cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEdit(item);
+                        }}
+                      >
+                        {item.title}
+                      </span>
                       {item.generated_by_ai && (
                         <Badge className="bg-purple-600 text-white text-xs flex items-center gap-1">
                           <CpuIcon className="w-3 h-3" />
-                          IA - à valider
+                          IA
                         </Badge>
                       )}
                     </div>

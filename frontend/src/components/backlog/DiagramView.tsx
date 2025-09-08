@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 
 interface DiagramViewProps {
   projectId: number | null;
+  onEdit: (item: BacklogItem) => void;
 }
 
 export interface NodeDatum {
@@ -28,6 +29,7 @@ export interface NodeDatum {
   fx?: number;
   fy?: number;
   pinned?: boolean;
+  generated_by_ai?: boolean;
 }
 
 const typeColor: Record<string, string> = {
@@ -46,7 +48,7 @@ const rankByType: Record<BacklogItem['type'], number> = {
   UC: 4,
 };
 
-export function DiagramView({ projectId }: DiagramViewProps) {
+export function DiagramView({ projectId, onEdit }: DiagramViewProps) {
   const { data: items } = useItems(projectId);
   const [nodes, setNodes] = useState<NodeDatum[]>([]);
   const [edges, setEdges] = useState<{ source: number; target: number }[]>([]);
@@ -84,6 +86,7 @@ export function DiagramView({ projectId }: DiagramViewProps) {
       height: 40,
       x: 0,
       y: 0,
+      generated_by_ai: item.generated_by_ai,
     }));
     const e = n
       .filter(nd => nd.parent_id !== null)
@@ -243,8 +246,40 @@ export function DiagramView({ projectId }: DiagramViewProps) {
               onDoubleClick={() => setFocused(focused === n.id ? null : n.id)}
             >
               <rect width={n.width} height={n.height} rx={20} fill={typeColor[n.type]} />
+              {n.generated_by_ai && (
+                <g
+                  className="pointer-events-none"
+                  transform={`translate(${n.width - 18},4)`}
+                >
+                  <rect width={14} height={14} rx={3} fill="#8b5cf6" />
+                  <text
+                    x={7}
+                    y={7}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize="8"
+                    fill="#fff"
+                  >
+                    IA
+                  </text>
+                </g>
+              )}
               <title>{`${n.title} (${n.type})`}</title>
-              <text x={n.width / 2} y={n.height / 2} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize="12">
+              <text
+                x={n.width / 2}
+                y={n.height / 2}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill="#fff"
+                fontSize="12"
+                className="cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const item = items?.find(i => i.id === n.id);
+                  if (item) onEdit(item);
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
                 {n.title.length > 20 ? n.title.slice(0, 20) + "…" : n.title}
               </text>
             </g>
