@@ -1,6 +1,7 @@
 import dagre from 'dagre';
 import { buildEdgePath, NodeDatum } from './DiagramView';
 
+
 describe('dagre layout', () => {
   function layoutWithDefaultEdges(count: number) {
     const g = new dagre.graphlib.Graph();
