@@ -1,6 +1,7 @@
 from typing import Optional, Literal, List, Dict, Any
 from pydantic import BaseModel, ValidationError, Field
 import logging
+import os
 try:
     from langchain.tools import StructuredTool
 except Exception:  # pragma: no cover - fallback for older versions
@@ -14,6 +15,16 @@ import asyncio
 from agents.tools_context import get_current_run_id
 
 logger = logging.getLogger(__name__)
+
+# Default timeout for tool handlers in seconds. Can be overridden with the
+# TOOL_TIMEOUT environment variable. Uses a generous default to avoid premature
+# timeouts for LLM-backed tools.
+try:
+    TOOL_TIMEOUT = float(os.getenv("TOOL_TIMEOUT", "60"))
+    if TOOL_TIMEOUT <= 0:
+        raise ValueError
+except ValueError:
+    TOOL_TIMEOUT = 60.0
 
 # ---------- Schemas Pydantic v2 ----------
 class CreateItemArgs(BaseModel):
@@ -126,7 +137,7 @@ async def _exec(name: str, run_id: str, args: dict):
     
     try:
         logger.debug("Calling handler for tool '%s'", name)
-        res = await asyncio.wait_for(handler(args), timeout=12)
+        res = await asyncio.wait_for(handler(args), timeout=TOOL_TIMEOUT)
         logger.debug("Tool '%s' returned: %s", name, res)
     except ValidationError as ve:
         logger.error("Tool '%s' validation error: %s", name, ve)

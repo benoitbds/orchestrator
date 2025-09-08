@@ -229,7 +229,6 @@ Current project_id: {project_id if project_id else "Not specified"}
     logger.info("System prompt length: %d characters", len(enhanced_prompt))
     logger.info("User message: %s", user_message)
 
-    consecutive_errors = 0
     seen_tool_sigs: set[tuple[str, ...]] = set()
 
     for iteration in range(1, max_tool_calls + 1):
@@ -445,7 +444,6 @@ Current project_id: {project_id if project_id else "Not specified"}
 
                 ok = bool(result.get("ok", True))
                 if ok:
-                    consecutive_errors = 0
                     # MAJ artifacts si handler a renvoyé un item_id
                     if name == "create_item" and "item_id" in result:
                         artifacts["created_item_ids"].append(result["item_id"])
@@ -454,19 +452,17 @@ Current project_id: {project_id if project_id else "Not specified"}
                     elif name == "delete_item" and "item_id" in result:
                         artifacts["deleted_item_ids"].append(result["item_id"])
                 else:
-                    consecutive_errors += 1
-                    if consecutive_errors >= 3:
-                        summary = "Too many consecutive tool errors"
-                        crud.record_run_step(run_id, "error", summary)
-                        html = _build_html(summary, artifacts)
-                        clean_summary = _build_clean_summary(summary, artifacts)
-                        crud.finish_run(run_id, html, clean_summary, artifacts)
-                        stream.publish(
-                            run_id, {"node": "write", "summary": clean_summary}
-                        )
-                        stream.close(run_id)
-                        stream.discard(run_id)
-                        return {"html": html}
+                    summary = result.get("error") or "Tool execution failed"
+                    crud.record_run_step(run_id, "error", summary)
+                    html = _build_html(summary, artifacts)
+                    clean_summary = _build_clean_summary(summary, artifacts)
+                    crud.finish_run(run_id, html, clean_summary, artifacts)
+                    stream.publish(
+                        run_id, {"node": "write", "summary": clean_summary}
+                    )
+                    stream.close(run_id)
+                    stream.discard(run_id)
+                    return {"html": html}
 
                 # Append ToolMessage with exact tool_call_id from the assistant
                 messages.append(
