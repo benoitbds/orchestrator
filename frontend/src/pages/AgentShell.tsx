@@ -33,6 +33,7 @@ export function AgentShell() {
     const rehydrateStores = async () => {
       await useRunsStore.persist.rehydrate();
       await useMessagesStore.persist.rehydrate();
+      await useHistory.persist.rehydrate();
       setIsHydrated(true);
     };
     rehydrateStores();
