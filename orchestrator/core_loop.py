@@ -410,10 +410,11 @@ Current project_id: {project_id if project_id else "Not specified"}
                     args,
                     tool_call_id,
                 )
-                
+
                 # Emit tool call event
                 try:
-                    events.emit_tool_call(run_id, name, args, tool_call_id, model, tokens)
+                    event_args = json.loads(json.dumps(args))
+                    events.emit_tool_call(run_id, name, event_args, tool_call_id, model, tokens)
                     logger.info(f"Emitted tool_call event for {name} with tool_call_id {tool_call_id}")
                 except Exception as e:
                     logger.error(f"Failed to emit tool_call event: {e}")
