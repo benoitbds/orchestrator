@@ -15,7 +15,7 @@ interface DiagramViewProps {
   projectId: number | null;
 }
 
-interface NodeDatum {
+export interface NodeDatum {
   id: number;
   title: string;
   type: BacklogItem['type'];
@@ -110,6 +110,7 @@ export function DiagramView({ projectId }: DiagramViewProps) {
     if (nodes.length === 0 || edges.length === 0) return;
     const g = new dagre.graphlib.Graph();
     g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80 });
+    g.setDefaultEdgeLabel(() => ({}));
     nodes.forEach(nd => g.setNode(nd.id, { width: nd.width, height: nd.height, rank: nd.rank }));
     edges.forEach(e => g.setEdge(e.source, e.target));
     dagre.layout(g);
@@ -230,22 +231,21 @@ export function DiagramView({ projectId }: DiagramViewProps) {
       <svg ref={svgRef} className="w-full h-full" onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
         <g>
           {edges.map((e, i) => {
-            const s = nodes.find(n => n.id === e.source)!;
-            const t = nodes.find(n => n.id === e.target)!;
-            const path = `M${s.x + s.width / 2},${s.y} Q${(s.x + t.x) / 2},${s.y} ${t.x - t.width / 2},${t.y}`;
-            return <path key={i} d={path} fill="none" stroke="#ccc" />;
+            const path = buildEdgePath(nodes, e);
+            return path ? <path key={i} d={path} fill="none" stroke="#ccc" /> : null;
           })}
           {nodes.map(n => (
-            <g key={n.id}
-               opacity={visible.includes(n.id) ? 1 : 0.2}
-               transform={`translate(${n.x - n.width / 2},${n.y - n.height / 2})`}
-               onPointerDown={(e) => onPointerDown(e, n)}
-               onDoubleClick={() => setFocused(focused === n.id ? null : n.id)}
+            <g
+              key={n.id}
+              opacity={visible.includes(n.id) ? 1 : 0.2}
+              transform={`translate(${n.x - n.width / 2},${n.y - n.height / 2})`}
+              onPointerDown={(e) => onPointerDown(e, n)}
+              onDoubleClick={() => setFocused(focused === n.id ? null : n.id)}
             >
               <rect width={n.width} height={n.height} rx={20} fill={typeColor[n.type]} />
               <title>{`${n.title} (${n.type})`}</title>
-              <text x={n.width/2} y={n.height/2} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize="12">
-                {n.title.length > 20 ? n.title.slice(0,20)+"…" : n.title}
+              <text x={n.width / 2} y={n.height / 2} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize="12">
+                {n.title.length > 20 ? n.title.slice(0, 20) + "…" : n.title}
               </text>
             </g>
           ))}
@@ -258,4 +258,11 @@ export function DiagramView({ projectId }: DiagramViewProps) {
       </div>
     </div>
   );
+}
+
+export function buildEdgePath(nodes: NodeDatum[], edge: { source: number; target: number }): string | null {
+  const s = nodes.find(n => n.id === edge.source);
+  const t = nodes.find(n => n.id === edge.target);
+  if (!s || !t) return null;
+  return `M${s.x + s.width / 2},${s.y} Q${(s.x + t.x) / 2},${s.y} ${t.x - t.width / 2},${t.y}`;
 }
