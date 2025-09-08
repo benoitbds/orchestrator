@@ -72,6 +72,47 @@ async def test_run_chat_tools_injects_ids(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_run_chat_tools_sanitizes_tool_call_args(monkeypatch, tmp_path):
+    event_args = {}
+
+    async def fake_tool(args):
+        return json.dumps({"ok": True})
+
+    schema = types.SimpleNamespace(__name__="S")
+    tool = types.SimpleNamespace(
+        name="t", description="d", args_schema=schema, ainvoke=fake_tool
+    )
+    ai_call = ToolCall(name="t", args={}, id="0")
+    responses = [
+        types.SimpleNamespace(content="", tool_calls=[ai_call]),
+        types.SimpleNamespace(content="done", tool_calls=[]),
+    ]
+    monkeypatch.setattr(
+        core_loop,
+        "build_llm",
+        lambda provider, **k: FakeLLM(responses) if provider == "openai" else None,
+    )
+    monkeypatch.setattr(core_loop, "LC_TOOLS", [tool])
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(core_loop, "LLM_PROVIDER_ORDER", ["openai"])
+
+    monkeypatch.setattr(crud, "DATABASE_URL", str(tmp_path / "db.sqlite"))
+    crud.init_db()
+    setup_agentic_db(monkeypatch, tmp_path)
+
+    def fake_emit_tool_call(run_id, name, args, tool_call_id, model, tokens):
+        event_args.update(args)
+
+    monkeypatch.setattr(core_loop.events, "emit_tool_call", fake_emit_tool_call)
+
+    run_id = "run-sanitize"
+    crud.create_run(run_id, "obj", 1)
+    await core_loop.run_chat_tools("obj", 1, run_id)
+
+    assert event_args == {}
+
+
+@pytest.mark.asyncio
 async def test_run_chat_tools_handles_unknown_tool(monkeypatch, tmp_path):
     ai_call = ToolCall(name="unknown", args={}, id="0")
     responses = [types.SimpleNamespace(content="", tool_calls=[ai_call])]

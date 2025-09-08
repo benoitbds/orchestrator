@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 import logging
 import asyncio, json, re
 
@@ -156,6 +156,10 @@ class _ListArgs(BaseModel):
 
 class _DeleteArgs(BaseModel):
     id: int
+    project_id: int
+    type: Literal["Epic", "Capability", "Feature", "US", "UC"]
+    reason: str
+    explicit_confirm: bool = False
 
 
 class _MoveArgs(BaseModel):
@@ -765,11 +769,23 @@ async def delete_item_tool(args: Dict[str, Any]) -> Dict[str, Any]:
     """Delete an item and its descendants."""
     try:
         data = _DeleteArgs(**args)
+        logger.info(
+            "%s",
+            {
+                "tool": "delete_item",
+                "why": data.reason,
+                "confirmed": data.explicit_confirm,
+            },
+        )
+        if not data.reason or data.reason.strip().lower() == "cleanup":
+            return {"ok": False, "error": "invalid_reason"}
+        if not data.explicit_confirm:
+            return {"ok": False, "error": "explicit_confirm_required"}
         item = crud.get_item(data.id)
         if not item:
             return {"ok": False, "error": "item_not_found"}
         deleted = crud.delete_item(data.id)
-        return {"ok": True, "result": {"deleted": deleted}}
+        return {"ok": True, "item_id": data.id, "result": {"deleted": deleted}}
     except (ValidationError, ValueError) as e:
         return {"ok": False, "error": str(e)}
 

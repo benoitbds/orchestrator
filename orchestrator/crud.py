@@ -23,9 +23,10 @@ DATABASE_URL = "orchestrator.db"
 def create_item_from_row(row_dict: dict) -> BacklogItem:
     """Create the appropriate item type based on the 'type' field"""
     item_type = row_dict.get('type')
-    
+
     # Clean up None values and set defaults based on type
     cleaned_dict = {k: v for k, v in row_dict.items() if v is not None}
+    cleaned_dict['is_deleted'] = bool(row_dict.get('is_deleted', 0))
     
     if item_type == 'Epic':
         # Set defaults for Epic-specific fields
@@ -83,13 +84,14 @@ def init_db():
         "project_id INTEGER,"
         "title TEXT NOT NULL,"
         "description TEXT,"
-        "type TEXT CHECK(type IN ('Epic','Capability','Feature','US','UC')),"
-        "parent_id INTEGER,"
-        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "updated_at DATETIME,"
-        "FOREIGN KEY(parent_id) REFERENCES backlog(id) ON DELETE CASCADE,"
-        "FOREIGN KEY(project_id) REFERENCES projects(id)"
-        ")"
+        "type TEXT CHECK(type IN ('Epic','Capability','Feature','US','UC'))," 
+        "parent_id INTEGER," 
+        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP," 
+        "updated_at DATETIME," 
+        "is_deleted BOOLEAN DEFAULT 0," 
+        "FOREIGN KEY(parent_id) REFERENCES backlog(id) ON DELETE CASCADE," 
+        "FOREIGN KEY(project_id) REFERENCES projects(id)" 
+        ")" 
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_backlog_parent ON backlog(parent_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_backlog_project ON backlog(project_id)")
@@ -112,7 +114,8 @@ def init_db():
         ("iteration", "TEXT"),
         ("owner", "TEXT"),
         ("invest_compliant", "BOOLEAN DEFAULT 0"),
-        ("status", "TEXT")
+        ("status", "TEXT"),
+        ("is_deleted", "BOOLEAN DEFAULT 0"),
     ]
     
     for column_name, column_type in new_columns:
@@ -1033,12 +1036,12 @@ def get_items(project_id: int, type: str | None = None, limit: int = 50, offset:
     cursor = conn.cursor()
     if type:
         cursor.execute(
-            "SELECT * FROM backlog WHERE project_id = ? AND type = ? ORDER BY id LIMIT ? OFFSET ?",
+            "SELECT * FROM backlog WHERE project_id = ? AND type = ? AND is_deleted = 0 ORDER BY id LIMIT ? OFFSET ?",
             (project_id, type, limit, offset),
         )
     else:
         cursor.execute(
-            "SELECT * FROM backlog WHERE project_id = ? ORDER BY id LIMIT ? OFFSET ?",
+            "SELECT * FROM backlog WHERE project_id = ? AND is_deleted = 0 ORDER BY id LIMIT ? OFFSET ?",
             (project_id, limit, offset),
         )
     rows = cursor.fetchall()
@@ -1067,16 +1070,12 @@ def update_item(item_id: int, data: BacklogItemUpdate) -> Optional[BacklogItem]:
 
 
 def delete_item(item_id: int) -> int:
-    """
-    Delete an item and all its descendants in a single operation.
+    """Soft delete an item and all its descendants.
 
-    Returns the number of rows removed.  ``0`` indicates that no matching item
-    existed.  Callers should validate existence beforehand when they need to
-    differentiate between "not found" and "nothing deleted".
+    Returns the number of rows updated. ``0`` indicates no matching item.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Recursively delete item and all children using a recursive CTE
     cursor.execute(
         """
         WITH RECURSIVE to_delete AS (
@@ -1084,7 +1083,7 @@ def delete_item(item_id: int) -> int:
             UNION ALL
             SELECT b.id FROM backlog b JOIN to_delete td ON b.parent_id = td.id
         )
-        DELETE FROM backlog WHERE id IN (SELECT id FROM to_delete)
+        UPDATE backlog SET is_deleted = 1 WHERE id IN (SELECT id FROM to_delete)
         """,
         (item_id,),
     )

@@ -121,6 +121,7 @@ class ItemBase(BaseModel):
     type: Literal["Epic", "Capability", "Feature", "US", "UC"]
     project_id: int
     parent_id: int | None = None
+    is_deleted: bool = False
 
 # Extra fields per type
 # Base extras for creation (more flexible)

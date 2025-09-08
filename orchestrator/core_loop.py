@@ -40,6 +40,32 @@ AGENT_NAME = "chat_tools"
 # Re-entrancy guard: per-run locks
 RUN_LOCKS: dict[str, asyncio.Lock] = {}
 
+# Simple intent keywords for tool exposure
+CREATE_VERBS = {"create", "add", "génère", "crée", "ajoute"}
+DELETE_VERBS = {"delete", "remove", "supprime", "nettoie", "archive"}
+
+
+def _filter_tools_by_objective(objective: str, tools: list[Any]) -> list[Any]:
+    """Filter available tools based on the user's objective.
+
+    - For create-like intents, restrict to a safe subset.
+    - Expose ``delete_item`` only when a delete-like verb is detected.
+    - Otherwise, all tools except ``delete_item`` are allowed.
+    """
+
+    text = (objective or "").lower()
+
+    if any(verb in text for verb in CREATE_VERBS):
+        allowed = {"get_item", "list_items", "create_item", "update_item"}
+        logger.info("Create intent detected; restricting tools to %s", allowed)
+    else:
+        allowed = {getattr(t, "name", None) for t in tools if getattr(t, "name", None) != "delete_item"}
+        if any(verb in text for verb in DELETE_VERBS):
+            allowed.add("delete_item")
+            logger.info("Delete intent detected; including delete_item")
+
+    return [t for t in tools if getattr(t, "name", None) in allowed]
+
 
 def _tool_sig(tc: Dict[str, Any]) -> str:
     """Return a stable signature for a tool call used for deduplication."""
@@ -56,6 +82,20 @@ def _sanitize(obj: Any) -> Any:
     if isinstance(obj, list):
         return [_sanitize(v) for v in obj]
     return obj
+
+
+def _verify_and_snapshot_created_item(item_id: int) -> dict:
+    """Fetch a freshly created item and return a sanitized snapshot.
+
+    Retries once if the item is not yet visible. Raises ``ValueError`` with
+    ``"consistency_error"`` if the item still cannot be fetched.
+    """
+
+    for _ in range(2):
+        item = crud.get_item(item_id)
+        if item:
+            return _sanitize(item.dict())
+    raise ValueError("consistency_error")
 
 
 def _build_html(summary: str, artifacts: dict[str, list[int]]) -> str:
@@ -172,11 +212,18 @@ async def _run_chat_tools_impl(
         logger.error("No valid tools found for binding!")
         return {"html": "<p>Error: No valid tools available</p>"}
 
+    # Restrict tools based on the user's objective
+    valid_tools = _filter_tools_by_objective(objective, valid_tools)
+    if not valid_tools:
+        logger.error("No tools available after intent filtering for objective '%s'", objective)
+        return {"html": "<p>Error: No valid tools available for this objective</p>"}
+
     artifacts: dict[str, list[int]] = {
         "created_item_ids": [],
         "updated_item_ids": [],
         "deleted_item_ids": [],
     }
+    created_ids: set[int] = set()
 
     providers = await _build_provider_chain(valid_tools)
     if not providers:
@@ -363,10 +410,11 @@ Current project_id: {project_id if project_id else "Not specified"}
                     args,
                     tool_call_id,
                 )
-                
+
                 # Emit tool call event
                 try:
-                    events.emit_tool_call(run_id, name, args, tool_call_id, model, tokens)
+                    event_args = json.loads(json.dumps(args))
+                    events.emit_tool_call(run_id, name, event_args, tool_call_id, model, tokens)
                     logger.info(f"Emitted tool_call event for {name} with tool_call_id {tool_call_id}")
                 except Exception as e:
                     logger.error(f"Failed to emit tool_call event: {e}")
@@ -404,37 +452,62 @@ Current project_id: {project_id if project_id else "Not specified"}
                 call_id = save_tool_call(
                     run_id, AGENT_NAME, name, input_ref=call_ref, span_id=tool_span_id
                 )
-                try:
-                    logger.info("Invoking tool '%s' with args: %s", name, args)
-                    result_str = await tool.ainvoke(
-                        args
-                    )  # notre func async renvoie une string JSON
-                    logger.info("Tool '%s' completed successfully", name)
-                    status = "ok"
-                except Exception as e:
-                    logger.error(
-                        "Tool '%s' execution failed: %s", name, str(e), exc_info=True
-                    )
-                    result_str = json.dumps({"ok": False, "error": str(e)})
-                    status = "error"
-                finally:
-                    # End tool span
-                    end_span(
-                        tool_span_id,
-                        status=status,
-                        output_ref=save_blob("text", result_str),
-                    )
+
+                blocked = False
+                status = "ok"
+                result: dict
+                if name == "delete_item":
+                    explicit = bool(args.get("explicit_confirm", False))
+                    item_id = args.get("id")
+                    if item_id in created_ids and not explicit:
+                        logger.warning(
+                            "blocked_by_write_barrier: attempt to delete id=%s", item_id
+                        )
+                        result = {
+                            "ok": False,
+                            "error": "blocked_by_write_barrier",
+                            "status": 400,
+                        }
+                        status = "error"
+                        blocked = True
+
+                if not blocked:
+                    try:
+                        logger.info("Invoking tool '%s' with args: %s", name, args)
+                        raw = await tool.ainvoke(args)
+                    except Exception as e:
+                        logger.error(
+                            "Tool '%s' execution failed: %s", name, str(e), exc_info=True
+                        )
+                        result = {"ok": False, "error": str(e)}
+                        status = "error"
+                    else:
+                        try:
+                            result = json.loads(raw)
+                        except Exception:
+                            result = {"ok": True, "raw": raw}
+                        if name == "create_item" and result.get("item_id"):
+                            try:
+                                result["snapshot"] = _verify_and_snapshot_created_item(
+                                    result["item_id"]
+                                )
+                            except Exception as e:
+                                logger.error("Post-create verification failed: %s", e)
+                                result = {"ok": False, "error": str(e)}
+                                status = "error"
+                result_str = json.dumps(result)
+
+                # End tool span
+                end_span(
+                    tool_span_id,
+                    status=status,
+                    output_ref=save_blob("text", result_str),
+                )
 
                 save_tool_result(
                     call_id, status, output_ref=save_blob("text", result_str)
                 )
 
-                # Parse résultat & maj artifacts
-                try:
-                    result = json.loads(result_str)
-                except Exception:
-                    result = {"ok": True, "raw": result_str}
-                
                 # Emit tool result event
                 try:
                     events.emit_tool_result(run_id, name, result, tool_call_id, status)
@@ -447,6 +520,7 @@ Current project_id: {project_id if project_id else "Not specified"}
                     # MAJ artifacts si handler a renvoyé un item_id
                     if name == "create_item" and "item_id" in result:
                         artifacts["created_item_ids"].append(result["item_id"])
+                        created_ids.add(result["item_id"])
                     elif name == "update_item" and "item_id" in result:
                         artifacts["updated_item_ids"].append(result["item_id"])
                     elif name == "delete_item" and "item_id" in result:
