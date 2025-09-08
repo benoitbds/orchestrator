@@ -1,22 +1,31 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { AgentActionsPanel } from './AgentActionsPanel';
-import { useAgentActionsStore } from '@/hooks/useAgentActions';
+import { AgentStep } from '@/hooks/useRunStream';
 
 describe('AgentActionsPanel', () => {
-  const runId = 'r1';
-  beforeEach(() => {
-    useAgentActionsStore.getState().clear();
-  });
+  const baseStep: AgentStep = {
+    id: 'list_items_1',
+    tool: 'list_items',
+    startedAt: Date.now(),
+    request: { project_id: 1 },
+    state: 'running',
+  };
 
-  it('shows actions and expands payload', () => {
-    useAgentActionsStore.getState().addFromMessage({
-      run_id: runId,
-      node: 'tool:test:request',
-      args: { foo: 'bar' },
-    });
-    render(<AgentActionsPanel runId={runId} />);
+  it('renders steps and toggles details', () => {
+    const steps: AgentStep[] = [
+      { ...baseStep, state: 'success', ok: true, result: { ok: true }, finishedAt: Date.now() },
+    ];
+    render(<AgentActionsPanel steps={steps} status="done" />);
     expect(screen.getByText('Agent actions (1)')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button'));
-    expect(screen.getByText(/foo/)).toBeInTheDocument();
+    expect(screen.getByText(/"project_id": 1/)).toBeInTheDocument();
+  });
+
+  it('shows error badge when failed', () => {
+    const steps: AgentStep[] = [
+      { ...baseStep, state: 'failed', ok: false, error: 'boom', finishedAt: Date.now() },
+    ];
+    render(<AgentActionsPanel steps={steps} status="error" />);
+    expect(screen.getByText(/Failed: boom/)).toBeInTheDocument();
   });
 });
