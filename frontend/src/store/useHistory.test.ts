@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { useHistory } from './useHistory';
 
 describe('useHistory store', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await useHistory.persist.clearStorage();
     useHistory.setState({ turns: {}, orderDesc: [], promoted: {} });
   });
 
@@ -29,5 +30,11 @@ describe('useHistory store', () => {
     const action = useHistory.getState().turns.t.actions[0];
     expect(action.status).toBe('succeeded');
     expect(action.durationMs).toBe(10);
+  });
+
+  it('persists turns to storage', () => {
+    useHistory.getState().createTurn('id1', 'hello');
+    const stored = window.localStorage.getItem('agent-history-storage');
+    expect(stored && JSON.parse(stored).state.turns.id1.userText).toBe('hello');
   });
 });

@@ -4,7 +4,8 @@ import { useHistory } from '@/store/useHistory';
 import type { ConversationTurn } from '@/types/history';
 
 describe('ConversationHistory', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await useHistory.persist.clearStorage();
     useHistory.setState({ turns: {}, orderDesc: [], promoted: {} });
   });
 
