@@ -5,11 +5,11 @@ import { AgentStep } from '@/hooks/useRunStream';
 import { Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface Props {
-  steps: AgentStep[];
+  steps?: AgentStep[];
   status: 'idle' | 'running' | 'done' | 'error';
 }
 
-export function AgentActionsPanel({ steps, status }: Props) {
+export function AgentActionsPanel({ steps = [], status }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const toggle = (id: string) => setOpen((p) => ({ ...p, [id]: !p[id] }));
 
