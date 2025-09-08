@@ -3,6 +3,7 @@ import { useRunsStore } from "@/stores/useRunsStore";
 import { useHistory } from "@/store/useHistory";
 import { toLabel } from "@/lib/historyAdapter";
 import { safeId } from "@/lib/safeId";
+import { http } from "@/lib/api";
 import { useAgentActionsStore } from "@/hooks/useAgentActions";
 
 // Phases for a run lifecycle
@@ -295,8 +296,48 @@ export function useAgentStream(
           clearInterval(current.keepAliveTimer);
           current.keepAliveTimer = undefined;
         }
-        current.phase = current.phase === "finished" ? "finished" : "error";
-        safeCloseSocket(`close:${e.code}`);
+        const finalize = async () => {
+          const id = current.realRunId ?? current.tempRunId;
+          if (current.realRunId) {
+            try {
+              const res = await http(`/runs/${current.realRunId}`);
+              if (res.ok) {
+                const data = await res.json();
+                if (data.status === "done") {
+                  const summary = data.summary || "Task completed";
+                  current.phase = "finished";
+                  appendSummaryOnce(id, summary);
+                  useHistory.getState().setAgentTextOnce(id, summary);
+                  finishRun(current.realRunId, summary);
+                  useHistory.getState().finalizeTurn(id, true);
+                  options.onFinish?.(summary);
+                } else {
+                  current.phase = "error";
+                  failRun(id, "Run closed before completion");
+                  useHistory.getState().finalizeTurn(id, false);
+                  options.onError?.("Run closed before completion");
+                }
+              } else {
+                current.phase = "error";
+                failRun(id, "Run closed before completion");
+                useHistory.getState().finalizeTurn(id, false);
+                options.onError?.("Run closed before completion");
+              }
+            } catch {
+              current.phase = "error";
+              failRun(id, "Run closed before completion");
+              useHistory.getState().finalizeTurn(id, false);
+              options.onError?.("Run closed before completion");
+            }
+          } else {
+            current.phase = "error";
+            failRun(id, "Run closed before completion");
+            useHistory.getState().finalizeTurn(id, false);
+            options.onError?.("Run closed before completion");
+          }
+          cleanupRun(`close:${e.code}`, r.wsId);
+        };
+        finalize();
       };
 
       ws.onerror = () => {
