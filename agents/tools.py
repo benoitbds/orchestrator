@@ -62,6 +62,10 @@ class ListItemsArgs(BaseModel):
 
 class DeleteItemArgs(BaseModel):
     id: int
+    project_id: int
+    type: Literal["Epic", "Capability", "Feature", "US", "UC"]
+    reason: str
+    explicit_confirm: bool = False
 
 class MoveItemArgs(BaseModel):
     id: int
