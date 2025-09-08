@@ -58,6 +58,8 @@ async def test_run_chat_tools_injects_ids(monkeypatch, tmp_path):
         lambda provider, **k: FakeLLM(responses) if provider == "openai" else None,
     )
     monkeypatch.setattr(core_loop, "LC_TOOLS", [tool])
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(core_loop, "LLM_PROVIDER_ORDER", ["openai"])
 
     monkeypatch.setattr(crud, "DATABASE_URL", str(tmp_path / "db.sqlite"))
     crud.init_db()
@@ -124,8 +126,12 @@ async def test_run_chat_tools_returns_summary(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_chat_tools_stops_after_errors(monkeypatch, tmp_path):
+    calls: list[int] = []
+
     async def failing_tool(args):
-        return json.dumps({"ok": False})
+        calls.append(1)
+        return json.dumps({"ok": False, "error": "boom"})
+
     tool = types.SimpleNamespace(
         name="t",
         description="d",
@@ -136,11 +142,18 @@ async def test_run_chat_tools_stops_after_errors(monkeypatch, tmp_path):
     responses = [
         types.SimpleNamespace(content="", tool_calls=[ai_call]) for _ in range(3)
     ]
-    monkeypatch.setattr(
-        core_loop,
-        "build_llm",
-        lambda provider, **k: FakeLLM(responses) if provider == "openai" else None,
-    )
+    call_count = {"n": 0}
+
+    async def fake_safe_invoke(providers, messages, tools=None):
+        res = responses[call_count["n"]]
+        call_count["n"] += 1
+        return res
+
+    async def fake_build_chain(tools):
+        return [object()]
+
+    monkeypatch.setattr(core_loop, "safe_invoke_with_fallback", fake_safe_invoke)
+    monkeypatch.setattr(core_loop, "_build_provider_chain", fake_build_chain)
     monkeypatch.setattr(core_loop, "LC_TOOLS", [tool])
 
     monkeypatch.setattr(crud, "DATABASE_URL", str(tmp_path / "db.sqlite"))
@@ -150,7 +163,8 @@ async def test_run_chat_tools_stops_after_errors(monkeypatch, tmp_path):
     run_id = "run-fail"
     crud.create_run(run_id, "obj", 1)
     result = await core_loop.run_chat_tools("obj", 1, run_id)
-    assert "Too many consecutive tool errors" in result["html"]
+    assert "boom" in result["html"]
+    assert len(calls) == 1
 
 
 @pytest.mark.asyncio
