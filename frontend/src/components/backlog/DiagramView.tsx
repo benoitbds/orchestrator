@@ -110,6 +110,7 @@ export function DiagramView({ projectId }: DiagramViewProps) {
     if (nodes.length === 0 || edges.length === 0) return;
     const g = new dagre.graphlib.Graph();
     g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80 });
+    g.setDefaultEdgeLabel(() => ({}));
     nodes.forEach(nd => g.setNode(nd.id, { width: nd.width, height: nd.height, rank: nd.rank }));
     edges.forEach(e => g.setEdge(e.source, e.target));
     dagre.layout(g);
