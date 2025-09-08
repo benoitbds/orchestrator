@@ -12,6 +12,7 @@ import logging
 from orchestrator.core_loop import run_chat_tools
 from orchestrator import crud, stream
 from orchestrator.run_registry import get_or_create_run
+from orchestrator.events import start_run
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -116,6 +117,10 @@ async def stream_chat(ws: WebSocket):
                 queue = stream.register(run_id)
 
             if created:
+                # Persist run and initialize event tracking
+                crud.create_run(run_id, objective, project_id, None)
+                start_run(run_id)
+
                 # Fresh run for this client: cancel any previous task for the same client (defensive)
                 if client_id in RUNNING_TASKS:
                     old_task = RUNNING_TASKS[client_id]
