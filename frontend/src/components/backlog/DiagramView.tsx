@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 
 interface DiagramViewProps {
   projectId: number | null;
+  onEdit: (item: BacklogItem) => void;
 }
 
 export interface NodeDatum {
@@ -46,7 +47,7 @@ const rankByType: Record<BacklogItem['type'], number> = {
   UC: 4,
 };
 
-export function DiagramView({ projectId }: DiagramViewProps) {
+export function DiagramView({ projectId, onEdit }: DiagramViewProps) {
   const { data: items } = useItems(projectId);
   const [nodes, setNodes] = useState<NodeDatum[]>([]);
   const [edges, setEdges] = useState<{ source: number; target: number }[]>([]);
@@ -244,7 +245,21 @@ export function DiagramView({ projectId }: DiagramViewProps) {
             >
               <rect width={n.width} height={n.height} rx={20} fill={typeColor[n.type]} />
               <title>{`${n.title} (${n.type})`}</title>
-              <text x={n.width / 2} y={n.height / 2} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize="12">
+              <text
+                x={n.width / 2}
+                y={n.height / 2}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill="#fff"
+                fontSize="12"
+                className="cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const item = items?.find(i => i.id === n.id);
+                  if (item) onEdit(item);
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
                 {n.title.length > 20 ? n.title.slice(0, 20) + "…" : n.title}
               </text>
             </g>
