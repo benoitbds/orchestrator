@@ -28,4 +28,10 @@ describe('AgentActionsPanel', () => {
     render(<AgentActionsPanel steps={steps} status="error" />);
     expect(screen.getByText(/Failed: boom/)).toBeInTheDocument();
   });
+
+  it('renders safely when steps are missing', () => {
+    render(<AgentActionsPanel status="idle" />);
+    expect(screen.getByText('Agent actions (0)')).toBeInTheDocument();
+    expect(screen.getByText('No actions yet')).toBeInTheDocument();
+  });
 });
