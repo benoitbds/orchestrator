@@ -29,6 +29,7 @@ export interface NodeDatum {
   fx?: number;
   fy?: number;
   pinned?: boolean;
+  generated_by_ai?: boolean;
 }
 
 const typeColor: Record<string, string> = {
@@ -85,6 +86,7 @@ export function DiagramView({ projectId, onEdit }: DiagramViewProps) {
       height: 40,
       x: 0,
       y: 0,
+      generated_by_ai: item.generated_by_ai,
     }));
     const e = n
       .filter(nd => nd.parent_id !== null)
@@ -244,6 +246,24 @@ export function DiagramView({ projectId, onEdit }: DiagramViewProps) {
               onDoubleClick={() => setFocused(focused === n.id ? null : n.id)}
             >
               <rect width={n.width} height={n.height} rx={20} fill={typeColor[n.type]} />
+              {n.generated_by_ai && (
+                <g
+                  className="pointer-events-none"
+                  transform={`translate(${n.width - 18},4)`}
+                >
+                  <rect width={14} height={14} rx={3} fill="#8b5cf6" />
+                  <text
+                    x={7}
+                    y={7}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize="8"
+                    fill="#fff"
+                  >
+                    IA
+                  </text>
+                </g>
+              )}
               <title>{`${n.title} (${n.type})`}</title>
               <text
                 x={n.width / 2}

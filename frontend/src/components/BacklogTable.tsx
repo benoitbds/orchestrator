@@ -279,7 +279,7 @@ export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
                       {item.generated_by_ai && (
                         <Badge className="bg-purple-600 text-white text-xs flex items-center gap-1">
                           <CpuIcon className="w-3 h-3" />
-                          IA - à valider
+                          IA
                         </Badge>
                       )}
                     </div>
