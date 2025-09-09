@@ -8,7 +8,7 @@ describe('useHistory store', () => {
   });
 
   it('promotes temp id to real id', () => {
-    useHistory.getState().createTurn('temp', 'hi');
+    useHistory.getState().createTurn('temp', 'hi', 1);
     useHistory.getState().promoteTurn('temp', 'real');
     const state = useHistory.getState();
     expect(state.turns.real).toBeDefined();
@@ -16,7 +16,7 @@ describe('useHistory store', () => {
   });
 
   it('dedupes agent text using hash', () => {
-    useHistory.getState().createTurn('t', 'hi');
+    useHistory.getState().createTurn('t', 'hi', 1);
     useHistory.getState().setAgentTextOnce('t', 'summary');
     const firstHash = useHistory.getState().turns.t.lastSummaryHash;
     useHistory.getState().setAgentTextOnce('t', 'summary');
@@ -24,7 +24,7 @@ describe('useHistory store', () => {
   });
 
   it('patches actions', () => {
-    useHistory.getState().createTurn('t', 'hi');
+    useHistory.getState().createTurn('t', 'hi', 1);
     useHistory.getState().appendAction('t', { id: 'a', label: 'A', status: 'running' });
     useHistory.getState().patchAction('t', 'a', { status: 'succeeded', durationMs: 10 });
     const action = useHistory.getState().turns.t.actions[0];
@@ -33,8 +33,10 @@ describe('useHistory store', () => {
   });
 
   it('persists turns to storage', () => {
-    useHistory.getState().createTurn('id1', 'hello');
+    useHistory.getState().createTurn('id1', 'hello', 1);
     const stored = window.localStorage.getItem('agent-history-storage');
-    expect(stored && JSON.parse(stored).state.turns.id1.userText).toBe('hello');
+    const parsed = stored && JSON.parse(stored).state.turns.id1;
+    expect(parsed.userText).toBe('hello');
+    expect(parsed.projectId).toBe(1);
   });
 });
