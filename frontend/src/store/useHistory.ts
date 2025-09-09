@@ -7,7 +7,7 @@ export type HistoryState = {
   turns: Record<string, ConversationTurn>;
   orderDesc: string[];
   promoted: Record<string, string>;
-  createTurn: (tempId: string, userText: string) => void;
+  createTurn: (tempId: string, userText: string, projectId: number) => void;
   promoteTurn: (tempId: string, realId: string) => void;
   appendAction: (turnId: string, action: AgentAction) => void;
   patchAction: (
@@ -25,7 +25,7 @@ export const useHistory = create<HistoryState>()(
       turns: {},
       orderDesc: [],
       promoted: {},
-      createTurn: (tempId, userText) =>
+      createTurn: (tempId, userText, projectId) =>
         set((s) => ({
           turns: {
             ...s.turns,
@@ -33,6 +33,7 @@ export const useHistory = create<HistoryState>()(
               turnId: tempId,
               createdAt: Date.now(),
               userText,
+              projectId,
               actions: [],
               phase: 'running',
             },

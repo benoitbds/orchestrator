@@ -89,7 +89,7 @@ export function AgentShell() {
     }
 
     const tempRunId = safeId();
-    useHistory.getState().createTurn(tempRunId, objective);
+    useHistory.getState().createTurn(tempRunId, objective, currentProject.id);
 
     const userMessage: Message = {
       id: `user-${Date.now()}`,
@@ -189,7 +189,7 @@ export function AgentShell() {
             <TabsContent value="history" className="flex-1 m-0">
               <div className="p-2 flex flex-col gap-2">
                 <AgentActionsPanel runId={currentRunId} />
-                <ConversationHistory />
+                <ConversationHistory projectId={currentProject?.id} />
               </div>
             </TabsContent>
           </div>
@@ -227,7 +227,7 @@ export function AgentShell() {
 
         <div className="w-1/4 p-2 flex flex-col gap-2">
           <AgentActionsPanel runId={currentRunId} />
-          <ConversationHistory />
+          <ConversationHistory projectId={currentProject?.id} />
         </div>
       </div>
     </div>

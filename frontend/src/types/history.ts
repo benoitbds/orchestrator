@@ -38,6 +38,7 @@ export type ConversationTurn = {
   turnId: string;
   createdAt: number;
   userText: string;
+  projectId: number;
   actions: AgentAction[];
   agentText?: string;
   phase: "running" | "completed" | "failed";
