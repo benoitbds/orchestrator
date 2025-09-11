@@ -5,6 +5,7 @@ import { toLabel } from "@/lib/historyAdapter";
 import { safeId } from "@/lib/safeId";
 import { http } from "@/lib/api";
 import { useAgentActionsStore } from "@/hooks/useAgentActions";
+import { getWSUrl } from "@/lib/ws";
 
 // Phases for a run lifecycle
 export type RunPhase =
@@ -133,8 +134,7 @@ export function useAgentStream(
     };
 
     const r = runRef.current;
-    const WS_URL =
-      process.env.NEXT_PUBLIC_WS_URL ?? "ws://192.168.1.93:8000/stream";
+    const WS_URL = getWSUrl("/stream");
 
     try {
       const ws = await openSocket(WS_URL, r.wsId!);

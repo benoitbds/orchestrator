@@ -2,15 +2,16 @@ import { render, screen } from '@testing-library/react';
 import { vi } from 'vitest';
 import RunDetail from './[run_id]/page';
 
-vi.mock('@/lib/ws', () => ({
-  connectWS: () => ({
-    send: vi.fn(),
-    close: vi.fn(),
-    onopen: null,
-    onmessage: null,
-    onerror: null,
-  }),
-}));
+class MockWebSocket {
+  send = vi.fn();
+  close = vi.fn();
+  onopen: ((...args: any[]) => void) | null = null;
+  onmessage: ((...args: any[]) => void) | null = null;
+  onerror: ((...args: any[]) => void) | null = null;
+  constructor(_url: string) {}
+}
+
+(global as any).WebSocket = MockWebSocket as any;
 
 vi.mock('next/link', () => ({
   default: ({ children, ...props }: any) => <a {...props}>{children}</a>,

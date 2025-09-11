@@ -1,25 +1,44 @@
-import { describe, it, expect } from 'vitest';
-import { connectWS } from './ws';
+import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { getWSUrl } from './ws';
 
-class MockWebSocket {
-  url: string;
-  constructor(url: string) {
-    this.url = url;
-  }
-}
+const originalEnv = { ...process.env };
+let originalWindow: any = global.window;
 
-global.WebSocket = MockWebSocket as any;
+beforeEach(() => {
+  process.env = { ...originalEnv };
+  delete (global as any).window;
+});
 
-describe('connectWS', () => {
-  const base = `ws://${window.location.host}/api`;
+afterAll(() => {
+  global.window = originalWindow;
+});
 
-  it('adds a leading slash when missing', () => {
-    const ws = connectWS('chat');
-    expect(ws.url).toBe(`${base}/chat`);
+describe('getWSUrl', () => {
+  it('returns explicit override when provided', () => {
+    process.env.NEXT_PUBLIC_WS_URL = 'wss://override.example/stream';
+    expect(getWSUrl()).toBe('wss://override.example/stream');
   });
 
-  it('uses existing leading slash', () => {
-    const ws = connectWS('/chat');
-    expect(ws.url).toBe(`${base}/chat`);
+  it('derives ws url from window location (http)', () => {
+    (global as any).window = {
+      location: { protocol: 'http:', host: 'localhost:3000' },
+    } as any;
+    expect(getWSUrl('/chat')).toBe('ws://localhost:3000/chat');
+  });
+
+  it('derives wss url from window location (https)', () => {
+    (global as any).window = {
+      location: { protocol: 'https:', host: 'agent4ba.baq.ovh' },
+    } as any;
+    expect(getWSUrl()).toBe('wss://agent4ba.baq.ovh/stream');
+  });
+
+  it('falls back to NEXT_PUBLIC_DOMAIN when window undefined', () => {
+    process.env.NEXT_PUBLIC_DOMAIN = 'example.org';
+    expect(getWSUrl('/foo')).toBe('wss://example.org/foo');
+  });
+
+  it('falls back to default domain when no env', () => {
+    expect(getWSUrl()).toBe('wss://agent4ba.baq.ovh/stream');
   });
 });

@@ -1,24 +1,17 @@
-import { getApiBaseUrl } from './api';
-
-function getWsBaseUrl(): string {
-  const api = getApiBaseUrl();
-  if (api.startsWith('http')) {
-    return api.replace(/^http/, 'ws');
+export function getWSUrl(path = "/stream"): string {
+  // 1) Prefer explicit override from env in production or staging.
+  const explicit = process.env.NEXT_PUBLIC_WS_URL;
+  if (explicit && explicit.trim().length > 0) {
+    return explicit;
   }
-  
-  // En développement, utiliser directement l'adresse du backend
-  if (process.env.NODE_ENV === 'development' && api === '/api') {
-    return 'ws://192.168.1.93:8000';
-  }
-  
-  const { protocol, host } = window.location;
-  const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
-  const base = api ? api : '';
-  return `${wsProto}//${host}${base}`;
-}
 
-export function connectWS(path: string): WebSocket {
-  const base = getWsBaseUrl().replace(/\/+$/, '');
-  const url = `${base}${path.startsWith('/') ? path : '/' + path}`;
-  return new WebSocket(url);
+  // 2) Derive from current location (works for both dev and prod).
+  if (typeof window !== "undefined") {
+    const proto = window.location.protocol === "https:" ? "wss" : "ws";
+    const host = window.location.host; // e.g., agent4ba.baq.ovh or localhost:3000
+    return `${proto}://${host}${path}`;
+  }
+
+  // 3) SSR/build fallback (safe default for production).
+  return `wss://${process.env.NEXT_PUBLIC_DOMAIN ?? "agent4ba.baq.ovh"}${path}`;
 }

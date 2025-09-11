@@ -22,13 +22,18 @@ class MockWebSocket {
 }
 
 (global as any).WebSocket = MockWebSocket as any;
+if (typeof window !== 'undefined') {
+  (window as any).WebSocket = MockWebSocket as any;
+}
 
 describe('useAgentStream on close', () => {
-  beforeEach(() => {
-    MockWebSocket.last = undefined;
-    useRunsStore.getState().clearRuns();
-    vi.resetAllMocks();
-  });
+beforeEach(() => {
+  MockWebSocket.last = undefined;
+  useRunsStore.getState().clearRuns();
+  vi.resetAllMocks();
+  process.env.NEXT_PUBLIC_WS_URL = 'ws://test';
+  return new Promise((r) => setTimeout(r, 350));
+});
 
   it('finalizes run with summary when backend is done', async () => {
     const tempId = 'temp1';

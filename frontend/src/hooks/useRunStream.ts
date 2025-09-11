@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getWSUrl } from '@/lib/ws';
 
 export type AgentStep = {
   id: string;
@@ -65,11 +66,6 @@ export function useRunStream(options: UseRunStreamOptions) {
   const manualClose = useRef(false);
   const seqRef = useRef<Record<string, number>>({});
   const reconnectTimer = useRef<number>();
-
-  const getWsUrl = () => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}/stream`;
-  };
 
   const closeSocket = () => {
     if (wsRef.current) {
@@ -177,7 +173,7 @@ export function useRunStream(options: UseRunStreamOptions) {
   const openSocket = useCallback(() => {
     manualClose.current = false;
     closeSocket();
-    const ws = new WebSocket(getWsUrl());
+      const ws = new WebSocket(getWSUrl('/stream'));
     wsRef.current = ws;
     ws.onmessage = handleMessage;
     ws.onclose = () => {
