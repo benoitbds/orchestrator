@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import RunTimeline from "@/components/RunTimeline";
 import { http } from "@/lib/api";
-import { connectWS } from "@/lib/ws";
+import { getWSUrl } from "@/lib/ws";
 
 interface Run {
   run_id: string;
@@ -42,8 +42,8 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
     }
     load();
 
-    const ws = connectWS("/stream");
-    wsRef.current = ws;
+      const ws = new WebSocket(getWSUrl("/stream"));
+      wsRef.current = ws;
     ws.onopen = () => {
       ws.send(JSON.stringify({ run_id: params.run_id }));
     };

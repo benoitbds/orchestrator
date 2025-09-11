@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ConversationRun, RunEvent } from '@/types/events';
 import { safeId } from '@/lib/safeId';
+import { getWSUrl } from '@/lib/ws';
 
 export interface UseConversationHistoryOptions {
   autoRefresh?: boolean;
@@ -85,9 +86,8 @@ export function useConversationHistory(options: UseConversationHistoryOptions = 
       return; // Already subscribed
     }
 
-    try {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${protocol}//${window.location.host}/api/stream`);
+      try {
+        const ws = new WebSocket(getWSUrl('/api/stream'));
       
       ws.onopen = () => {
         ws.send(JSON.stringify({
