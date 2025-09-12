@@ -2,8 +2,9 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import RunTimeline from "@/components/RunTimeline";
-import { http } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { getWSUrl } from "@/lib/ws";
+import { auth } from "@/lib/firebase";
 
 interface Run {
   run_id: string;
@@ -24,7 +25,7 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
     let cancelled = false;
     async function load() {
       try {
-        const res = await http(`/runs/${params.run_id}`);
+        const res = await apiFetch(`/runs/${params.run_id}`);
         if (res.ok) {
           const data = await res.json();
           if (!cancelled) setRun(data);
@@ -43,7 +44,12 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
     load();
 
     (async () => {
-      const url = await getWSUrl("/stream");
+      const base = getWSUrl("/stream");
+      const token = auth.currentUser
+        ? await auth.currentUser.getIdToken().catch(() => null)
+        : null;
+      const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+
       const ws = new WebSocket(url);
       wsRef.current = ws;
       ws.onopen = () => {

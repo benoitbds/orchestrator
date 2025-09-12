@@ -5,7 +5,7 @@ import { Send, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
-import { http } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 
 interface ChatComposerProps {
   onSend: (objective: string, runId?: string) => void | Promise<void>;
@@ -44,7 +44,7 @@ export function ChatComposer({ onSend, isSending = false, projectId, disabled }:
         await result;
       } else {
         // Old interface - make API call ourselves
-        const response = await http('/chat', {
+        const response = await apiFetch('/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { http } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { getRunCost, RunCost } from "@/lib/runs";
 import { Bot, ChevronDown, ChevronUp, User, Wrench } from "lucide-react";
 
@@ -69,7 +69,7 @@ export default function RunTimeline({
     async function loadTimeline() {
       try {
         setLoading(true);
-        const res = await http(`/runs/${runId}/timeline`);
+        const res = await apiFetch(`/runs/${runId}/timeline`);
         if (!res.ok) throw new Error('failed');
         const data = await res.json();
         if (!cancelled) {
@@ -125,7 +125,7 @@ export default function RunTimeline({
   async function openMessage(evt: MessageEvent) {
     try {
       if (evt.ref) {
-        const res = await http(`/blobs/${evt.ref}`);
+        const res = await apiFetch(`/blobs/${evt.ref}`);
         const text = res.ok ? await res.text() : "Failed to load content";
         setModal({ title: `${evt.role} message`, content: text });
       } else {

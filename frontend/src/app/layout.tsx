@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ProjectProvider } from "@/context/ProjectContext";
 import { AuthProvider } from "@/context/AuthContext";
+import { AuthGate } from "@/components/AuthGate";
+
 import ProjectSelector from "@/components/ProjectSelector";
 import { APP_CONFIG } from "@/lib/constants";
 
@@ -32,9 +34,12 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <AuthProvider>
-          <ProjectProvider>
-            {children}
-          </ProjectProvider>
+          <AuthGate>
+            <ProjectProvider>
+              {children}
+            </ProjectProvider>
+          </AuthGate>
+
         </AuthProvider>
       </body>
     </html>

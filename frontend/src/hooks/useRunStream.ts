@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWSUrl } from '@/lib/ws';
+import { auth } from '@/lib/firebase';
 
 export type AgentStep = {
   id: string;
@@ -173,7 +174,12 @@ export function useRunStream(options: UseRunStreamOptions) {
   const openSocket = useCallback(async () => {
     manualClose.current = false;
     closeSocket();
-    const url = await getWSUrl('/stream');
+    const base = getWSUrl('/stream');
+    const token = auth.currentUser
+      ? await auth.currentUser.getIdToken().catch(() => null)
+      : null;
+    const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+
     const ws = new WebSocket(url);
     wsRef.current = ws;
     ws.onmessage = handleMessage;

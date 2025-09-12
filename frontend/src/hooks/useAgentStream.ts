@@ -3,9 +3,10 @@ import { useRunsStore } from "@/stores/useRunsStore";
 import { useHistory } from "@/store/useHistory";
 import { toLabel } from "@/lib/historyAdapter";
 import { safeId } from "@/lib/safeId";
-import { http } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { useAgentActionsStore } from "@/hooks/useAgentActions";
 import { getWSUrl } from "@/lib/ws";
+import { auth } from "@/lib/firebase";
 
 // Phases for a run lifecycle
 export type RunPhase =
@@ -134,10 +135,15 @@ export function useAgentStream(
     };
 
     const r = runRef.current;
-    const WS_URL = await getWSUrl("/stream");
+    const base = getWSUrl("/stream");
+    const token = auth.currentUser
+      ? await auth.currentUser.getIdToken().catch(() => null)
+      : null;
+    const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+
 
     try {
-      const ws = await openSocket(WS_URL, r.wsId!);
+      const ws = await openSocket(url, r.wsId!);
 
       if (!runRef.current || r.wsId !== runRef.current.wsId) {
         try {
@@ -300,7 +306,7 @@ export function useAgentStream(
           const id = current.realRunId ?? current.tempRunId;
           if (current.realRunId) {
             try {
-              const res = await http(`/runs/${current.realRunId}`);
+              const res = await apiFetch(`/runs/${current.realRunId}`);
               if (res.ok) {
                 const data = await res.json();
                 if (data.status === "done") {

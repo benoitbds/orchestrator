@@ -1,44 +1,57 @@
 import pytest
-from fastapi import HTTPException, Request
-from api.auth import verify_id_token, get_current_user
+from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
+
+from backend.app.security import get_current_user
 
 
-@pytest.mark.asyncio
-async def test_verify_token_valid(monkeypatch):
+def test_get_current_user_valid(monkeypatch):
     def fake_verify(token):
         assert token == 'abc'
-        return {'uid': 'u1'}
+        return {'uid': 'u1', 'email': 'e@example.com', 'email_verified': True}
 
-    monkeypatch.setattr('api.auth.auth.verify_id_token', fake_verify)
-    payload = await verify_id_token('abc')
-    assert payload['uid'] == 'u1'
+    monkeypatch.setattr('backend.app.security.fb_auth.verify_id_token', fake_verify)
+    creds = HTTPAuthorizationCredentials(scheme='Bearer', credentials='abc')
+    user = get_current_user(creds)
+    assert user == {'uid': 'u1', 'email': 'e@example.com', 'email_verified': True}
 
 
-@pytest.mark.asyncio
-async def test_verify_token_invalid(monkeypatch):
-    def fake_verify(token):
-        raise ValueError('bad')
-
-    monkeypatch.setattr('api.auth.auth.verify_id_token', fake_verify)
+def test_get_current_user_missing_token():
     with pytest.raises(HTTPException):
-        await verify_id_token('bad')
+        get_current_user(None)
 
 
-@pytest.mark.asyncio
-async def test_get_current_user(monkeypatch):
+def test_get_current_user_invalid(monkeypatch):
     def fake_verify(token):
-        return {'uid': 'u2'}
+        raise ValueError('bad token')
 
-    monkeypatch.setattr('api.auth.auth.verify_id_token', fake_verify)
-    scope = {
-        'type': 'http',
-        'headers': [(b'authorization', b'Bearer abc')],
-        'method': 'GET',
-        'path': '/',
-    }
-    req = Request(scope)
-    user = await get_current_user(req)
-    assert user['uid'] == 'u2'
+    monkeypatch.setattr('backend.app.security.fb_auth.verify_id_token', fake_verify)
+    creds = HTTPAuthorizationCredentials(scheme='Bearer', credentials='bad')
+    with pytest.raises(HTTPException):
+        get_current_user(creds)
 
-    req2 = Request({'type': 'http', 'headers': [], 'method': 'GET', 'path': '/'})
-    assert await get_current_user(req2) is None
+
+from fastapi.testclient import TestClient
+from api.main import app
+
+
+def test_projects_route_requires_auth():
+    client = TestClient(app)
+    r = client.get("/projects")
+    assert r.status_code == 401
+
+
+def test_projects_route_returns_projects(monkeypatch):
+    def fake_verify(token):
+        assert token == "good"
+        return {"uid": "u1"}
+
+    monkeypatch.setattr(
+        "backend.app.security.fb_auth.verify_id_token", fake_verify
+    )
+    monkeypatch.setattr("orchestrator.crud.get_projects", lambda: [{"id": 1}])
+    client = TestClient(app)
+    r = client.get("/projects", headers={"Authorization": "Bearer good"})
+    assert r.status_code == 200
+    assert r.json() == [{"id": 1}]
+

@@ -6,13 +6,17 @@ from importlib import metadata
 from uuid import uuid4
 
 import httpx
+import firebase_admin
+from firebase_admin import credentials
 from dotenv import load_dotenv
 from fastapi import File, FastAPI, HTTPException, Query, UploadFile, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from api.ws import router as ws_router
-from api.auth import get_current_user
+from backend.app.security import get_current_user
+from backend.app.routes.projects import router as project_router
+
 from orchestrator import crud
 from orchestrator.core_loop import run_chat_tools
 from agents import writer, planner
@@ -74,7 +78,19 @@ httpx.AsyncClient.__aexit__ = _no_aexit
 setup_logging()
 logger = logging.getLogger(__name__)
 
+cred_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
+if cred_path and not firebase_admin._apps:
+    firebase_admin.initialize_app(credentials.Certificate(cred_path))
+
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://agent4ba.baq.ovh"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 crud.init_db()
 
 
@@ -109,22 +125,9 @@ def startup_event():
     from orchestrator.storage.db import init_db
     init_db()
 
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://192.168.1.93:3000",
-]
-
-# Allow configured origins and fall back to accepting any HTTP(S) origin for dev
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# Include websocket routes after middleware setup
 app.include_router(ws_router)
+app.include_router(project_router)
 
 @app.middleware("http")
 async def log_origin(request, call_next):
@@ -294,11 +297,6 @@ async def create_run_with_idempotency(
 
 
 # ---- Project endpoints ----
-@app.get("/projects")
-async def list_projects():
-    return crud.get_projects()
-
-
 @app.post("/projects")
 async def create_project(project: ProjectCreate):
     return crud.create_project(project)

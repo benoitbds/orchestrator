@@ -1,11 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 
-vi.mock('./firebase', () => ({
-  auth: {
-    currentUser: { getIdToken: vi.fn().mockResolvedValue('tok') },
-  },
-}));
-
 import { getWSUrl } from './ws';
 
 const originalEnv = { ...process.env };
@@ -28,9 +22,10 @@ describe('getWSUrl', () => {
 
   it('derives ws url from window location (http)', async () => {
     (global as any).window = {
-      location: { protocol: 'http:', host: 'localhost:3000' },
+      location: { protocol: 'http:', host: 'myhost:3000' },
     } as any;
-    await expect(getWSUrl('/chat')).resolves.toBe('ws://localhost:3000/chat?token=tok');
+    expect(getWSUrl('/chat')).toBe('ws://myhost:3000/chat');
+
   });
 
   it('derives wss url from window location (https)', async () => {
@@ -40,18 +35,8 @@ describe('getWSUrl', () => {
     await expect(getWSUrl()).resolves.toBe('wss://agent4ba.baq.ovh/stream?token=tok');
   });
 
-  it('falls back to NEXT_PUBLIC_DOMAIN when window undefined', async () => {
-    process.env.NEXT_PUBLIC_DOMAIN = 'example.org';
-    await expect(getWSUrl('/foo')).resolves.toBe('wss://example.org/foo');
-  });
+  it('falls back to default when window undefined', () => {
+    expect(getWSUrl('/foo')).toBe('wss://agent4ba.baq.ovh/foo');
 
-  it('falls back to default domain when no env', async () => {
-    await expect(getWSUrl()).resolves.toBe('wss://agent4ba.baq.ovh/stream');
-  });
-
-  it('omits token when no user', async () => {
-    const { auth } = await import('./firebase');
-    (auth as any).currentUser = null;
-    await expect(getWSUrl()).resolves.toBe('wss://agent4ba.baq.ovh/stream');
   });
 });

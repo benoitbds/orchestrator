@@ -13,7 +13,8 @@ from orchestrator.core_loop import run_chat_tools
 from orchestrator import crud, stream
 from orchestrator.run_registry import get_or_create_run
 from orchestrator.events import start_run
-from api.auth import verify_id_token
+from firebase_admin import auth as fb_auth
+
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -54,12 +55,15 @@ def stable_client_id(ws: WebSocket, payload: dict) -> str:
 @router.websocket("/stream")
 async def stream_chat(ws: WebSocket):
     token = ws.query_params.get("token")
-    if token:
-        try:
-            await verify_id_token(token)
-        except Exception:
-            await ws.close(code=4401, reason="unauthorized")
-            return
+    if not token:
+        await ws.close(code=4401, reason="unauthorized")
+        return
+    try:
+        fb_auth.verify_id_token(token)
+    except Exception:  # pragma: no cover - firebase-specific errors
+        await ws.close(code=4401, reason="unauthorized")
+        return
+
     # Accept exactly once per connection
     await ws.accept()
     logger.info("WebSocket connection accepted")

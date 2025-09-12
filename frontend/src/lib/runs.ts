@@ -1,5 +1,5 @@
 // src/lib/runs.ts
-import { http } from './api';
+import { apiFetch } from './api';
 
 export interface AgentCost {
   agent: string;
@@ -16,7 +16,7 @@ export interface RunCost {
 }
 
 export async function getRunCost(runId: string): Promise<RunCost> {
-  const res = await http(`/runs/${runId}/cost`);
+  const res = await apiFetch(`/runs/${runId}/cost`);
   if (!res.ok) throw new Error('Failed to load run cost');
   return res.json();
 }

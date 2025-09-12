@@ -11,7 +11,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useProjects } from '@/context/ProjectContext';
-import { http } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 import AgentTimeline, { AgentTimelineStep } from './AgentTimeline';
 
 interface HistoryPanelProps {
@@ -53,7 +53,7 @@ export const HistoryPanel = forwardRef<any, HistoryPanelProps>(({ className, tim
 
     setIsLoading(true);
     try {
-      const response = await http(`/runs?project_id=${currentProject.id}`);
+      const response = await apiFetch(`/runs?project_id=${currentProject.id}`);
       const data = await response.json();
       
       // Sort by most recent first and format data
