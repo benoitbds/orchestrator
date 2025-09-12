@@ -13,6 +13,12 @@ class ProjectCreate(BaseModel):
     description: str | None = None
 
 
+class User(BaseModel):
+    uid: str
+    email: str | None = None
+    is_admin: bool = False
+
+
 class Document(BaseModel):
     """File uploaded to a project."""
 
