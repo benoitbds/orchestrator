@@ -16,6 +16,7 @@ from .models import (
     FeatureOut,
     USOut,
     UCOut,
+    User,
 )
 
 DATABASE_URL = "orchestrator.db"
@@ -71,6 +72,13 @@ def get_conn():
 
 def init_db():
     conn = get_conn()
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS users ("
+        "uid TEXT PRIMARY KEY,"
+        "email TEXT,"
+        "is_admin BOOLEAN DEFAULT 0"
+        ")"
+    )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS projects ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -567,6 +575,32 @@ def get_run_cost(run_id: str) -> dict:
     finally:
         conn.close()
 
+
+
+def get_user_by_uid(uid: str) -> Optional[User]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT uid, email, is_admin FROM users WHERE uid = ?",
+        (uid,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return User(uid=row["uid"], email=row["email"], is_admin=bool(row["is_admin"]))
+    return None
+
+
+def create_user(uid: str, email: str | None, is_admin: bool = False) -> User:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO users (uid, email, is_admin) VALUES (?, ?, ?)",
+        (uid, email, int(is_admin)),
+    )
+    conn.commit()
+    conn.close()
+    return User(uid=uid, email=email, is_admin=is_admin)
 
 
 def create_project(project: ProjectCreate | str, description: str | None = None) -> Project:
