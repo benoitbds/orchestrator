@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { apiFetch, runAgent } from './api';
 
-
 vi.mock('./firebase', () => ({
   auth: {
     currentUser: { getIdToken: vi.fn().mockResolvedValue('test-token') },
@@ -46,7 +45,6 @@ describe('runAgent', () => {
 });
 
 describe('apiFetch', () => {
-
   it('attaches Authorization header when token present', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     (global as any).fetch = fetchMock;

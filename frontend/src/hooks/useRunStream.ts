@@ -179,7 +179,6 @@ export function useRunStream(options: UseRunStreamOptions) {
       ? await auth.currentUser.getIdToken().catch(() => null)
       : null;
     const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
-
     const ws = new WebSocket(url);
     wsRef.current = ws;
     ws.onmessage = handleMessage;

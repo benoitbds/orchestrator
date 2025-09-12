@@ -1,4 +1,3 @@
-
 import { initializeApp } from "firebase/app";
 import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
 
@@ -14,5 +13,3 @@ const app = initializeApp({
 export const auth = getAuth(app);
 // Persist session across reloads
 setPersistence(auth, browserLocalPersistence).catch(() => {});
-
-

@@ -25,7 +25,6 @@ describe('getWSUrl', () => {
       location: { protocol: 'http:', host: 'myhost:3000' },
     } as any;
     expect(getWSUrl('/chat')).toBe('ws://myhost:3000/chat');
-
   });
 
   it('derives wss url from window location (https)', async () => {
@@ -37,6 +36,5 @@ describe('getWSUrl', () => {
 
   it('falls back to default when window undefined', () => {
     expect(getWSUrl('/foo')).toBe('wss://agent4ba.baq.ovh/foo');
-
-  });
+ });
 });

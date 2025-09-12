@@ -54,4 +54,3 @@ def test_projects_route_returns_projects(monkeypatch):
     r = client.get("/projects", headers={"Authorization": "Bearer good"})
     assert r.status_code == 200
     assert r.json() == [{"id": 1}]
-

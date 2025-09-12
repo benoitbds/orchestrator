@@ -39,7 +39,6 @@ export default function RootLayout({
               {children}
             </ProjectProvider>
           </AuthGate>
-
         </AuthProvider>
       </body>
     </html>

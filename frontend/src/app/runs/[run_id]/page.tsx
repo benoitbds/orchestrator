@@ -49,7 +49,6 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
         ? await auth.currentUser.getIdToken().catch(() => null)
         : null;
       const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
-
       const ws = new WebSocket(url);
       wsRef.current = ws;
       ws.onopen = () => {
