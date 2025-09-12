@@ -134,7 +134,7 @@ export function useAgentStream(
     };
 
     const r = runRef.current;
-    const WS_URL = getWSUrl("/stream");
+    const WS_URL = await getWSUrl("/stream");
 
     try {
       const ws = await openSocket(WS_URL, r.wsId!);
