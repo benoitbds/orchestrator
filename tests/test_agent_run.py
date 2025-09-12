@@ -1,7 +1,5 @@
 import asyncio
 import pytest
-import asyncio
-import pytest
 from httpx import AsyncClient, ASGITransport
 
 from api.main import app
@@ -26,10 +24,14 @@ async def test_agent_run_triggers_planner(monkeypatch):
 
     monkeypatch.setattr(planner, "run_objective", fake_run_objective)
 
+    monkeypatch.setattr(
+        "backend.app.security.fb_auth.verify_id_token", lambda t: {"uid": "u"}
+    )
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.post(
             "/agent/run",
             json={"project_id": project.id, "objective": "do something"},
+            headers={"Authorization": "Bearer token"},
         )
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
@@ -37,18 +39,30 @@ async def test_agent_run_triggers_planner(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_agent_run_project_not_found():
+async def test_agent_run_project_not_found(monkeypatch):
+    monkeypatch.setattr(
+        "backend.app.security.fb_auth.verify_id_token", lambda t: {"uid": "u"}
+    )
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.post(
-            "/agent/run", json={"project_id": 999999, "objective": "x"}
+            "/agent/run",
+            json={"project_id": 999999, "objective": "x"},
+            headers={"Authorization": "Bearer token"},
         )
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_agent_run_missing_objective():
+async def test_agent_run_missing_objective(monkeypatch):
+    monkeypatch.setattr(
+        "backend.app.security.fb_auth.verify_id_token", lambda t: {"uid": "u"}
+    )
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.post("/agent/run", json={"project_id": 1})
+        resp = await ac.post(
+            "/agent/run",
+            json={"project_id": 1},
+            headers={"Authorization": "Bearer token"},
+        )
     assert resp.status_code == 422
 
 

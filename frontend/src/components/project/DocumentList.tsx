@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Trash } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { getApiBaseUrl, runAgent } from '@/lib/api';
+import { runAgent } from '@/lib/api';
 import { deleteDocument } from '@/lib/documents';
 import type { Document } from '@/models/document';
 
@@ -16,6 +16,7 @@ interface DocumentListProps {
 export function DocumentList({ documents, refetch }: DocumentListProps) {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [analyzingId, setAnalyzingId] = useState<number | null>(null);
+  const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL || '').replace(/\/+$/, '');
 
   const handleDelete = async (id: number) => {
     if (!confirm('Supprimer ce document ?')) return;
@@ -57,7 +58,7 @@ export function DocumentList({ documents, refetch }: DocumentListProps) {
       {documents.map((doc) => (
         <li key={doc.id} className="flex items-center gap-2">
           <a
-            href={`${getApiBaseUrl()}/documents/${doc.id}/content`}
+            href={`${apiBase}/documents/${doc.id}/content`}
             className="text-blue-500 hover:underline"
             download
           >

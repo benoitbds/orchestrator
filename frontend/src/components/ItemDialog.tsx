@@ -21,7 +21,7 @@ import { BacklogItem } from '@/models/backlogItem';
 import { useItems } from '@/lib/hooks';
 import { useBacklog } from '@/context/BacklogContext';
 import { mutate } from 'swr';
-import { http } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 import dynamic from 'next/dynamic';
 const Loader2 = dynamic(
   () => import('lucide-react').then((mod) => ({ default: mod.Loader2 })),
@@ -392,7 +392,7 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
               disabled={isGeneratingFeatures}
               onClick={async () => {
                 setIsGeneratingFeatures(true);
-                const resp = await http('/feature_proposals', {
+                const resp = await apiFetch('/feature_proposals', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({

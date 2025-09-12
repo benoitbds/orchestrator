@@ -11,7 +11,7 @@ import { useAgentStream } from '@/hooks/useAgentStream';
 import { ChatComposer } from './ChatComposer';
 import { cn } from '@/lib/utils';
 import { mutate } from 'swr';
-import { http } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 
 interface Message {
   id: string;
@@ -82,7 +82,7 @@ export function AgentArea({ onItemHighlight, onBacklogRefresh, currentProject }:
     }
 
     try {
-      const response = await http('/chat', {
+      const response = await apiFetch('/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 

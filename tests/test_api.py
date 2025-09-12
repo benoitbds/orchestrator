@@ -9,11 +9,21 @@ from api.main import app
 from orchestrator import crud
 from orchestrator.models import ProjectCreate
 import fitz
+from firebase_admin import auth as fb_auth
 
 crud.init_db()
 
 transport = ASGIWebSocketTransport(app=app)
 BASE_URL = "http://test"
+
+
+@pytest.fixture(autouse=True)
+def mock_verify(monkeypatch):
+    def fake_verify(token):
+        assert token == "good"
+        return {"uid": "u1"}
+
+    monkeypatch.setattr(fb_auth, "verify_id_token", fake_verify)
 
 
 @pytest.mark.asyncio
@@ -27,7 +37,7 @@ async def test_ping():
 @pytest.mark.asyncio
 async def test_ws_stream_new_run():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        async with aconnect_ws("http://test/stream", ac) as ws:
+        async with aconnect_ws("http://test/stream?token=good", ac) as ws:
             await ws.send_json({"objective": "demo"})
             first = await ws.receive_json()
             run_id = first["run_id"]
@@ -54,7 +64,7 @@ async def test_ws_stream_existing_run_only_new_steps():
     crud.record_run_step(run_id, "before", "one")
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        async with aconnect_ws("http://test/stream", ac) as ws:
+        async with aconnect_ws("http://test/stream?token=good", ac) as ws:
             await ws.send_json({"run_id": run_id})
 
             async def later():
@@ -140,7 +150,7 @@ async def test_ws_stream_tool_steps(monkeypatch, tmp_path):
         run_stream.close(run_id)
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        async with aconnect_ws("http://test/stream", ac) as ws:
+        async with aconnect_ws("http://test/stream?token=good", ac) as ws:
             await ws.send_json({"run_id": run_id})
             task = asyncio.create_task(runner())
             steps = []
@@ -163,7 +173,7 @@ async def test_ws_stream_tool_steps(monkeypatch, tmp_path):
 async def test_ws_stream_unknown_run():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         with pytest.raises(WebSocketDisconnect) as exc:
-            async with aconnect_ws("http://test/stream", ac) as ws:
+            async with aconnect_ws("http://test/stream?token=good", ac) as ws:
                 await ws.send_json({"run_id": "missing"})
                 await ws.receive_json()
         assert exc.value.code == 4404
@@ -174,7 +184,7 @@ async def test_ws_stream_unknown_run():
 async def test_ws_stream_missing_objective():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         with pytest.raises(WebSocketDisconnect) as exc:
-            async with aconnect_ws("http://test/stream", ac) as ws:
+            async with aconnect_ws("http://test/stream?token=good", ac) as ws:
                 await ws.send_json({})
                 await ws.receive_json()
         assert exc.value.code == 1008

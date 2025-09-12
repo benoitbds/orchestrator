@@ -1,7 +1,7 @@
 "use client";
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Project } from '@/models/project'; // Nous créerons ce modèle
-import { http } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 
 interface ProjectContextType {
   projects: Project[];
@@ -23,7 +23,7 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
   const fetchProjects = async () => {
     setIsLoading(true);
     try {
-      const response = await http(`/projects`);
+      const response = await apiFetch(`/projects`);
       const data = await response.json();
       setProjects(data);
       if (data.length > 0 && !currentProject) {
@@ -40,7 +40,7 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
 
   const createProject = async (name: string, description?: string) => {
     try {
-      const response = await http(`/projects`, {
+      const response = await apiFetch(`/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, description }),
@@ -58,7 +58,7 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
 
   const updateProject = async (id: number, name: string, description?: string) => {
     try {
-      const response = await http(`/projects/${id}`, {
+      const response = await apiFetch(`/projects/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, description }),
@@ -78,7 +78,7 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
 
   const deleteProject = async (id: number) => {
     try {
-      const response = await http(`/projects/${id}`, {
+      const response = await apiFetch(`/projects/${id}`, {
         method: 'DELETE',
       });
       if (!response.ok) throw new Error('Failed to delete project');

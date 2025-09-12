@@ -3,6 +3,10 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useAgentStream } from './useAgentStream';
 import { useRunsStore } from '@/stores/useRunsStore';
 
+vi.mock('@/lib/firebase', () => ({
+  auth: { currentUser: { getIdToken: vi.fn().mockResolvedValue('tok') } },
+}));
+
 class MockWebSocket {
   url: string;
   onopen: (() => void) | null = null;

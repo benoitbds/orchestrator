@@ -1,8 +1,8 @@
 import useSWR from 'swr';
 import { BacklogItem } from '@/models/backlogItem';
-import { http } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 
-const fetcher = (url: string) => http(url).then(res => res.json());
+const fetcher = (url: string) => apiFetch(url).then(res => res.json());
 
 export interface TreeNode extends BacklogItem {
   children: TreeNode[];

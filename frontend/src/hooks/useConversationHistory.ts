@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ConversationRun, RunEvent } from '@/types/events';
 import { safeId } from '@/lib/safeId';
 import { getWSUrl } from '@/lib/ws';
+import { auth } from '@/lib/firebase';
+import { apiFetch } from '@/lib/api';
 
 export interface UseConversationHistoryOptions {
   autoRefresh?: boolean;
@@ -23,7 +25,7 @@ export function useConversationHistory(options: UseConversationHistoryOptions = 
       setIsLoading(true);
       setError(null);
       
-      const response = await fetch('/api/runs');
+      const response = await apiFetch('/runs');
       if (!response.ok) {
         throw new Error(`Failed to fetch runs: ${response.statusText}`);
       }
@@ -34,7 +36,7 @@ export function useConversationHistory(options: UseConversationHistoryOptions = 
       const runsWithEvents = await Promise.all(
         runsData.map(async (run: any) => {
           try {
-            const eventsResponse = await fetch(`/api/runs/${run.run_id}/events`);
+            const eventsResponse = await apiFetch(`/runs/${run.run_id}/events`);
             if (eventsResponse.ok) {
               const eventsData = await eventsResponse.json();
               return {
@@ -81,13 +83,18 @@ export function useConversationHistory(options: UseConversationHistoryOptions = 
   }, []);
 
   // Subscribe to real-time events for a run
-  const subscribeToRun = useCallback((runId: string) => {
+  const subscribeToRun = useCallback(async (runId: string) => {
     if (wsConnections.current.has(runId)) {
       return; // Already subscribed
     }
 
       try {
-        const ws = new WebSocket(getWSUrl('/api/stream'));
+        const base = getWSUrl('/api/stream');
+        const token = auth.currentUser
+          ? await auth.currentUser.getIdToken().catch(() => null)
+          : null;
+        const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+        const ws = new WebSocket(url);
       
       ws.onopen = () => {
         ws.send(JSON.stringify({
@@ -146,7 +153,7 @@ export function useConversationHistory(options: UseConversationHistoryOptions = 
     try {
       const requestId = safeId();
       
-      const response = await fetch('/api/agent/run_chat_tools', {
+      const response = await apiFetch('/agent/run_chat_tools', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

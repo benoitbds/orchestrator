@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+vi.mock('./firebase', () => ({ auth: { currentUser: { getIdToken: vi.fn().mockResolvedValue(null) } } }));
 import { getRunCost } from './runs';
 
 const sample = {
@@ -30,7 +31,10 @@ describe('getRunCost', () => {
     (global as any).fetch = fetchMock;
 
     const data = await getRunCost('1');
-    expect(fetchMock).toHaveBeenCalledWith('http://api/runs/1/cost', undefined);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://api/runs/1/cost',
+      expect.objectContaining({ credentials: 'include' })
+    );
     expect(data).toEqual(sample);
   });
 

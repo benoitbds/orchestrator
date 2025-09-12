@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import RunProgress from "./RunProgress";
 import { useProjects } from "@/context/ProjectContext";
-import { http } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 interface Run {
   run_id: string;
@@ -19,7 +19,7 @@ export default function RunsPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     let cancelled = false;
     async function fetchRuns() {
       try {
-        const res = await http(`/runs?project_id=${currentProject.id}`);
+        const res = await apiFetch(`/runs?project_id=${currentProject.id}`);
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data)) {

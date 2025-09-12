@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { vi } from "vitest";
 import RunTimeline from "./RunTimeline";
+vi.mock("@/lib/firebase", () => ({ auth: { currentUser: { getIdToken: vi.fn().mockResolvedValue(null) } } }));
 
 describe("RunTimeline", () => {
   beforeEach(() => {

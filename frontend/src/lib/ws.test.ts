@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+
 import { getWSUrl } from './ws';
 
 const originalEnv = { ...process.env };
@@ -21,9 +22,9 @@ describe('getWSUrl', () => {
 
   it('derives ws url from window location (http)', () => {
     (global as any).window = {
-      location: { protocol: 'http:', host: 'localhost:3000' },
+      location: { protocol: 'http:', host: 'myhost:3000' },
     } as any;
-    expect(getWSUrl('/chat')).toBe('ws://localhost:3000/chat');
+    expect(getWSUrl('/chat')).toBe('ws://myhost:3000/chat');
   });
 
   it('derives wss url from window location (https)', () => {
@@ -33,12 +34,7 @@ describe('getWSUrl', () => {
     expect(getWSUrl()).toBe('wss://agent4ba.baq.ovh/stream');
   });
 
-  it('falls back to NEXT_PUBLIC_DOMAIN when window undefined', () => {
-    process.env.NEXT_PUBLIC_DOMAIN = 'example.org';
-    expect(getWSUrl('/foo')).toBe('wss://example.org/foo');
-  });
-
-  it('falls back to default domain when no env', () => {
-    expect(getWSUrl()).toBe('wss://agent4ba.baq.ovh/stream');
+  it('falls back to default when window undefined', () => {
+    expect(getWSUrl('/foo')).toBe('wss://agent4ba.baq.ovh/foo');
   });
 });

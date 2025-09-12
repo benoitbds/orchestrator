@@ -1,8 +1,8 @@
 import type { Document } from '@/models/document';
-import { http } from './api';
+import { apiFetch } from './api';
 
 export async function listDocuments(projectId: number): Promise<Document[]> {
-  const response = await http(`/projects/${projectId}/documents`);
+  const response = await apiFetch(`/projects/${projectId}/documents`);
   if (!response.ok) {
     throw new Error('Failed to list documents');
   }
@@ -12,7 +12,7 @@ export async function listDocuments(projectId: number): Promise<Document[]> {
 export async function uploadDocument(projectId: number, file: File): Promise<Document> {
   const formData = new FormData();
   formData.append('file', file);
-  const response = await http(`/projects/${projectId}/documents`, {
+  const response = await apiFetch(`/projects/${projectId}/documents`, {
     method: 'POST',
     body: formData,
   });
@@ -26,7 +26,7 @@ export async function deleteDocument(docId: number) {
   if (!Number.isInteger(docId) || docId <= 0) {
     throw new Error('Invalid document ID');
   }
-  const res = await http(`/documents/${docId}`, {
+  const res = await apiFetch(`/documents/${docId}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
   });
