@@ -2,8 +2,9 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import RunTimeline from "@/components/RunTimeline";
-import { http } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { getWSUrl } from "@/lib/ws";
+import { auth } from "@/lib/firebase";
 
 interface Run {
   run_id: string;
@@ -24,7 +25,7 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
     let cancelled = false;
     async function load() {
       try {
-        const res = await http(`/runs/${params.run_id}`);
+        const res = await apiFetch(`/runs/${params.run_id}`);
         if (res.ok) {
           const data = await res.json();
           if (!cancelled) setRun(data);
@@ -42,32 +43,39 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
     }
     load();
 
-      const ws = new WebSocket(getWSUrl("/stream"));
+    (async () => {
+      const base = getWSUrl("/stream");
+      const token = auth.currentUser
+        ? await auth.currentUser.getIdToken().catch(() => null)
+        : null;
+      const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+      const ws = new WebSocket(url);
       wsRef.current = ws;
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ run_id: params.run_id }));
-    };
-    ws.onmessage = evt => {
-      const msg = JSON.parse(evt.data);
-      setRun(prev => {
-        if (!prev) return prev;
-        if (msg.status === "done") {
-          ws.close();
-          return {
-            ...prev,
-            status: "done",
-            html: msg.html ?? prev.html,
-            summary: msg.summary ?? prev.summary,
-            completed_at: msg.completed_at ?? prev.completed_at,
-          };
-        }
-        return prev;
-      });
-    };
-    ws.onerror = () => ws.close();
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ run_id: params.run_id }));
+      };
+      ws.onmessage = (evt) => {
+        const msg = JSON.parse(evt.data);
+        setRun((prev) => {
+          if (!prev) return prev;
+          if (msg.status === "done") {
+            ws.close();
+            return {
+              ...prev,
+              status: "done",
+              html: msg.html ?? prev.html,
+              summary: msg.summary ?? prev.summary,
+              completed_at: msg.completed_at ?? prev.completed_at,
+            };
+          }
+          return prev;
+        });
+      };
+      ws.onerror = () => ws.close();
+    })();
     return () => {
       cancelled = true;
-      ws.close();
+      wsRef.current?.close();
     };
   }, [params.run_id]);
 

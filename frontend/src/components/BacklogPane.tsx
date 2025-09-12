@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { ItemDialog } from './ItemDialog';
 import { BacklogItem } from '@/models/backlogItem';
 import { mutate } from 'swr';
-import { http } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 import { BacklogViewTabs } from '@/components/BacklogViewTabs';
 
 export default function BacklogPane() {
@@ -32,7 +32,7 @@ export default function BacklogPane() {
 
       console.log('Saving item:', item); // Debug log
 
-      const response = await http(url, {
+      const response = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),

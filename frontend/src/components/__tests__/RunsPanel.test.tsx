@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import RunsPanel from '../RunsPanel';
 import { vi } from 'vitest';
+vi.mock('@/lib/firebase', () => ({ auth: { currentUser: { getIdToken: vi.fn().mockResolvedValue(null) } } }));
 
 vi.mock('@/context/ProjectContext', () => ({
   useProjects: () => ({ currentProject: { id: 1 } }),

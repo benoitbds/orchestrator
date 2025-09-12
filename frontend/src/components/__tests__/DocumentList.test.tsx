@@ -14,7 +14,6 @@ vi.mock('@/lib/documents', () => ({
 
 const runAgent = vi.fn();
 vi.mock('@/lib/api', () => ({
-  getApiBaseUrl: () => '',
   runAgent: (...args: any[]) => runAgent(...args)
 }));
 

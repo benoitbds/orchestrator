@@ -1,6 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useRunStream, parseNode } from './useRunStream';
+
+vi.mock('@/lib/firebase', () => ({
+  auth: { currentUser: { getIdToken: vi.fn().mockResolvedValue('tok') } },
+}));
 
 class MockWebSocket {
   url: string;

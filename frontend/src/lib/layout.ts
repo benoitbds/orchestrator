@@ -1,4 +1,4 @@
-import { http } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 
 export interface LayoutNode {
   item_id: number;
@@ -8,7 +8,7 @@ export interface LayoutNode {
 }
 
 export async function getLayout(projectId: number): Promise<LayoutNode[]> {
-  const res = await http(`/projects/${projectId}/layout`);
+  const res = await apiFetch(`/projects/${projectId}/layout`);
   if (!res.ok) {
     throw new Error('Failed to fetch layout');
   }
@@ -17,7 +17,7 @@ export async function getLayout(projectId: number): Promise<LayoutNode[]> {
 }
 
 export async function saveLayout(projectId: number, nodes: LayoutNode[]): Promise<void> {
-  const res = await http(`/projects/${projectId}/layout`, {
+  const res = await apiFetch(`/projects/${projectId}/layout`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ nodes }),

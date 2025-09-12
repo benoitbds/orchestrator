@@ -1,14 +1,14 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { http } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 export default function StatusBar() {
   const [apiOk, setApiOk] = useState<boolean | null>(null);
 
   useEffect(() => {
     const check = () => {
-      http("/health")
+      apiFetch("/health")
         .then(r => r.json())
         .then(d => setApiOk(d.status === "ok"))
         .catch(() => setApiOk(false));

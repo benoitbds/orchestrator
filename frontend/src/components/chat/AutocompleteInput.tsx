@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api';
 
 interface BacklogItem {
   id: number;
@@ -127,7 +128,7 @@ export function AutocompleteInput({
     
     setIsLoadingItems(true);
     try {
-      const response = await fetch(`/api/items?project_id=${projectId}&type=${type.type}`);
+      const response = await apiFetch(`/items?project_id=${projectId}&type=${type.type}`);
       if (response.ok) {
         const data = await response.json();
         setItems(data || []);

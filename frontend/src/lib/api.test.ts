@@ -1,25 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { getApiBaseUrl, runAgent } from './api';
+import { describe, it, expect, vi } from 'vitest';
+import { apiFetch, runAgent } from './api';
 
-describe('getApiBaseUrl', () => {
-  beforeEach(() => {
-    delete process.env.NEXT_PUBLIC_API_BASE_URL;
-  });
-
-  it('returns env value without trailing slash', () => {
-    process.env.NEXT_PUBLIC_API_BASE_URL = 'http://example.com/';
-    expect(getApiBaseUrl()).toBe('http://example.com');
-  });
-
-  it('falls back to /api when env missing', () => {
-    expect(getApiBaseUrl()).toBe('/api');
-  });
-
-  it('handles relative base', () => {
-    process.env.NEXT_PUBLIC_API_BASE_URL = '/backend/';
-    expect(getApiBaseUrl()).toBe('/backend');
-  });
-});
+vi.mock('./firebase', () => ({
+  auth: {
+    currentUser: { getIdToken: vi.fn().mockResolvedValue('test-token') },
+  },
+}));
 
 describe('runAgent', () => {
   const payload = { project_id: 1, objective: 'test' };
@@ -29,14 +15,14 @@ describe('runAgent', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json });
     (global as any).fetch = fetchMock;
     process.env.NEXT_PUBLIC_API_BASE_URL = 'http://api';
-
     const data = await runAgent(payload);
 
-    expect(fetchMock).toHaveBeenCalledWith('http://api/agent/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const call = fetchMock.mock.calls[0];
+    expect(call[0]).toBe('http://api/agent/run');
+    const headers = call[1].headers as Headers;
+    expect(headers.get('Authorization')).toBe('Bearer test-token');
+    expect(headers.get('Content-Type')).toBe('application/json');
+    expect(call[1].body).toBe(JSON.stringify(payload));
     expect(data).toEqual({ id: 1 });
   });
 
@@ -55,5 +41,19 @@ describe('runAgent', () => {
     process.env.NEXT_PUBLIC_API_BASE_URL = 'http://api';
 
     await expect(runAgent(payload)).rejects.toThrow(err);
+  });
+});
+
+describe('apiFetch', () => {
+  it('attaches Authorization header when token present', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    (global as any).fetch = fetchMock;
+    process.env.NEXT_PUBLIC_API_BASE_URL = 'http://api';
+    await apiFetch('/test');
+    const call = fetchMock.mock.calls[0];
+    expect(call[0]).toBe('http://api/test');
+    const headers = call[1].headers as Headers;
+    expect(headers.get('Authorization')).toBe('Bearer test-token');
+    expect(call[1].credentials).toBe('include');
   });
 });

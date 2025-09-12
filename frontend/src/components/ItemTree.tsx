@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 import { BacklogItem } from '@/models/backlogItem';
 import { mutate } from 'swr';
-import { http } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 
 const typeColors: { [key: string]: string } = {
   Epic: 'bg-purple-500',
@@ -221,7 +221,7 @@ export function ItemTree({ projectId, onEdit }: { projectId: number | null, onEd
     const parentType = parent ? parent.type : null;
     if (allowedParent[dragged.type] !== parentType) return;
     try {
-      await http(`/items/${dragged.id}`, {
+      await apiFetch(`/items/${dragged.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ parent_id: parent ? parent.id : null }),

@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useProjects } from '@/context/ProjectContext';
 import { toast } from 'sonner';
-import { http } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 import type { Document } from '@/models/document';
 import { listDocuments, uploadDocument } from '@/lib/documents';
 import { DocumentList } from './DocumentList';
@@ -44,7 +44,7 @@ export function ProjectPanel() {
 
     setIsCreating(true);
     try {
-      const response = await http('/projects', {
+      const response = await apiFetch('/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

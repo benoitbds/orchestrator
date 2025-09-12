@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('./api', () => ({
-  http: vi.fn(),
+  apiFetch: vi.fn(),
 }));
 
 import { getLayout, saveLayout } from './layout';
-import { http } from './api';
+import { apiFetch } from './api';
 
-const fetchMock = http as unknown as ReturnType<typeof vi.fn>;
+const fetchMock = apiFetch as unknown as ReturnType<typeof vi.fn>;
 
 describe('layout api helpers', () => {
   beforeEach(() => {
@@ -23,7 +23,10 @@ describe('layout api helpers', () => {
   it('saves layout', async () => {
     fetchMock.mockResolvedValue({ ok: true });
     await saveLayout(2, [{ item_id: 1, x: 1, y: 1 }]);
-    expect(fetchMock).toHaveBeenCalledWith('/projects/2/layout', expect.objectContaining({ method: 'PUT' }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/projects/2/layout',
+      expect.objectContaining({ method: 'PUT' })
+    );
   });
 
   it('throws on error', async () => {
