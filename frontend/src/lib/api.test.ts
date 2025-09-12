@@ -50,10 +50,12 @@ describe('apiFetch', () => {
     (global as any).fetch = fetchMock;
     process.env.NEXT_PUBLIC_API_BASE_URL = 'http://api';
     await apiFetch('/test');
+
     const call = fetchMock.mock.calls[0];
     expect(call[0]).toBe('http://api/test');
     const headers = call[1].headers as Headers;
     expect(headers.get('Authorization')).toBe('Bearer test-token');
     expect(call[1].credentials).toBe('include');
+
   });
 });

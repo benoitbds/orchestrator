@@ -15,6 +15,7 @@ from orchestrator.run_registry import get_or_create_run
 from orchestrator.events import start_run
 from firebase_admin import auth as fb_auth
 
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ async def stream_chat(ws: WebSocket):
     except Exception:  # pragma: no cover - firebase-specific errors
         await ws.close(code=4401, reason="unauthorized")
         return
+
     # Accept exactly once per connection
     await ws.accept()
     logger.info("WebSocket connection accepted")

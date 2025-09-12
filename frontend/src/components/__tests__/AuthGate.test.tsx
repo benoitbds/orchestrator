@@ -1,10 +1,12 @@
 import { render, screen, act } from '@testing-library/react';
 import { vi } from 'vitest';
 
+
 let pathnameMock = '/';
 vi.mock('next/navigation', () => ({
   usePathname: () => pathnameMock,
 }));
+
 
 const listeners: ((u: unknown) => void)[] = [];
 vi.mock('firebase/auth', () => ({
@@ -21,6 +23,7 @@ describe('AuthGate', () => {
   beforeEach(() => {
     listeners.length = 0;
     pathnameMock = '/';
+
   });
 
   it('renders children when authenticated', () => {
@@ -52,4 +55,5 @@ describe('AuthGate', () => {
     );
     expect(screen.getByText('public')).toBeInTheDocument();
   });
+
 });

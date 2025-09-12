@@ -4,6 +4,7 @@ import "./globals.css";
 import { ProjectProvider } from "@/context/ProjectContext";
 import { AuthProvider } from "@/context/AuthContext";
 import { AuthGate } from "@/components/AuthGate";
+
 import ProjectSelector from "@/components/ProjectSelector";
 import { APP_CONFIG } from "@/lib/constants";
 

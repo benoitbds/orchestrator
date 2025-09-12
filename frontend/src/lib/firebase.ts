@@ -13,4 +13,3 @@ const app = initializeApp({
 export const auth = getAuth(app);
 // Persist session across reloads
 setPersistence(auth, browserLocalPersistence).catch(() => {});
-
