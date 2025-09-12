@@ -27,15 +27,35 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(true);
     try {
       const response = await apiFetch(`/projects`);
-      const data = await response.json();
-      setProjects(data);
-      if (data.length > 0 && !currentProject) {
-        setCurrentProject(data[0]); // Sélectionner le premier par défaut si aucun n'est sélectionné
-      } else if (data.length === 0) {
+      if (!response.ok) {
+        setProjects([]);
+        setCurrentProject(null);
+        return;
+      }
+      let data: unknown = null;
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
+      const normalized: Project[] =
+        Array.isArray(data)
+          ? (data as Project[])
+          : Array.isArray((data as any)?.projects)
+            ? (data as any).projects
+            : Array.isArray((data as any)?.items)
+              ? (data as any).items
+              : [];
+      setProjects(normalized);
+      if (normalized.length > 0 && !currentProject) {
+        setCurrentProject(normalized[0]); // Select first by default
+      } else if (normalized.length === 0) {
         setCurrentProject(null);
       }
     } catch (error) {
       console.error("Failed to fetch projects:", error);
+      setProjects([]);
+      setCurrentProject(null);
     } finally {
       setIsLoading(false);
     }

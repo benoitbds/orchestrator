@@ -50,7 +50,7 @@ describe("ProjectProvider auth gating", () => {
       cb(authMock.currentUser);
       return () => {};
     });
-    apiFetchMock.mockResolvedValue({ json: async () => [{ id: 1, name: "P1" }] });
+    apiFetchMock.mockResolvedValue({ ok: true, json: async () => [{ id: 1, name: "P1" }] });
 
     const { getByTestId } = render(
       <ProjectProvider>
@@ -68,7 +68,7 @@ describe("ProjectProvider auth gating", () => {
       cb = callback;
       return () => {};
     });
-    apiFetchMock.mockResolvedValue({ json: async () => [{ id: 1, name: "P1" }] });
+    apiFetchMock.mockResolvedValue({ ok: true, json: async () => [{ id: 1, name: "P1" }] });
 
     const { getByTestId } = render(
       <ProjectProvider>
@@ -85,5 +85,41 @@ describe("ProjectProvider auth gating", () => {
     cb(null);
     await waitFor(() => expect(getByTestId("count").textContent).toBe("0"));
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("sets empty projects when response not ok", async () => {
+    onAuthStateChangedMock.mockImplementation((authArg, cb) => {
+      authMock.currentUser = { uid: "u1" } as any;
+      cb(authMock.currentUser);
+      return () => {};
+    });
+    apiFetchMock.mockResolvedValue({ ok: false, json: async () => ({ detail: "unauthorized" }) });
+
+    const { getByTestId } = render(
+      <ProjectProvider>
+        <TestChild />
+      </ProjectProvider>
+    );
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(getByTestId("count").textContent).toBe("0"));
+  });
+
+  it("sets empty projects when JSON is not array", async () => {
+    onAuthStateChangedMock.mockImplementation((authArg, cb) => {
+      authMock.currentUser = { uid: "u1" } as any;
+      cb(authMock.currentUser);
+      return () => {};
+    });
+    apiFetchMock.mockResolvedValue({ ok: true, json: async () => ({ detail: "oops" }) });
+
+    const { getByTestId } = render(
+      <ProjectProvider>
+        <TestChild />
+      </ProjectProvider>
+    );
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(getByTestId("count").textContent).toBe("0"));
   });
 });
