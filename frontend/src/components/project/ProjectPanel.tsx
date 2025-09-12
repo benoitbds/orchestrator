@@ -171,7 +171,7 @@ export function ProjectPanel() {
             <SelectValue placeholder="Select a project" />
           </SelectTrigger>
           <SelectContent>
-            {projects.map((project) => (
+            {Array.isArray(projects) && projects.map((project) => (
               <SelectItem key={project.id} value={project.id.toString()}>
                 <div>
                   <div className="font-medium">{project.name}</div>
