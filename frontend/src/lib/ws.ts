@@ -7,4 +7,5 @@ export function getWSUrl(path = "/stream"): string {
     return `${proto}://${host}${path}`;
   }
   return `wss://agent4ba.baq.ovh${path}`;
+
 }

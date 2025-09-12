@@ -141,6 +141,7 @@ export function useAgentStream(
       : null;
     const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
 
+
     try {
       const ws = await openSocket(url, r.wsId!);
 

@@ -15,26 +15,28 @@ afterAll(() => {
 });
 
 describe('getWSUrl', () => {
-  it('returns explicit override when provided', () => {
+  it('returns explicit override when provided', async () => {
     process.env.NEXT_PUBLIC_WS_URL = 'wss://override.example/stream';
-    expect(getWSUrl()).toBe('wss://override.example/stream');
+    await expect(getWSUrl()).resolves.toBe('wss://override.example/stream');
   });
 
-  it('derives ws url from window location (http)', () => {
+  it('derives ws url from window location (http)', async () => {
     (global as any).window = {
       location: { protocol: 'http:', host: 'myhost:3000' },
     } as any;
     expect(getWSUrl('/chat')).toBe('ws://myhost:3000/chat');
+
   });
 
-  it('derives wss url from window location (https)', () => {
+  it('derives wss url from window location (https)', async () => {
     (global as any).window = {
       location: { protocol: 'https:', host: 'agent4ba.baq.ovh' },
     } as any;
-    expect(getWSUrl()).toBe('wss://agent4ba.baq.ovh/stream');
+    await expect(getWSUrl()).resolves.toBe('wss://agent4ba.baq.ovh/stream?token=tok');
   });
 
   it('falls back to default when window undefined', () => {
     expect(getWSUrl('/foo')).toBe('wss://agent4ba.baq.ovh/foo');
+
   });
 });

@@ -94,6 +94,7 @@ export function useConversationHistory(options: UseConversationHistoryOptions = 
           ? await auth.currentUser.getIdToken().catch(() => null)
           : null;
         const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+
         const ws = new WebSocket(url);
       
       ws.onopen = () => {
