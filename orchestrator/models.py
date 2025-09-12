@@ -69,6 +69,7 @@ class RunDetail(BaseModel):
 
     run_id: str
     project_id: int | None = None
+    user_uid: str | None = None
     objective: str
     status: Literal["running", "done"]
     created_at: datetime
@@ -84,6 +85,7 @@ class RunSummary(BaseModel):
 
     run_id: str
     project_id: int | None = None
+    user_uid: str | None = None
     objective: str
     status: Literal["running", "done"]
     created_at: datetime

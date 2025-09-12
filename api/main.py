@@ -248,8 +248,16 @@ async def get_run_cost(run_id: str):
 
 
 @app.get("/runs", response_model=list[RunSummary])
-async def list_runs(project_id: int | None = Query(None)):
-    return crud.get_runs(project_id)
+async def list_runs(
+    project_id: int | None = Query(None), 
+    user_uid: str | None = Query(None),
+    current_user: dict = Depends(get_current_user)
+):
+    # If no user_uid provided, default to current user's conversations
+    if user_uid is None:
+        user_uid = current_user.get("uid")
+    
+    return crud.get_runs(project_id, user_uid)
 
 
 @app.get("/runs/{run_id}/events")
@@ -274,7 +282,8 @@ async def get_run_events(run_id: str, since: int | None = Query(None)):
 
 @app.post("/agent/run_chat_tools")
 async def create_run_with_idempotency(
-    payload: dict = {"objective": "string", "project_id": None, "request_id": None}
+    payload: dict = {"objective": "string", "project_id": None, "request_id": None},
+    current_user: dict = Depends(get_current_user)
 ):
     """Create a new run with request-based idempotency."""
     from orchestrator.events import start_run
@@ -282,6 +291,7 @@ async def create_run_with_idempotency(
     objective = payload.get("objective")
     project_id = payload.get("project_id")
     request_id = payload.get("request_id")
+    user_uid = current_user.get("uid")
     
     if not objective:
         raise HTTPException(status_code=400, detail="Objective is required")
@@ -296,7 +306,7 @@ async def create_run_with_idempotency(
     
     # Create new run
     run_id = str(uuid4())
-    crud.create_run(run_id, objective, project_id, request_id)
+    crud.create_run(run_id, objective, project_id, request_id, user_uid)
     start_run(run_id)
     
     # Start the agent in the background

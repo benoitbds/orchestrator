@@ -363,7 +363,7 @@ def init_db():
     conn.close()
 
 
-def create_run(run_id: str, objective: str, project_id: int | None, request_id: str | None = None) -> None:
+def create_run(run_id: str, objective: str, project_id: int | None, request_id: str | None = None, user_uid: str | None = None) -> None:
     """Create a new run entry.
 
     The caller provides the run_id so that it can be shared with the frontend
@@ -371,8 +371,8 @@ def create_run(run_id: str, objective: str, project_id: int | None, request_id: 
     """
     conn = get_conn()
     conn.execute(
-        "INSERT INTO runs (run_id, project_id, objective, status, request_id) VALUES (?, ?, ?, 'running', ?)",
-        (run_id, project_id, objective, request_id),
+        "INSERT INTO runs (run_id, project_id, objective, status, request_id, user_uid) VALUES (?, ?, ?, 'running', ?, ?)",
+        (run_id, project_id, objective, request_id, user_uid),
     )
     conn.commit()
     conn.close()
@@ -449,17 +449,29 @@ def get_run(run_id: str) -> dict | None:
     return result
 
 
-def get_runs(project_id: int | None = None) -> list[dict]:
+def get_runs(project_id: int | None = None, user_uid: str | None = None) -> list[dict]:
     conn = get_conn()
-    if project_id is None:
+    
+    base_select = "SELECT run_id, project_id, user_uid, objective, status, created_at, completed_at FROM runs"
+    
+    if project_id is None and user_uid is None:
+        rows = conn.execute(f"{base_select} ORDER BY created_at").fetchall()
+    elif project_id is not None and user_uid is None:
         rows = conn.execute(
-            "SELECT run_id, project_id, objective, status, created_at, completed_at FROM runs ORDER BY created_at",
+            f"{base_select} WHERE project_id=? ORDER BY created_at",
+            (project_id,),
+        ).fetchall()
+    elif project_id is None and user_uid is not None:
+        rows = conn.execute(
+            f"{base_select} WHERE user_uid=? ORDER BY created_at",
+            (user_uid,),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT run_id, project_id, objective, status, created_at, completed_at FROM runs WHERE project_id=? ORDER BY created_at",
-            (project_id,),
+            f"{base_select} WHERE project_id=? AND user_uid=? ORDER BY created_at",
+            (project_id, user_uid),
         ).fetchall()
+    
     conn.close()
     return [dict(r) for r in rows]
 

@@ -12,6 +12,7 @@ class Run(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     request_id: Optional[str] = Field(default=None, index=True)
     project_id: Optional[int] = None
+    user_uid: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
     status: str = Field(default="running", nullable=False)
     tool_phase: bool = Field(default=False, nullable=False)
