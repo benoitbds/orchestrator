@@ -1,6 +1,9 @@
 export const labelMap: Record<string, string> = {
   "tool:list_items": "List backlog items",
   "tool:generate_items_from_parent": "Generate child items",
+  "tool:search_documents": "Search documents",
+  "tool:create_item": "Create backlog item",
+  "tool:update_item": "Update backlog item",
 };
 
 export function toLabel(node?: string) {

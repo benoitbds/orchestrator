@@ -1,7 +1,7 @@
 "use client";
 import { ReactNode, useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import { auth } from "@/lib/firebase";
 
@@ -10,6 +10,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [isAuthed, setAuthed] = useState(false);
 
   const pathname = usePathname();
+  const router = useRouter();
 
   // Public routes that must render without auth
   const isPublic = (() => {
@@ -27,14 +28,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  useEffect(() => {
+    if (ready && !isAuthed && !isPublic) {
+      router.push('/login');
+    }
+  }, [ready, isAuthed, isPublic, router]);
+
   if (isPublic) return <>{children}</>;
   if (!ready) return null; // or a loader
 
   if (!isAuthed)
-    return (
-      <div style={{ padding: 24 }}>
-        Please <a href="/login">sign in</a>.
-      </div>
-    );
+    return null; // redirect will happen via useEffect
   return <>{children}</>;
 }

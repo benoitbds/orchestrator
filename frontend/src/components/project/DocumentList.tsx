@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { runAgent } from '@/lib/api';
 import { deleteDocument } from '@/lib/documents';
+import { useHistory } from '@/store/useHistory';
+import { useAgentStream } from '@/hooks/useAgentStream';
 import type { Document } from '@/models/document';
 
 interface DocumentListProps {
@@ -16,7 +18,22 @@ interface DocumentListProps {
 export function DocumentList({ documents, refetch }: DocumentListProps) {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [analyzingId, setAnalyzingId] = useState<number | null>(null);
+  const [currentRunId, setCurrentRunId] = useState<string | undefined>(undefined);
   const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL || '').replace(/\/+$/, '');
+  const { createTurn, promoteTurn } = useHistory();
+  
+  // WebSocket connection for the current analysis
+  useAgentStream(currentRunId, {
+    onFinish: async (summary) => {
+      toast.success('Document analysis completed!');
+      await refetch();
+      setCurrentRunId(undefined);
+    },
+    onError: (error) => {
+      toast.error(`Analysis failed: ${error}`);
+      setCurrentRunId(undefined);
+    }
+  });
 
   const handleDelete = async (id: number) => {
     if (!confirm('Supprimer ce document ?')) return;
@@ -39,8 +56,21 @@ export function DocumentList({ documents, refetch }: DocumentListProps) {
       const objective =
         `Analyze the document "${doc.filename}" and generate Features -> User Stories -> Use Cases with acceptance criteria. ` +
         `Use search_documents to cite relevant excerpts (page/section). De-duplicate and group by theme.`;
-      await runAgent({ project_id: doc.project_id, objective });
-      toast.success('Analysis started. Check the backlog shortly.');
+      
+      // Create conversation turn in history
+      const tempId = `temp-${Date.now()}`;
+      createTurn(tempId, `Analyzing document: ${doc.filename}`, doc.project_id);
+      
+      // Start agent run
+      const response = await runAgent({ project_id: doc.project_id, objective });
+      
+      // If we got a run ID, connect to WebSocket and update history
+      if (response && response.run_id) {
+        promoteTurn(tempId, response.run_id);
+        setCurrentRunId(response.run_id);
+      }
+      
+      toast.success('Analysis started. Check the conversation history for progress.');
       await refetch();
     } catch (e) {
       toast.error('Could not start analysis');

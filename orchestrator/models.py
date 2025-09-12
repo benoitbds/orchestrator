@@ -7,10 +7,12 @@ class Project(BaseModel):
     id: int
     name: str
     description: str | None = None
+    user_uid: str | None = None
 
 class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
+    user_uid: str | None = None
 
 
 class User(BaseModel):

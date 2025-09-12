@@ -18,6 +18,7 @@ import { useHistory } from "@/store/useHistory";
 import { toast } from "sonner";
 import { APP_CONFIG } from "@/lib/constants";
 import { safeId } from "@/lib/safeId";
+import { ProfileMenu } from "@/components/ProfileMenu";
 
 export function AgentShell() {
   const [activeTab, setActiveTab] = useState("backlog");
@@ -151,6 +152,7 @@ export function AgentShell() {
               <h1 className="text-xl font-bold">{APP_CONFIG.name}</h1>
               {getStatusBadge()}
             </div>
+            <ProfileMenu />
           </div>
         </header>
 
@@ -207,6 +209,7 @@ export function AgentShell() {
             <h1 className="text-2xl font-bold">{APP_CONFIG.name}</h1>
             {getStatusBadge()}
           </div>
+          <ProfileMenu />
         </div>
       </header>
 

@@ -15,6 +15,29 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
+function getFirebaseErrorMessage(errorCode: string): string {
+  switch (errorCode) {
+    case 'auth/email-already-in-use':
+      return 'An account with this email already exists. Try signing in instead.';
+    case 'auth/weak-password':
+      return 'Password should be at least 6 characters long.';
+    case 'auth/invalid-email':
+      return 'Please enter a valid email address.';
+    case 'auth/operation-not-allowed':
+      return 'Email/password accounts are not enabled. Please contact support.';
+    case 'auth/user-not-found':
+      return 'No account found with this email address.';
+    case 'auth/wrong-password':
+      return 'Incorrect password. Please try again.';
+    case 'auth/user-disabled':
+      return 'This account has been disabled. Please contact support.';
+    case 'auth/too-many-requests':
+      return 'Too many failed attempts. Please try again later.';
+    default:
+      return '';
+  }
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [pwd, setPwd] = useState("");
@@ -23,15 +46,30 @@ export default function LoginPage() {
 
   async function doSignIn() {
     setErr(null); setLoading("signin");
-    try { await signInWithEmailAndPassword(auth, email, pwd); window.location.href = "/"; }
-    catch (e: any) { setErr(e.message ?? "Sign in failed"); }
+    try { 
+      await signInWithEmailAndPassword(auth, email, pwd); 
+      window.location.href = "/"; 
+    }
+    catch (e: any) { 
+      console.error('Signin error:', e);
+      const errorMessage = getFirebaseErrorMessage(e.code) || e.message || "Sign in failed";
+      setErr(errorMessage);
+    }
     finally { setLoading("none"); }
   }
 
   async function doSignUp() {
     setErr(null); setLoading("signup");
-    try { await createUserWithEmailAndPassword(auth, email, pwd); window.location.href = "/"; }
-    catch (e: any) { setErr(e.message ?? "Sign up failed"); }
+    console.log('Attempting signup with email:', email, 'length:', email.length);
+    try { 
+      await createUserWithEmailAndPassword(auth, email, pwd); 
+      window.location.href = "/"; 
+    }
+    catch (e: any) { 
+      console.error('Signup error:', e);
+      const errorMessage = getFirebaseErrorMessage(e.code) || e.message || "Sign up failed";
+      setErr(errorMessage);
+    }
     finally { setLoading("none"); }
   }
 
@@ -52,11 +90,26 @@ export default function LoginPage() {
         <CardContent className="space-y-4">
           <div className="grid gap-2">
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" placeholder="you@example.com" value={email} onChange={(e)=>setEmail(e.target.value)} />
+            <Input 
+              id="email" 
+              type="email" 
+              placeholder="you@example.com" 
+              value={email} 
+              onChange={(e)=>setEmail(e.target.value)}
+              required
+            />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" placeholder="••••••••" value={pwd} onChange={(e)=>setPwd(e.target.value)} />
+            <Input 
+              id="password" 
+              type="password" 
+              placeholder="••••••••" 
+              value={pwd} 
+              onChange={(e)=>setPwd(e.target.value)}
+              required
+              minLength={6}
+            />
           </div>
           {err && <p className="text-sm text-red-600">{err}</p>}
         </CardContent>

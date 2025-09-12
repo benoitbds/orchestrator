@@ -7,7 +7,6 @@ from .models import (
     Project,
     ProjectCreate,
     Document,
-    DocumentCreate,
     BacklogItem,
     BacklogItemCreate,
     BacklogItemUpdate,
@@ -83,7 +82,9 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS projects ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "name TEXT NOT NULL,"
-        "description TEXT"
+        "description TEXT,"
+        "user_uid TEXT,"
+        "FOREIGN KEY(user_uid) REFERENCES users(uid)"
         ")"
     )
     conn.execute(
@@ -166,6 +167,13 @@ def init_db():
     cols = [row[1] for row in cur.fetchall()]
     if "filepath" not in cols:
         conn.execute("ALTER TABLE documents ADD COLUMN filepath TEXT")
+    
+    # Add user_uid column to projects table for backward compatibility
+    cur = conn.execute("PRAGMA table_info(projects)")
+    cols = [row[1] for row in cur.fetchall()]
+    if "user_uid" not in cols:
+        conn.execute("ALTER TABLE projects ADD COLUMN user_uid TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_uid)")
     
     # Table for document chunks with embeddings
     conn.execute(
@@ -603,17 +611,19 @@ def create_user(uid: str, email: str | None, is_admin: bool = False) -> User:
     return User(uid=uid, email=email, is_admin=is_admin)
 
 
-def create_project(project: ProjectCreate | str, description: str | None = None) -> Project:
+def create_project(project: ProjectCreate | str, description: str | None = None, user_uid: str | None = None) -> Project:
     if isinstance(project, ProjectCreate):
         data = project
+        if user_uid and not data.user_uid:
+            data.user_uid = user_uid
     else:
-        data = ProjectCreate(name=project, description=description)
+        data = ProjectCreate(name=project, description=description, user_uid=user_uid)
 
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO projects (name, description) VALUES (?, ?)",
-        (data.name, data.description)
+        "INSERT INTO projects (name, description, user_uid) VALUES (?, ?, ?)",
+        (data.name, data.description, data.user_uid)
     )
     conn.commit()
     project_id = cursor.lastrowid
@@ -630,10 +640,33 @@ def get_project(project_id: int) -> Optional[Project]:
         return Project(**dict(row))
     return None
 
+def get_project_for_user(project_id: int, user_uid: str) -> Optional[Project]:
+    """Get a project if it belongs to the specified user."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM projects WHERE id = ? AND user_uid = ?", (project_id, user_uid))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return Project(**dict(row))
+    return None
+
 def get_projects() -> List[Project]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM projects ORDER BY name")
+    rows = cursor.fetchall()
+    conn.close()
+    return [Project(**dict(row)) for row in rows]
+
+def get_projects_for_user(user_uid: str) -> List[Project]:
+    """Get all projects for a specific user."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM projects WHERE user_uid = ? ORDER BY name",
+        (user_uid,)
+    )
     rows = cursor.fetchall()
     conn.close()
     return [Project(**dict(row)) for row in rows]

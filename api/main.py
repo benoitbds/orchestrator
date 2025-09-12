@@ -19,7 +19,7 @@ from backend.app.routes.projects import router as project_router
 
 from orchestrator import crud
 from orchestrator.core_loop import run_chat_tools
-from agents import writer, planner
+from agents import writer
 from orchestrator.models import (
     ProjectCreate,
     BacklogItemUpdate,
@@ -39,7 +39,8 @@ from agents.embeddings import chunk_text, embed_texts
 from orchestrator.logging_utils import JSONLHandler
 
 # Load environment variables first
-load_dotenv()
+load_dotenv()  # Load root .env
+load_dotenv("backend/.env")  # Also load backend-specific Firebase config
 
 
 def setup_logging(log_dir: str = "logs") -> None:
@@ -80,7 +81,16 @@ logger = logging.getLogger(__name__)
 
 cred_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
 if cred_path and not firebase_admin._apps:
-    firebase_admin.initialize_app(credentials.Certificate(cred_path))
+    try:
+        if os.path.exists(cred_path):
+            firebase_admin.initialize_app(credentials.Certificate(cred_path))
+            logger.info(f"Firebase initialized with service account: {cred_path}")
+        else:
+            logger.warning(f"Firebase service account file not found: {cred_path}")
+    except Exception as e:
+        logger.error(f"Failed to initialize Firebase: {e}")
+else:
+    logger.warning("FIREBASE_SERVICE_ACCOUNT_PATH not set or Firebase already initialized")
 
 app = FastAPI()
 app.add_middleware(
@@ -101,21 +111,26 @@ class RunAgentPayload(BaseModel):
 
 @app.post("/agent/run")
 async def run_agent(payload: RunAgentPayload, user=Depends(get_current_user)):
-    project = crud.get_project(payload.project_id)
+    project = crud.get_project_for_user(payload.project_id, user["uid"])
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # Generate run_id upfront to return it immediately
+    from uuid import uuid4
+    run_id = str(uuid4())
+    
     async def _bg() -> None:
         try:
-            await planner.run_objective(
-                project_id=payload.project_id, objective=payload.objective
-            )
+            # Create the run first
+            crud.create_run(run_id, payload.objective, payload.project_id)
+            # Then execute it
+            from orchestrator.core_loop import run_chat_tools
+            await run_chat_tools(payload.objective, payload.project_id, run_id)
         except Exception as e:  # pragma: no cover - unexpected runtime errors
             logger.warning("planner failed: %s", e)
 
     asyncio.create_task(_bg())
-    # For backward compatibility the endpoint simply acknowledges the request.
-    return {"ok": True}
+    return {"ok": True, "run_id": run_id}
 
 
 @app.on_event("startup")
@@ -298,17 +313,25 @@ async def create_run_with_idempotency(
 
 # ---- Project endpoints ----
 @app.post("/projects")
-async def create_project(project: ProjectCreate):
-    return crud.create_project(project)
+async def create_project(project: ProjectCreate, user=Depends(get_current_user)):
+    return crud.create_project(project, user_uid=user["uid"])
 
 
 @app.put("/projects/{project_id}")
-async def update_project(project_id: int, project: ProjectCreate):
+async def update_project(project_id: int, project: ProjectCreate, user=Depends(get_current_user)):
+    # Verify user owns this project
+    existing_project = crud.get_project_for_user(project_id, user["uid"])
+    if not existing_project:
+        raise HTTPException(status_code=404, detail="Project not found")
     return crud.update_project(project_id, project)
 
 
 @app.delete("/projects/{project_id}")
-async def delete_project(project_id: int):
+async def delete_project(project_id: int, user=Depends(get_current_user)):
+    # Verify user owns this project
+    existing_project = crud.get_project_for_user(project_id, user["uid"])
+    if not existing_project:
+        raise HTTPException(status_code=404, detail="Project not found")
     return crud.delete_project(project_id)
 
 
@@ -320,10 +343,10 @@ async def delete_project(project_id: int):
     response_model=DocumentOut,
     status_code=201,
 )
-async def upload_document(project_id: int, file: UploadFile = File(...)):
+async def upload_document(project_id: int, file: UploadFile = File(...), user=Depends(get_current_user)):
     """Upload a document for a project."""
 
-    if not crud.get_project(project_id):
+    if not crud.get_project_for_user(project_id, user["uid"]):
         raise HTTPException(status_code=404, detail="project not found")
 
     content_bytes = await file.read()
@@ -360,10 +383,10 @@ async def upload_document(project_id: int, file: UploadFile = File(...)):
     "/projects/{project_id}/documents",
     response_model=list[DocumentOut],
 )
-async def list_documents(project_id: int):
+async def list_documents(project_id: int, user=Depends(get_current_user)):
     """List documents for a project."""
 
-    if not crud.get_project(project_id):
+    if not crud.get_project_for_user(project_id, user["uid"]):
         raise HTTPException(status_code=404, detail="project not found")
     return crud.get_documents(project_id)
 
@@ -413,11 +436,12 @@ def delete_document_api(doc_id: int):
 @app.post("/projects/{project_id}/search")
 async def search_documents(
     project_id: int,
-    query: dict
+    query: dict,
+    user=Depends(get_current_user)
 ):
     """Search for similar document chunks using semantic search."""
     
-    if not crud.get_project(project_id):
+    if not crud.get_project_for_user(project_id, user["uid"]):
         raise HTTPException(status_code=404, detail="project not found")
     
     query_text = query.get("query", "")
@@ -463,16 +487,16 @@ async def search_documents(
 
 
 @app.get("/projects/{project_id}/layout")
-async def get_project_layout(project_id: int):
-    if not crud.get_project(project_id):
+async def get_project_layout(project_id: int, user=Depends(get_current_user)):
+    if not crud.get_project_for_user(project_id, user["uid"]):
         raise HTTPException(status_code=404, detail="project not found")
     nodes = crud.get_layout(project_id)
     return {"nodes": nodes}
 
 
 @app.put("/projects/{project_id}/layout")
-async def put_project_layout(project_id: int, payload: LayoutUpdate):
-    if not crud.get_project(project_id):
+async def put_project_layout(project_id: int, payload: LayoutUpdate, user=Depends(get_current_user)):
+    if not crud.get_project_for_user(project_id, user["uid"]):
         raise HTTPException(status_code=404, detail="project not found")
     for node in payload.nodes:
         item = crud.get_item(node.item_id)

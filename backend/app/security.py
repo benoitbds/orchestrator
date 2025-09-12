@@ -1,4 +1,5 @@
 import os
+import firebase_admin
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from firebase_admin import auth as fb_auth
@@ -16,10 +17,19 @@ http_bearer = HTTPBearer(auto_error=False)
 def get_current_user(creds: HTTPAuthorizationCredentials = Depends(http_bearer)):
     if creds is None:
         raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Check if Firebase is properly initialized
+    if not firebase_admin._apps:
+        raise HTTPException(
+            status_code=503, 
+            detail="Firebase authentication not configured. Please check FIREBASE_SERVICE_ACCOUNT_PATH."
+        )
+    
     try:
         t = fb_auth.verify_id_token(creds.credentials)
     except Exception as e:  # pragma: no cover - verification details handled by Firebase
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+    
     uid = t["uid"]
     email = (t.get("email") or "").lower()
     u = crud.get_user_by_uid(uid)
