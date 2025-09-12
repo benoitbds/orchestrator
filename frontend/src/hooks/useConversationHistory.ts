@@ -81,13 +81,14 @@ export function useConversationHistory(options: UseConversationHistoryOptions = 
   }, []);
 
   // Subscribe to real-time events for a run
-  const subscribeToRun = useCallback((runId: string) => {
+  const subscribeToRun = useCallback(async (runId: string) => {
     if (wsConnections.current.has(runId)) {
       return; // Already subscribed
     }
 
       try {
-        const ws = new WebSocket(getWSUrl('/api/stream'));
+        const url = await getWSUrl('/api/stream');
+        const ws = new WebSocket(url);
       
       ws.onopen = () => {
         ws.send(JSON.stringify({

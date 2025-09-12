@@ -42,32 +42,35 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
     }
     load();
 
-      const ws = new WebSocket(getWSUrl("/stream"));
+    (async () => {
+      const url = await getWSUrl("/stream");
+      const ws = new WebSocket(url);
       wsRef.current = ws;
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ run_id: params.run_id }));
-    };
-    ws.onmessage = evt => {
-      const msg = JSON.parse(evt.data);
-      setRun(prev => {
-        if (!prev) return prev;
-        if (msg.status === "done") {
-          ws.close();
-          return {
-            ...prev,
-            status: "done",
-            html: msg.html ?? prev.html,
-            summary: msg.summary ?? prev.summary,
-            completed_at: msg.completed_at ?? prev.completed_at,
-          };
-        }
-        return prev;
-      });
-    };
-    ws.onerror = () => ws.close();
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ run_id: params.run_id }));
+      };
+      ws.onmessage = (evt) => {
+        const msg = JSON.parse(evt.data);
+        setRun((prev) => {
+          if (!prev) return prev;
+          if (msg.status === "done") {
+            ws.close();
+            return {
+              ...prev,
+              status: "done",
+              html: msg.html ?? prev.html,
+              summary: msg.summary ?? prev.summary,
+              completed_at: msg.completed_at ?? prev.completed_at,
+            };
+          }
+          return prev;
+        });
+      };
+      ws.onerror = () => ws.close();
+    })();
     return () => {
       cancelled = true;
-      ws.close();
+      wsRef.current?.close();
     };
   }, [params.run_id]);
 

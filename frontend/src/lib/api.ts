@@ -1,3 +1,5 @@
+import { auth } from './firebase';
+
 export function getApiBaseUrl(): string {
   let base = process.env.NEXT_PUBLIC_API_BASE_URL ?? '/api';
   if (!base) return '';
@@ -5,14 +7,23 @@ export function getApiBaseUrl(): string {
   return base;
 }
 
-export function http(path: string, init?: RequestInit) {
+async function getToken(): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  const user = auth.currentUser;
+  return user ? await user.getIdToken() : null;
+}
+
+export async function http(path: string, init?: RequestInit) {
   const base = getApiBaseUrl();
   const url = `${base}${path.startsWith('/') ? path : '/' + path}`;
-  return fetch(url, init);
+  const headers = new Headers(init?.headers);
+  const token = await getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return fetch(url, { ...init, headers });
 }
 
 export async function runAgent(payload: { project_id: number; objective: string }) {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/agent/run`, {
+  const res = await http(`/agent/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

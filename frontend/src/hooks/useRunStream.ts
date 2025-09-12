@@ -170,10 +170,11 @@ export function useRunStream(options: UseRunStreamOptions) {
     }
   };
 
-  const openSocket = useCallback(() => {
+  const openSocket = useCallback(async () => {
     manualClose.current = false;
     closeSocket();
-      const ws = new WebSocket(getWSUrl('/stream'));
+    const url = await getWSUrl('/stream');
+    const ws = new WebSocket(url);
     wsRef.current = ws;
     ws.onmessage = handleMessage;
     ws.onclose = () => {

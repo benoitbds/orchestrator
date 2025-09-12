@@ -7,11 +7,12 @@ from uuid import uuid4
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import File, FastAPI, HTTPException, Query, UploadFile, Response
+from fastapi import File, FastAPI, HTTPException, Query, UploadFile, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from api.ws import router as ws_router
+from api.auth import get_current_user
 from orchestrator import crud
 from orchestrator.core_loop import run_chat_tools
 from agents import writer, planner
@@ -83,7 +84,7 @@ class RunAgentPayload(BaseModel):
 
 
 @app.post("/agent/run")
-async def run_agent(payload: RunAgentPayload):
+async def run_agent(payload: RunAgentPayload, user=Depends(get_current_user)):
     project = crud.get_project(payload.project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
