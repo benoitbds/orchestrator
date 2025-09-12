@@ -1,6 +1,8 @@
 "use client";
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Project } from '@/models/project'; // Nous créerons ce modèle
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { apiFetch } from '@/lib/api';
 
 interface ProjectContextType {
@@ -21,6 +23,7 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const fetchProjects = async () => {
+    if (!auth.currentUser) return;
     setIsLoading(true);
     try {
       const response = await apiFetch(`/projects`);
@@ -94,7 +97,20 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
   };
 
   useEffect(() => {
-    fetchProjects();
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setProjects([]);
+        setCurrentProject(null);
+        setIsLoading(false);
+        return;
+      }
+      try {
+        await fetchProjects();
+      } catch (e) {
+        console.error("fetchProjects after sign-in failed:", e);
+      }
+    });
+    return () => unsubscribe();
   }, []);
 
   const refreshProjects = fetchProjects; // Alias for clarity
