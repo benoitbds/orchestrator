@@ -1,4 +1,5 @@
 "use client";
+
 import { useState } from "react";
 import { auth } from "@/lib/firebase";
 import {
@@ -8,63 +9,73 @@ import {
   signInWithPopup,
 } from "firebase/auth";
 
+// shadcn/ui
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [pwd, setPwd] = useState("");
+  const [loading, setLoading] = useState<"none"|"signin"|"signup"|"google">("none");
   const [err, setErr] = useState<string | null>(null);
 
   async function doSignIn() {
-    setErr(null);
-    try {
-      await signInWithEmailAndPassword(auth, email, pwd);
-      window.location.href = "/";
-    } catch (e: any) {
-      setErr(e.message ?? "Sign in failed");
-    }
+    setErr(null); setLoading("signin");
+    try { await signInWithEmailAndPassword(auth, email, pwd); window.location.href = "/"; }
+    catch (e: any) { setErr(e.message ?? "Sign in failed"); }
+    finally { setLoading("none"); }
   }
 
   async function doSignUp() {
-    setErr(null);
-    try {
-      await createUserWithEmailAndPassword(auth, email, pwd);
-      window.location.href = "/";
-    } catch (e: any) {
-      setErr(e.message ?? "Sign up failed");
-    }
+    setErr(null); setLoading("signup");
+    try { await createUserWithEmailAndPassword(auth, email, pwd); window.location.href = "/"; }
+    catch (e: any) { setErr(e.message ?? "Sign up failed"); }
+    finally { setLoading("none"); }
   }
 
   async function doGoogle() {
-    setErr(null);
-    try {
-      await signInWithPopup(auth, new GoogleAuthProvider());
-      window.location.href = "/";
-    } catch (e: any) {
-      setErr(e.message ?? "Google sign-in failed");
-    }
+    setErr(null); setLoading("google");
+    try { await signInWithPopup(auth, new GoogleAuthProvider()); window.location.href = "/"; }
+    catch (e: any) { setErr(e.message ?? "Google sign-in failed"); }
+    finally { setLoading("none"); }
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: "48px auto", fontFamily: "system-ui" }}>
-      <h1>Sign in</h1>
-      <input
-        placeholder="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        style={{ width: "100%", margin: "8px 0", padding: 8 }}
-      />
-      <input
-        placeholder="password"
-        type="password"
-        value={pwd}
-        onChange={(e) => setPwd(e.target.value)}
-        style={{ width: "100%", margin: "8px 0", padding: 8 }}
-      />
-      {err && <div style={{ color: "crimson" }}>{err}</div>}
-      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <button onClick={doSignIn}>Sign in</button>
-        <button onClick={doSignUp}>Create account</button>
-        <button onClick={doGoogle}>Continue with Google</button>
-      </div>
+    <div className="min-h-dvh flex items-center justify-center bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-50 to-slate-100 p-6">
+      <Card className="w-full max-w-md shadow-lg">
+        <CardHeader>
+          <CardTitle className="text-2xl">Sign in</CardTitle>
+          <CardDescription>Access your Agent 4 BA workspace</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-2">
+            <Label htmlFor="email">Email</Label>
+            <Input id="email" type="email" placeholder="you@example.com" value={email} onChange={(e)=>setEmail(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="password">Password</Label>
+            <Input id="password" type="password" placeholder="••••••••" value={pwd} onChange={(e)=>setPwd(e.target.value)} />
+          </div>
+          {err && <p className="text-sm text-red-600">{err}</p>}
+        </CardContent>
+        <CardFooter className="flex flex-col gap-2">
+          <Button className="w-full" onClick={doSignIn} disabled={loading!=="none"}>
+            {loading==="signin" ? "Signing in..." : "Sign in"}
+          </Button>
+          <Button variant="secondary" className="w-full" onClick={doSignUp} disabled={loading!=="none"}>
+            {loading==="signup" ? "Creating..." : "Create account"}
+          </Button>
+          <div className="relative my-1 w-full text-center text-xs text-slate-500">
+            <span className="bg-white px-2 relative z-10">or</span>
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 border-t"></div>
+          </div>
+          <Button variant="outline" className="w-full" onClick={doGoogle} disabled={loading!=="none"}>
+            {loading==="google" ? "Connecting..." : "Continue with Google"}
+          </Button>
+        </CardFooter>
+      </Card>
     </div>
   );
 }
