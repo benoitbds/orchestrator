@@ -1,7 +1,8 @@
 import logging
+from unittest.mock import Mock
 
-import httpx
 import pytest
+import requests
 
 import orchestrator.external_info as external_info_module
 from orchestrator.external_info import retrieve_external_info
@@ -14,14 +15,12 @@ class TestRetrieveExternalInfo:
         def fake_get(url, timeout):
             captured["url"] = url
             captured["timeout"] = timeout
-            request = httpx.Request("GET", url)
-            return httpx.Response(
-                status_code=200,
-                json={"extract": "A" * 1200},
-                request=request,
-            )
+            response = Mock()
+            response.status_code = 200
+            response.json.return_value = {"extract": "A" * 1200}
+            return response
 
-        monkeypatch.setattr(external_info_module.httpx, "get", fake_get)
+        monkeypatch.setattr(external_info_module.requests, "get", fake_get)
 
         result = retrieve_external_info("Sample Topic")
 
@@ -31,18 +30,20 @@ class TestRetrieveExternalInfo:
 
     def test_returns_empty_string_for_missing_summary(self, monkeypatch):
         def fake_get(url, timeout):
-            request = httpx.Request("GET", url)
-            return httpx.Response(status_code=404, request=request)
+            response = Mock()
+            response.status_code = 404
+            response.json.side_effect = AssertionError("should not be called")
+            return response
 
-        monkeypatch.setattr(external_info_module.httpx, "get", fake_get)
+        monkeypatch.setattr(external_info_module.requests, "get", fake_get)
 
         assert retrieve_external_info("Unknown Topic") == ""
 
     def test_returns_empty_string_when_request_fails(self, monkeypatch, caplog):
         def fake_get(url, timeout):
-            raise httpx.RequestError("boom", request=httpx.Request("GET", url))
+            raise requests.RequestException("boom")
 
-        monkeypatch.setattr(external_info_module.httpx, "get", fake_get)
+        monkeypatch.setattr(external_info_module.requests, "get", fake_get)
 
         with caplog.at_level(logging.WARNING):
             assert retrieve_external_info("Network Issue") == ""
@@ -56,9 +57,11 @@ class TestRetrieveExternalInfo:
 
     def test_returns_empty_string_when_extract_missing(self, monkeypatch):
         def fake_get(url, timeout):
-            request = httpx.Request("GET", url)
-            return httpx.Response(status_code=200, json={}, request=request)
+            response = Mock()
+            response.status_code = 200
+            response.json.return_value = {}
+            return response
 
-        monkeypatch.setattr(external_info_module.httpx, "get", fake_get)
+        monkeypatch.setattr(external_info_module.requests, "get", fake_get)
 
         assert retrieve_external_info("No Extract") == ""

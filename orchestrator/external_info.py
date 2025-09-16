@@ -5,7 +5,8 @@ import logging
 from typing import Final
 from urllib.parse import quote
 
-import httpx
+import requests
+from requests import RequestException
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +45,13 @@ def retrieve_external_info(query: str, *, timeout: float = 5.0) -> str:
     url = _WIKIPEDIA_SUMMARY_URL.format(encoded_query)
 
     try:
-        response = httpx.get(url, timeout=timeout)
-        response.raise_for_status()
-    except httpx.HTTPStatusError:
-        logger.debug("No summary available for query '%s'", normalised_query)
-        return ""
-    except httpx.RequestError as exc:
+        response = requests.get(url, timeout=timeout)
+    except RequestException as exc:
         logger.warning("Failed to retrieve external info: %s", exc)
+        return ""
+
+    if response.status_code != 200:
+        logger.debug("No summary available for query '%s'", normalised_query)
         return ""
 
     try:
