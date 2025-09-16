@@ -1,6 +1,6 @@
 import pytest
 
-from backend.agent.utterances import reformulate_ack
+from backend.agent.utterances import ask_clarification, reformulate_ack
 
 
 class TestReformulateAck:
@@ -32,3 +32,50 @@ class TestReformulateAck:
 
         assert "« ajouter une vérification des doublons dans le reporting »" in utterance
         assert "Bonjour" not in utterance
+
+
+class TestAskClarification:
+    def test_returns_prompt_without_options(self):
+        prompt = ask_clarification("clarifier la priorité")
+
+        assert prompt == "Pour préciser : clarifier la priorité ?"
+
+    def test_includes_limited_options(self):
+        options = [
+            "Option A",
+            "Option B",
+            "Option C",
+            "Option D",
+            "Option E",
+            "Option F",  # should be ignored due to cap
+        ]
+
+        prompt = ask_clarification("quel plan suivre", options)
+
+        assert (
+            prompt
+            == "Pour être sûr : quel plan suivre ? Choix possibles : « Option A » / « Option B » / "
+            "« Option C » / « Option D » / « Option E »"
+            "."
+        )
+
+    def test_filters_blank_options(self):
+        prompt = ask_clarification("quel livrable", ["  ", "MVP", "", "Pilot  "])
+
+        assert (
+            prompt
+            == "Pour être sûr : quel livrable ? Choix possibles : « MVP » / « Pilot »."
+        )
+
+    @pytest.mark.parametrize("question", ["", "   ", 123])
+    def test_rejects_invalid_question(self, question):
+        with pytest.raises(ValueError):
+            ask_clarification(question)  # type: ignore[arg-type]
+
+    def test_rejects_invalid_options_container(self):
+        with pytest.raises(ValueError):
+            ask_clarification("quel choix", options="not a list")
+
+    def test_rejects_non_string_option(self):
+        with pytest.raises(ValueError):
+            ask_clarification("quel choix", options=["ok", 2])

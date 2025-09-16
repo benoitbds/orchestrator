@@ -2,6 +2,12 @@
 
 from .dialogue_policy import Decision, dialogue_policy
 from .nlu import classify_intent
-from .utterances import reformulate_ack
+from .utterances import ask_clarification, reformulate_ack
 
-__all__ = ["Decision", "dialogue_policy", "classify_intent", "reformulate_ack"]
+__all__ = [
+    "Decision",
+    "dialogue_policy",
+    "classify_intent",
+    "reformulate_ack",
+    "ask_clarification",
+]

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import Final, Iterable, Sequence
 
 _ACK_PREFIX: Final[str] = "Bien reçu."
 _REFORMULATION_PREFIX: Final[str] = "Si je comprends bien, tu veux"
@@ -33,6 +33,7 @@ _REQUEST_PREFIX_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
 _PRONOUN_PREFIX_PATTERN: Final[re.Pattern[str]] = re.compile(r"^(?:me|m'|moi|nous)\s+", re.IGNORECASE)
 
 _WHITESPACE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\s+")
+_MAX_OPTIONS: Final[int] = 5
 
 
 def _validate_user_message(user_message: str) -> str:
@@ -93,6 +94,31 @@ def _wrap_focus(text: str) -> str:
     return f"« {cleaned} »"
 
 
+def _validate_prompt_component(value: str, *, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a non-empty string")
+    cleaned = _condense_whitespace(value.strip())
+    if not cleaned:
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return _strip_trailing_punctuation(cleaned)
+
+
+def _normalise_options(options: Sequence[str]) -> list[str]:
+    cleaned_options: list[str] = []
+    for raw_option in options:
+        if not isinstance(raw_option, str):
+            raise ValueError("options must contain only strings")
+        stripped = raw_option.strip()
+        if not stripped:
+            continue
+        normalised = _validate_prompt_component(stripped, field_name="option")
+        if normalised:
+            cleaned_options.append(normalised)
+        if len(cleaned_options) >= _MAX_OPTIONS:
+            break
+    return cleaned_options
+
+
 def _extract_quoted_focus(message: str) -> str | None:
     match = _QUOTED_TEXT_PATTERN.search(message)
     if match:
@@ -135,3 +161,33 @@ def reformulate_ack(user_message: str) -> str:
     wrapped_focus = _wrap_focus(focus)
 
     return f"{_ACK_PREFIX} {_REFORMULATION_PREFIX} {wrapped_focus}. {_ACK_SUFFIX}"
+
+
+def _format_options(options: Iterable[str]) -> str:
+    return " / ".join(f"« {option} »" for option in options)
+
+
+def ask_clarification(
+    what_is_unclear: str, options: Sequence[str] | None = None
+) -> str:
+    """Return a concise clarification prompt with optional choice hints."""
+
+    question = _validate_prompt_component(
+        what_is_unclear, field_name="what_is_unclear"
+    )
+
+    if options is None:
+        return f"Pour préciser : {question} ?"
+
+    if not isinstance(options, Sequence) or isinstance(options, (str, bytes)):
+        raise ValueError("options must be a sequence of strings")
+
+    cleaned_options = _normalise_options(options)
+
+    if not cleaned_options:
+        return f"Pour préciser : {question} ?"
+
+    formatted_options = _format_options(cleaned_options)
+    return (
+        f"Pour être sûr : {question} ? Choix possibles : {formatted_options}."
+    )
