@@ -1,5 +1,8 @@
+import logging
+
 import pytest
 
+import orchestrator.conversation_memory as conversation_memory_module
 from orchestrator.conversation_memory import ConversationMemory
 
 
@@ -60,3 +63,104 @@ class TestGetRecentMessages:
     def test_rejects_non_positive_n(self, memory):
         with pytest.raises(ValueError):
             memory.get_recent_messages(0)
+
+
+class TestSummarizeConversation:
+    def test_auto_summarize_trims_history_and_updates_summary(
+        self, memory, monkeypatch
+    ):
+        captured_kwargs = {}
+
+        class DummyChatCompletion:
+            @staticmethod
+            def create(**kwargs):
+                captured_kwargs.update(kwargs)
+                return {
+                    "choices": [
+                        {"message": {"content": "Updated summary of conversation"}}
+                    ]
+                }
+
+        monkeypatch.setattr(
+            conversation_memory_module.openai,
+            "ChatCompletion",
+            DummyChatCompletion,
+        )
+
+        for index in range(ConversationMemory.SUMMARIZE_THRESHOLD + 1):
+            role = "user" if index % 2 == 0 else "assistant"
+            memory.add_message(role, f"message {index}")
+
+        assert memory.summary == "Updated summary of conversation"
+        assert len(memory.messages) == ConversationMemory.SUMMARY_RECENT_MESSAGES
+        assert captured_kwargs["model"] == ConversationMemory.SUMMARY_MODEL
+        assert "Existing summary" in captured_kwargs["messages"][1]["content"]
+
+    def test_manual_summarize_returns_false_when_below_threshold(
+        self, memory, monkeypatch
+    ):
+        class DummyChatCompletion:
+            @staticmethod
+            def create(**_):
+                raise AssertionError("ChatCompletion should not be invoked")
+
+        monkeypatch.setattr(
+            conversation_memory_module.openai,
+            "ChatCompletion",
+            DummyChatCompletion,
+        )
+
+        for index in range(ConversationMemory.SUMMARIZE_THRESHOLD):
+            memory.add_message("user", f"short {index}")
+
+        assert memory.summarize_conversation() is False
+
+    def test_add_message_logs_warning_when_summary_fails(
+        self, memory, monkeypatch, caplog
+    ):
+        class DummyChatCompletion:
+            @staticmethod
+            def create(**_):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            conversation_memory_module.openai,
+            "ChatCompletion",
+            DummyChatCompletion,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            for index in range(ConversationMemory.SUMMARIZE_THRESHOLD):
+                memory.add_message("user", f"message {index}")
+
+            memory.add_message("assistant", "trigger summary failure")
+
+        assert "Skipping conversation summarization" in caplog.text
+        assert memory.summary == ""
+        assert len(memory.messages) == ConversationMemory.SUMMARIZE_THRESHOLD + 1
+
+    def test_manual_summarize_raises_when_openai_errors(
+        self, memory, monkeypatch
+    ):
+        monkeypatch.setattr(
+            ConversationMemory,
+            "_maybe_summarize",
+            lambda self: None,
+        )
+
+        for index in range(ConversationMemory.SUMMARIZE_THRESHOLD + 2):
+            memory.add_message("user", f"message {index}")
+
+        class DummyChatCompletion:
+            @staticmethod
+            def create(**_):
+                raise ValueError("network issue")
+
+        monkeypatch.setattr(
+            conversation_memory_module.openai,
+            "ChatCompletion",
+            DummyChatCompletion,
+        )
+
+        with pytest.raises(RuntimeError, match="summarization failed"):
+            memory.summarize_conversation()
