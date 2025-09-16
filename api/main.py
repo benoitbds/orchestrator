@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from api.ws import router as ws_router
-from backend.app.security import get_current_user
+from backend.app.security import get_current_user_optional
 from backend.app.routes.projects import router as project_router
 
 from orchestrator import crud
@@ -110,7 +110,7 @@ class RunAgentPayload(BaseModel):
 
 
 @app.post("/agent/run")
-async def run_agent(payload: RunAgentPayload, user=Depends(get_current_user)):
+async def run_agent(payload: RunAgentPayload, user=Depends(get_current_user_optional)):
     project = crud.get_project_for_user(payload.project_id, user["uid"])
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -251,7 +251,7 @@ async def get_run_cost(run_id: str):
 async def list_runs(
     project_id: int | None = Query(None), 
     user_uid: str | None = Query(None),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_optional)
 ):
     # If no user_uid provided, default to current user's conversations
     if user_uid is None:
@@ -283,7 +283,7 @@ async def get_run_events(run_id: str, since: int | None = Query(None)):
 @app.post("/agent/run_chat_tools")
 async def create_run_with_idempotency(
     payload: dict = {"objective": "string", "project_id": None, "request_id": None},
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_optional)
 ):
     """Create a new run with request-based idempotency."""
     from orchestrator.events import start_run
@@ -323,12 +323,12 @@ async def create_run_with_idempotency(
 
 # ---- Project endpoints ----
 @app.post("/projects")
-async def create_project(project: ProjectCreate, user=Depends(get_current_user)):
+async def create_project(project: ProjectCreate, user=Depends(get_current_user_optional)):
     return crud.create_project(project, user_uid=user["uid"])
 
 
 @app.put("/projects/{project_id}")
-async def update_project(project_id: int, project: ProjectCreate, user=Depends(get_current_user)):
+async def update_project(project_id: int, project: ProjectCreate, user=Depends(get_current_user_optional)):
     # Verify user owns this project
     existing_project = crud.get_project_for_user(project_id, user["uid"])
     if not existing_project:
@@ -337,7 +337,7 @@ async def update_project(project_id: int, project: ProjectCreate, user=Depends(g
 
 
 @app.delete("/projects/{project_id}")
-async def delete_project(project_id: int, user=Depends(get_current_user)):
+async def delete_project(project_id: int, user=Depends(get_current_user_optional)):
     # Verify user owns this project
     existing_project = crud.get_project_for_user(project_id, user["uid"])
     if not existing_project:
@@ -353,7 +353,7 @@ async def delete_project(project_id: int, user=Depends(get_current_user)):
     response_model=DocumentOut,
     status_code=201,
 )
-async def upload_document(project_id: int, file: UploadFile = File(...), user=Depends(get_current_user)):
+async def upload_document(project_id: int, file: UploadFile = File(...), user=Depends(get_current_user_optional)):
     """Upload a document for a project."""
 
     if not crud.get_project_for_user(project_id, user["uid"]):
@@ -393,7 +393,7 @@ async def upload_document(project_id: int, file: UploadFile = File(...), user=De
     "/projects/{project_id}/documents",
     response_model=list[DocumentOut],
 )
-async def list_documents(project_id: int, user=Depends(get_current_user)):
+async def list_documents(project_id: int, user=Depends(get_current_user_optional)):
     """List documents for a project."""
 
     if not crud.get_project_for_user(project_id, user["uid"]):
@@ -447,7 +447,7 @@ def delete_document_api(doc_id: int):
 async def search_documents(
     project_id: int,
     query: dict,
-    user=Depends(get_current_user)
+    user=Depends(get_current_user_optional)
 ):
     """Search for similar document chunks using semantic search."""
     
@@ -497,7 +497,7 @@ async def search_documents(
 
 
 @app.get("/projects/{project_id}/layout")
-async def get_project_layout(project_id: int, user=Depends(get_current_user)):
+async def get_project_layout(project_id: int, user=Depends(get_current_user_optional)):
     if not crud.get_project_for_user(project_id, user["uid"]):
         raise HTTPException(status_code=404, detail="project not found")
     nodes = crud.get_layout(project_id)
@@ -505,7 +505,7 @@ async def get_project_layout(project_id: int, user=Depends(get_current_user)):
 
 
 @app.put("/projects/{project_id}/layout")
-async def put_project_layout(project_id: int, payload: LayoutUpdate, user=Depends(get_current_user)):
+async def put_project_layout(project_id: int, payload: LayoutUpdate, user=Depends(get_current_user_optional)):
     if not crud.get_project_for_user(project_id, user["uid"]):
         raise HTTPException(status_code=404, detail="project not found")
     for node in payload.nodes:
