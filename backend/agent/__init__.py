@@ -2,6 +2,7 @@
 
 from .confirm_gate import resolve_confirmation, stage_risky_intent
 from .dialogue_policy import Decision, dialogue_policy
+from .narrator import narrate_steps
 from .nlu import classify_intent
 from .utterances import ask_clarification, reformulate_ack
 
@@ -13,4 +14,5 @@ __all__ = [
     "resolve_confirmation",
     "reformulate_ack",
     "ask_clarification",
+    "narrate_steps",
 ]
