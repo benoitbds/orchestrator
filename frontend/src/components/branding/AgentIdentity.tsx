@@ -1,15 +1,6 @@
 import { cn } from "@/lib/utils";
+import { AGENT4BA_ASCII_ART } from "./ascii";
 
-const ASCII_LINES = [
-  "   _____                         __       _____   __________    _____   ",
-  "  /  _  \\    ____   ____   _____/  |_    /  |  |  \\______   \\  /  _  \\  ",
-  " /  /_\\  \\  / ___\\_/ __ \\ /    \\   __\\  /   |  |_  |    |  _/ /  /_\\  \\ ",
-  "/    |    \\ / /_/  >  ___/|   |  \\  |   /    ^   /  |    |   \\    |    \\ ",
-  "\\____|__  /\\___  / \\___  >___|  /__|   \\____   |   |______  /\\____|__  /",
-  "        \\//_____/      \\/     \\/            |__|          \\/         \\/ ",
-];
-
-const ASCII_ART = ASCII_LINES.join("\n");
 
 type AgentIdentityProps = {
   className?: string;
@@ -41,7 +32,8 @@ export function AgentIdentity({ className, size = "desktop" }: AgentIdentityProp
           preTextSize,
         )}
       >
-        {ASCII_ART}
+        {AGENT4BA_ASCII_ART}
+
       </pre>
       <div className="relative z-10 border-t border-lime-500/30 bg-slate-900/80 px-3 py-2 md:px-5">
         <p className="text-[11px] font-semibold uppercase tracking-[0.5em] text-lime-200/80">
