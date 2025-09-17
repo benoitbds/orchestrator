@@ -1,8 +1,8 @@
 from typing import Any, Iterable, List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
-from backend.app.security import get_current_user
+from backend.app.security import get_current_user_optional
 from orchestrator import crud
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -23,7 +23,7 @@ def _filter_projects_for_user(projects: Iterable[Any], user_uid: str) -> list[An
 
 
 @router.get("", response_model=List[Any])
-def list_projects(user=Depends(get_current_user)):
+def list_projects(request: Request, user=Depends(get_current_user_optional)):
     projects: list[Any] = []
 
     get_for_user = getattr(crud, "get_projects_for_user", None)

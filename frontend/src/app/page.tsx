@@ -75,6 +75,7 @@ function FeatureHighlights() {
   );
 }
 
+
 export default function Home() {
   return (
     <main className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden bg-slate-950 px-4 py-16 text-slate-100">
