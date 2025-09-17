@@ -16,9 +16,9 @@ import { AgentActionsPanel } from "@/components/history/AgentActionsPanel";
 import { useMessagesStore, type Message } from "@/stores/useMessagesStore";
 import { useHistory } from "@/store/useHistory";
 import { toast } from "sonner";
-import { APP_CONFIG } from "@/lib/constants";
 import { safeId } from "@/lib/safeId";
 import { ProfileMenu } from "@/components/ProfileMenu";
+import { AgentIdentity } from "@/components/branding/AgentIdentity";
 
 export function AgentShell() {
   const [activeTab, setActiveTab] = useState("backlog");
@@ -122,12 +122,22 @@ export function AgentShell() {
     const currentRun = getCurrentRun();
     if (currentRun?.status === "running") {
       return (
-        <Badge variant="secondary" className="animate-pulse">
+        <Badge
+          variant="secondary"
+          className="border-emerald-400/40 bg-emerald-500/15 text-emerald-100 shadow-[0_0_10px_rgba(34,197,94,0.35)] animate-pulse"
+        >
           Running
         </Badge>
       );
     }
-    return <Badge variant="outline">Idle</Badge>;
+    return (
+      <Badge
+        variant="outline"
+        className="border-lime-500/40 bg-slate-900/70 text-lime-200"
+      >
+        Idle
+      </Badge>
+    );
   };
 
   const [isMobile, setIsMobile] = useState(false);
@@ -146,13 +156,20 @@ export function AgentShell() {
     return (
       <div className="flex flex-col h-screen bg-background">
         {/* Mobile Header */}
-        <header className="border-b p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold">{APP_CONFIG.name}</h1>
-              {getStatusBadge()}
+        <header className="relative border-b border-lime-500/30 bg-slate-950/95 p-4 text-slate-100 shadow-lg">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(190,242,100,0.18),_transparent_70%)]"
+          />
+          <div className="relative z-10 flex flex-col gap-4">
+            <div className="flex items-start justify-between gap-3">
+              <AgentIdentity size="mobile" className="w-full max-w-[320px]" />
+              <ProfileMenu />
             </div>
-            <ProfileMenu />
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.4em] text-lime-100/70">
+              {getStatusBadge()}
+              <span className="text-lime-300/80">Status</span>
+            </div>
           </div>
         </header>
 
@@ -162,7 +179,7 @@ export function AgentShell() {
           onValueChange={setActiveTab}
           className="flex-1 flex flex-col"
         >
-          <TabsList className="grid w-full grid-cols-3 rounded-none">
+          <TabsList className="grid w-full grid-cols-3 rounded-none border-b border-lime-500/20 bg-slate-950/80 text-lime-100">
             <TabsTrigger value="projects">Projects</TabsTrigger>
             <TabsTrigger value="backlog">Backlog</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
@@ -175,7 +192,7 @@ export function AgentShell() {
 
             <TabsContent value="backlog" className="flex-1 flex flex-col m-0">
               {/* User Input on top */}
-              <div className="border-b">
+              <div className="border-b border-border/60 bg-background/80">
                 <ChatComposer
                   onSendMessage={handleSend}
                   isLoading={isRunning()}
@@ -183,13 +200,13 @@ export function AgentShell() {
                 />
               </div>
               {/* Backlog below */}
-              <div className="flex-1">
+              <div className="flex-1 bg-background/60">
                 <BacklogPanel />
               </div>
             </TabsContent>
 
             <TabsContent value="history" className="flex-1 m-0">
-              <div className="p-2 flex flex-col gap-2">
+              <div className="flex flex-col gap-2 bg-background/70 p-2">
                 <AgentActionsPanel runId={currentRunId} />
                 <ConversationHistory projectId={currentProject?.id} />
               </div>
@@ -203,23 +220,34 @@ export function AgentShell() {
   return (
     <div className="flex flex-col h-screen bg-background">
       {/* Desktop Header */}
-      <header className="border-b p-4">
-        <div className="container max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold">{APP_CONFIG.name}</h1>
-            {getStatusBadge()}
+      <header className="relative border-b border-lime-500/30 bg-slate-950/90 py-6 text-slate-100 shadow-lg">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(190,242,100,0.14),_transparent_70%)]"
+        />
+        <div className="relative z-10">
+          <div className="container mx-auto flex max-w-7xl flex-col gap-6 px-4 md:flex-row md:items-start md:justify-between">
+            <div className="flex flex-col gap-4 md:max-w-3xl">
+              <AgentIdentity className="w-full max-w-3xl" />
+              <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.4em] text-lime-200/80">
+                {getStatusBadge()}
+                <span className="text-lime-300/80">Status Monitor</span>
+              </div>
+            </div>
+            <div className="flex justify-end md:self-start">
+              <ProfileMenu />
+            </div>
           </div>
-          <ProfileMenu />
         </div>
       </header>
 
       {/* Desktop 3-Panel Layout */}
-      <div className="flex flex-1 overflow-hidden">
-        <div className="w-1/4 border-r">
+      <div className="flex flex-1 overflow-hidden bg-background">
+        <div className="w-1/4 border-r border-border/60 bg-background/80 backdrop-blur-sm">
           <ProjectPanel />
         </div>
 
-        <div className="w-1/2 border-r flex flex-col">
+        <div className="w-1/2 border-r border-border/60 bg-background/70 backdrop-blur-sm flex flex-col">
           <ChatComposer
             onSendMessage={handleSend}
             isLoading={isRunning()}
@@ -228,7 +256,7 @@ export function AgentShell() {
           <BacklogPanel />
         </div>
 
-        <div className="w-1/4 p-2 flex flex-col gap-2">
+        <div className="w-1/4 flex flex-col gap-3 bg-background/80 p-3 backdrop-blur-sm">
           <AgentActionsPanel runId={currentRunId} />
           <ConversationHistory projectId={currentProject?.id} />
         </div>
