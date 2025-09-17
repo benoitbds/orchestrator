@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { AGENT4BA_ASCII_ART } from "./ascii";
 
+
 type AgentIdentityProps = {
   className?: string;
   size?: "desktop" | "mobile";
