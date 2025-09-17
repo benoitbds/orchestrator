@@ -16,7 +16,6 @@ import { AgentActionsPanel } from "@/components/history/AgentActionsPanel";
 import { useMessagesStore, type Message } from "@/stores/useMessagesStore";
 import { useHistory } from "@/store/useHistory";
 import { toast } from "sonner";
-import { APP_CONFIG } from "@/lib/constants";
 import { safeId } from "@/lib/safeId";
 import { ProfileMenu } from "@/components/ProfileMenu";
 import { AgentIdentity } from "@/components/branding/AgentIdentity";

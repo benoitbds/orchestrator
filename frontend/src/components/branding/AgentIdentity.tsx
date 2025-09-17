@@ -33,7 +33,6 @@ export function AgentIdentity({ className, size = "desktop" }: AgentIdentityProp
         )}
       >
         {AGENT4BA_ASCII_ART}
-
       </pre>
       <div className="relative z-10 border-t border-lime-500/30 bg-slate-900/80 px-3 py-2 md:px-5">
         <p className="text-[11px] font-semibold uppercase tracking-[0.5em] text-lime-200/80">

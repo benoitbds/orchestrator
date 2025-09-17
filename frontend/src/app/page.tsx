@@ -1,4 +1,9 @@
-import { AGENT4BA_ASCII_ART } from "@/components/branding/ascii";
+"use client";
+
+import { BacklogProvider } from "@/context/BacklogContext";
+import { AgentShell } from "@/pages/AgentShell";
+import { Toaster } from "sonner";
+
 
 export default function Home() {
   return (

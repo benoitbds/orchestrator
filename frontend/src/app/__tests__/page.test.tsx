@@ -1,12 +1,30 @@
+import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
+import { vi } from "vitest";
+
+vi.mock("@/context/BacklogContext", () => ({
+  BacklogProvider: ({ children }: { children: ReactNode }) => (
+    <div data-testid="backlog-provider">{children}</div>
+  ),
+}));
+
+vi.mock("@/pages/AgentShell", () => ({
+  AgentShell: () => <div data-testid="agent-shell">AgentShell</div>,
+}));
+
+vi.mock("sonner", () => ({
+  Toaster: () => <div data-testid="toaster" />,
+}));
 
 import Home from "../page";
 
 describe("Home", () => {
-  it("renders the Agent4BA ASCII art", () => {
+  it("wraps the agent experience with the backlog provider and toaster", () => {
     render(<Home />);
 
-    expect(screen.getByText("Agent4BA")).toHaveClass("sr-only");
-    expect(screen.getByText(/_____/)).toBeInTheDocument();
+    const provider = screen.getByTestId("backlog-provider");
+    expect(provider).toBeInTheDocument();
+    expect(provider).toContainElement(screen.getByTestId("agent-shell"));
+    expect(screen.getByTestId("toaster")).toBeInTheDocument();
   });
 });
