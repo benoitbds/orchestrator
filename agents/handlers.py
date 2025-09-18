@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal, Union
 import logging
 import asyncio, json, re
 
@@ -175,6 +175,19 @@ class _SummarizeArgs(BaseModel):
 class _BulkFeature(BaseModel):
     title: str
     description: str | None = None
+    acceptance_criteria: Union[str, List[str]] | None = None
+
+    @model_validator(mode="after")
+    def _normalize_acceptance_criteria(self):
+        ac = self.acceptance_criteria
+        if ac is None:
+            self.acceptance_criteria = ""
+        elif isinstance(ac, list):
+            cleaned = [str(x).strip() for x in ac if str(x).strip()]
+            self.acceptance_criteria = "- " + "\n- ".join(cleaned) if cleaned else ""
+        else:
+            self.acceptance_criteria = str(ac).strip()
+        return self
 
 
 class _BulkCreateArgs(BaseModel):
@@ -892,6 +905,7 @@ async def bulk_create_features_tool(args: Dict[str, Any]) -> Dict[str, Any]:
                 description=item.description or "",
                 project_id=data.project_id,
                 parent_id=data.parent_id,
+                acceptance_criteria=item.acceptance_criteria,
             )
             created = crud.create_item(feature)
             created_ids.append(created.id)
