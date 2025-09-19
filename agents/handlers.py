@@ -20,19 +20,27 @@ from pydantic import (
     constr,
 )
 
-from orchestrator import crud
+from orchestrator import crud, stream
 from orchestrator.prompt_loader import load_prompt
+from agents.tools_context import get_current_run_id
 # Load environment variables
 load_dotenv()
 try:  # pragma: no cover - fallback if embeddings not ready
-    from .embeddings import embed_text, cosine_similarity
+    from .embeddings import embed_text, embed_texts, chunk_text, cosine_similarity
 except Exception:  # pragma: no cover
     def embed_text(text: str) -> list[float]:
         return [0.0]
 
+    async def embed_texts(texts: List[str]) -> List[List[float]]:
+        return [[0.0] for _ in texts]
+
+    def chunk_text(text: str, target_tokens: int = 400, overlap_tokens: int = 60) -> List[str]:
+        return [text.strip()] if text else []
+
     def cosine_similarity(a: List[float], b: List[float]) -> float:
         return 0.0
 from orchestrator.models import (
+    BacklogItem,
     EpicCreate,
     CapabilityCreate,
     FeatureCreate,
@@ -40,12 +48,63 @@ from orchestrator.models import (
     UCCreate,
     BacklogItemUpdate,
 )
+from .schemas import FeatureInput, ensure_acceptance_list
 
 # Logger
 logger = logging.getLogger(__name__)
 
 # Prompt templates
 FEATURES_FROM_EXCERPTS_PROMPT = load_prompt("features_from_excerpts")
+
+
+def _mark_ai_item(item_id: int) -> Optional[BacklogItem]:
+    run_id = get_current_run_id()
+    if not run_id:
+        return None
+    return crud.mark_item_ai_touch(item_id, run_id)
+
+
+async def _reindex_document_if_needed(doc) -> bool:
+    """Ensure a document has chunk embeddings; rebuild if missing."""
+    total, with_embeddings = crud.document_chunk_stats(doc.id)
+    if total > 0 and with_embeddings > 0:
+        return False
+
+    content = (doc.content or "").strip()
+    if not content:
+        return False
+
+    crud.update_document_status(doc.id, "ANALYZING", None)
+
+    chunks = chunk_text(content, target_tokens=400, overlap_tokens=60)
+    if not chunks:
+        crud.update_document_status(doc.id, "ERROR", {"error": "No analyzable content"})
+        return False
+
+    embeddings = await embed_texts(chunks)
+    if len(embeddings) < len(chunks):
+        embeddings.extend([[] for _ in range(len(chunks) - len(embeddings))])
+
+    if not any(embeddings):
+        crud.delete_document_chunks(doc.id)
+        crud.update_document_status(doc.id, "ERROR", {"error": "Embedding generation failed"})
+        return False
+
+    payload = [(idx, chunk, embeddings[idx]) for idx, chunk in enumerate(chunks)]
+    crud.delete_document_chunks(doc.id)
+    if payload:
+        crud.upsert_document_chunks(doc.id, payload)
+
+    total, with_embeddings = crud.document_chunk_stats(doc.id)
+    status = "ANALYZED" if with_embeddings else "ERROR"
+    crud.update_document_status(doc.id, status, {"chunk_count": total})
+    logger.info(
+        "Indexed %s chunks, %s with embeddings (doc_id=%s)",
+        total,
+        with_embeddings,
+        doc.id,
+    )
+    return with_embeddings > 0
 
 
 class GeneratedFeature(BaseModel):
@@ -172,15 +231,10 @@ class _SummarizeArgs(BaseModel):
     depth: int = 3
 
 
-class _BulkFeature(BaseModel):
-    title: str
-    description: str | None = None
-
-
 class _BulkCreateArgs(BaseModel):
     project_id: int
     parent_id: int
-    items: List[_BulkFeature]
+    items: List[FeatureInput]
 
 _ALLOWED_PARENT = {
     "Capability": ["Epic"],
@@ -240,6 +294,9 @@ async def create_item_tool(args: Dict[str, Any]) -> Dict[str, Any]:
             parent_id=parent_id,
         )
         created = crud.create_item(item)
+        marked = _mark_ai_item(created.id)
+        if marked:
+            created = marked
         return {
             "ok": True,
             "item_id": created.id,
@@ -265,6 +322,9 @@ class _GenerateArgs(BaseModel):
     parent_id: int
     target_type: str
     n: int | None = 6
+    format: str | None = None
+    dedup: bool | None = None
+    trace_to_doc: bool | None = None
 
 
 def _build_llm_json_object():
@@ -511,6 +571,9 @@ async def _create_items(validated: List[Dict[str, Any]], project_id: int, parent
                 description=desc,
             )
         created_item = crud.create_item(item)
+        marked = _mark_ai_item(created_item.id)
+        if marked:
+            created_item = marked
         created.append({"id": created_item.id, "title": created_item.title})
     return created
 
@@ -561,7 +624,7 @@ async def generate_items_from_parent_handler(args: Dict[str, Any]) -> Dict[str, 
     project_id = data.project_id
     parent_id = data.parent_id
     target_type = data.target_type.upper() if data.target_type.lower() in {"us", "uc"} else data.target_type.capitalize()
-    n = max(3, min(10, data.n or 6))
+    n = max(1, min(10, data.n or 6))
     if target_type not in ALLOWED_TYPES:
         return {"ok": False, "error": f"Unsupported target_type: {target_type}"}
 
@@ -681,6 +744,9 @@ async def update_item_tool(args: Dict[str, Any]) -> Dict[str, Any]:
             raise ValueError("invalid status")
 
         updated = crud.update_item(item_id, BacklogItemUpdate(**update_data))
+        marked = _mark_ai_item(item_id)
+        if marked:
+            updated = marked
         return {
             "ok": True,
             "item_id": updated.id,
@@ -824,6 +890,9 @@ async def move_item_tool(args: Dict[str, Any]) -> Dict[str, Any]:
             if current is None:
                 break
         updated = crud.update_item(item.id, BacklogItemUpdate(parent_id=new_parent.id))
+        marked = _mark_ai_item(item.id)
+        if marked:
+            updated = marked
         return {
             "ok": True,
             "result": {
@@ -872,8 +941,15 @@ async def bulk_create_features_tool(args: Dict[str, Any]) -> Dict[str, Any]:
     try:
         data = _BulkCreateArgs(**args)
         parent = crud.get_item(data.parent_id)
-        if not parent or parent.project_id != data.project_id:
+        if not parent:
             return {"ok": False, "error": "invalid_parent"}
+        if parent.project_id != data.project_id:
+            return {
+                "ok": False,
+                "error": "PARENT_PROJECT_MISMATCH",
+                "status": 409,
+                "message": "parent_id belongs to another project",
+            }
         if parent.type not in {"Epic", "Capability"}:
             return {"ok": False, "error": "invalid_parent_type"}
         existing = {
@@ -892,8 +968,10 @@ async def bulk_create_features_tool(args: Dict[str, Any]) -> Dict[str, Any]:
                 description=item.description or "",
                 project_id=data.project_id,
                 parent_id=data.parent_id,
+                acceptance_criteria=(item.acceptance_criteria or ""),
             )
             created = crud.create_item(feature)
+            _mark_ai_item(created.id)
             created_ids.append(created.id)
             seen.add(title_key)
         return {"ok": True, "result": {"created_ids": created_ids}}
@@ -1010,9 +1088,132 @@ def _get_document_text(doc_id: int) -> str:
     return doc.get("content", "") if doc else ""
 
 
+
+_SECTION_ALIASES: Dict[str, str] = {
+    "exigences fonctionnelles": "Exigences fonctionnelles",
+    "exigence fonctionnelle": "Exigences fonctionnelles",
+    "nfr": "NFR",
+    "non functional requirements": "NFR",
+    "gouvernance": "Gouvernance",
+    "objectifs kpi": "Objectifs & KPI",
+    "objectifs & kpi": "Objectifs & KPI",
+    "objectifs et kpi": "Objectifs & KPI",
+}
+_BULLET_CHAR = "\u2022"
+
+
+
+def _match_fallback_section(line: str) -> Optional[str]:
+    normalized = re.sub(r"[^a-z0-9& ]+", " ", line.lower())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return None
+    for key, label in _SECTION_ALIASES.items():
+        if key in normalized:
+            return label
+    return None
+
+
+def _is_heading_like(line: str) -> bool:
+    s = line.strip()
+    if not s:
+        return False
+    if s.startswith("#") or s.startswith("=="):
+        return True
+    if re.match(r"^\d+[\.)]\s", s):
+        return True
+    if s.endswith(":") and len(s) <= 80:
+        return True
+    if len(s) <= 60 and s == s.upper() and any(ch.isalpha() for ch in s):
+        return True
+    return False
+
+
+def _clean_bullet(line: str) -> str:
+    stripped = line.lstrip()
+    if not stripped:
+        return ""
+    if stripped[0] in {"-", "*", _BULLET_CHAR}:
+        stripped = stripped[1:]
+    stripped = stripped.lstrip("-" + _BULLET_CHAR + "*[] ")
+    return stripped.strip()
+
+
+def _is_bullet_line(line: str) -> bool:
+    return line.lstrip().startswith(("-", "*", _BULLET_CHAR))
+
+
+def _bullet_acceptance_criteria(bullet: str) -> List[str]:
+    parts = [p.strip() for p in re.split(r"[.;](?:\s+|$)", bullet) if p.strip()]
+    unique: List[str] = []
+    for part in parts:
+        if part not in unique:
+            unique.append(part)
+        if len(unique) >= 3:
+            break
+    if len(unique) >= 2:
+        return [f"{p}." if not p.endswith(".") else p for p in unique[:3]]
+    if unique:
+        base = unique[0]
+        filler = f'Compléter les détails sur "{base}".'
+        return [f"{base}." if not base.endswith(".") else base, filler]
+    cleaned = bullet.strip()
+    if cleaned:
+        return [f"{cleaned}." if not cleaned.endswith(".") else cleaned, "Valider avec les parties prenantes."]
+    return ["Clarifier le besoin.", "Valider avec les parties prenantes."]
+
+
+def _fallback_parse_documents(fallback_doc_ids: List[int], limit: int) -> List[GeneratedFeature]:
+    features: List[GeneratedFeature] = []
+    seen_titles: set[str] = set()
+    for doc_id in fallback_doc_ids:
+        content = _get_document_text(doc_id)
+        if not content:
+            continue
+        current_section: Optional[str] = None
+        for raw_line in content.splitlines():
+            if not raw_line.strip():
+                continue
+            maybe_section = _match_fallback_section(raw_line)
+            if maybe_section:
+                current_section = maybe_section
+                continue
+            if _is_heading_like(raw_line) and not _is_bullet_line(raw_line):
+                current_section = None
+                continue
+            if not current_section or not _is_bullet_line(raw_line):
+                continue
+            bullet = _clean_bullet(raw_line)
+            if not bullet:
+                continue
+            title = bullet.strip()
+            if len(title) > 120:
+                title = title[:117].rstrip() + "..."
+            if not title or title.lower() in seen_titles:
+                continue
+            seen_titles.add(title.lower())
+            acceptance = _bullet_acceptance_criteria(bullet)
+            bullet_text = bullet.strip()
+            objective = f"Formaliser: {bullet_text}"
+            if not objective.endswith("."):
+                objective += "."
+            feature = GeneratedFeature(
+                title=title,
+                objective=objective,
+                business_value=f"Répond aux besoins documentés dans la section {current_section}.",
+                acceptance_criteria=acceptance,
+                parent_hint=None,
+            )
+            features.append(feature)
+            if len(features) >= limit:
+                return features
+    return features
+
+
 # ---------------------------------------------------------------------------
 # Draft features handler
 # ---------------------------------------------------------------------------
+
 
 async def draft_features_from_matches_handler(args: Dict[str, Any]) -> Dict[str, Any]:
     """Draft and create Features from document matches."""
@@ -1020,11 +1221,34 @@ async def draft_features_from_matches_handler(args: Dict[str, Any]) -> Dict[str,
         project_id = int(args["project_id"])
         doc_query = str(args["doc_query"])
         k = int(args.get("k", 6))
+        fallback_parse_full_doc = bool(args.get("fallback_parse_full_doc", False))
+
+        documents = crud.get_documents(project_id)
+        reindexed_any = False
+        for doc in documents:
+            status = getattr(doc, "status", "UPLOADED")
+            if status == "ANALYZED" and await _reindex_document_if_needed(doc):
+                reindexed_any = True
+
+        if reindexed_any:
+            documents = crud.get_documents(project_id)
+
+        analyzed_doc_ids = {doc.id for doc in documents if getattr(doc, "status", "ANALYZED") == "ANALYZED"}
+        if documents and not analyzed_doc_ids and not fallback_parse_full_doc:
+            return {
+                "ok": False,
+                "error": "NO_MATCHES",
+                "message": "Document not indexed or no relevant passages. Run Analyze then retry.",
+            }
 
         # Retrieve relevant chunks with higher recall
         chunks = crud.get_all_document_chunks_for_project(project_id)
-        if not chunks:
-            return {"ok": True, "items": []}
+        if not chunks and not fallback_parse_full_doc:
+            return {
+                "ok": False,
+                "error": "NO_MATCHES",
+                "message": "Document not indexed or no relevant passages. Run Analyze then retry.",
+            }
         q_emb = await embed_text(doc_query)
         scored: List[Dict[str, Any]] = []
         for c in chunks:
@@ -1037,7 +1261,7 @@ async def draft_features_from_matches_handler(args: Dict[str, Any]) -> Dict[str,
             scored.append({"doc_id": c["doc_id"], "text": c.get("text", ""), "score": float(score)})
         scored.sort(key=lambda x: x["score"], reverse=True)
         top = scored[:20]
-        excerpts = []
+        excerpts: List[str] = []
         total = 0
         for s in top:
             t = s["text"]
@@ -1054,13 +1278,45 @@ async def draft_features_from_matches_handler(args: Dict[str, Any]) -> Dict[str,
             top[0]["score"] if top else 0.0,
             len(excerpt_text),
         )
+
+        top_score = top[0]["score"] if top else 0.0
+        if top and top_score < 0.2 and not fallback_parse_full_doc:
+            return {
+                "ok": False,
+                "error": "NO_MATCHES",
+                "message": "Document not indexed or no relevant passages. Run Analyze then retry.",
+            }
+
+        if not top:
+            if not fallback_parse_full_doc:
+                return {
+                    "ok": False,
+                    "error": "NO_MATCHES",
+                    "message": "Document not indexed or no relevant passages. Run Analyze then retry.",
+                }
         features = await _call_llm(excerpt_text)
+        fallback_source: Optional[str] = None
 
         # Fallback to full document text if no features
         if not features and top:
             doc_text = _get_document_text(top[0]["doc_id"])[:12000]
             logger.info("Fallback to full document text of length %d", len(doc_text))
-            features = await _call_llm(doc_text)
+            if doc_text:
+                features = await _call_llm(doc_text)
+
+        fallback_doc_ids = list(dict.fromkeys(s["doc_id"] for s in top))
+        if not fallback_doc_ids and documents:
+            fallback_doc_ids = [doc.id for doc in documents]
+        if not features and fallback_parse_full_doc and fallback_doc_ids:
+            parsed = _fallback_parse_documents(fallback_doc_ids, k)
+            if parsed:
+                logger.info(
+                    "Fallback parse extracted %d features from sections for doc_ids=%s",
+                    len(parsed),
+                    fallback_doc_ids,
+                )
+                features = parsed
+                fallback_source = "fallback_parse"
 
         if not features:
             return {"ok": True, "items": []}
@@ -1068,18 +1324,20 @@ async def draft_features_from_matches_handler(args: Dict[str, Any]) -> Dict[str,
         created_items = []
         for feat in features[:k]:
             parent_id = _resolve_parent_hint(project_id, feat.parent_hint)
+            ac_lines = ensure_acceptance_list(feat.acceptance_criteria)
             description = (
                 f"{feat.objective}\n\nValeur métier:\n{feat.business_value}\n\nCritères d'acceptation:\n- "
-                + "\n- ".join(feat.acceptance_criteria)
+                + "\n- ".join(ac_lines)
             )
             item = FeatureCreate(
                 project_id=project_id,
                 parent_id=parent_id,
                 title=feat.title,
                 description=description,
-                acceptance_criteria="\n".join(f"- {c}" for c in feat.acceptance_criteria),
+                acceptance_criteria="\n".join(f"- {c}" for c in ac_lines),
             )
             created = crud.create_item(item)
+            _mark_ai_item(created.id)
             logger.info(
                 "Created Feature id=%s title=%s parent=%s",
                 created.id,
@@ -1087,8 +1345,11 @@ async def draft_features_from_matches_handler(args: Dict[str, Any]) -> Dict[str,
                 parent_id,
             )
             created_items.append({"id": created.id, "title": created.title})
+        response: Dict[str, Any] = {"ok": True, "items": created_items}
+        if fallback_source:
+            response["source"] = fallback_source
 
-        return {"ok": True, "items": created_items}
+        return response
 
     except (ValidationError, ValueError) as e:
         return {"ok": False, "error": str(e)}

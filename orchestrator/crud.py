@@ -2,7 +2,8 @@
 import json
 import sqlite3
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+from orchestrator import stream
 from .models import (
     Project,
     ProjectCreate,
@@ -27,7 +28,16 @@ def create_item_from_row(row_dict: dict) -> BacklogItem:
     # Clean up None values and set defaults based on type
     cleaned_dict = {k: v for k, v in row_dict.items() if v is not None}
     cleaned_dict['is_deleted'] = bool(row_dict.get('is_deleted', 0))
-    
+
+    cleaned_dict.setdefault('ia_review_status', 'approved')
+    cleaned_dict.setdefault('last_modified_by', 'user')
+    cleaned_dict.setdefault('ia_last_run_id', None)
+    cleaned_dict.setdefault('validated_at', None)
+    cleaned_dict.setdefault('validated_by', None)
+    if 'generated_by_ai' in cleaned_dict:
+        cleaned_dict.pop('generated_by_ai', None)
+    cleaned_dict['generated_by_ai'] = cleaned_dict.get('ia_review_status') == 'pending'
+
     if item_type == 'Epic':
         # Set defaults for Epic-specific fields
         if 'state' not in cleaned_dict:
@@ -125,6 +135,12 @@ def init_db():
         ("invest_compliant", "BOOLEAN DEFAULT 0"),
         ("status", "TEXT"),
         ("is_deleted", "BOOLEAN DEFAULT 0"),
+        ("ia_review_status", "TEXT DEFAULT 'approved'"),
+        ("last_modified_by", "TEXT DEFAULT 'user'"),
+        ("ia_last_run_id", "TEXT"),
+        ("validated_at", "DATETIME"),
+        ("validated_by", "TEXT"),
+        ("ia_fields", "TEXT"),
     ]
     
     for column_name, column_type in new_columns:
@@ -132,6 +148,12 @@ def init_db():
             conn.execute(f"ALTER TABLE backlog ADD COLUMN {column_name} {column_type}")
         except sqlite3.OperationalError:
             pass
+
+    try:
+        conn.execute("UPDATE backlog SET ia_review_status='approved' WHERE ia_review_status IS NULL")
+        conn.execute("UPDATE backlog SET last_modified_by='user' WHERE last_modified_by IS NULL")
+    except sqlite3.OperationalError:
+        pass
 
     # Table for storing diagram layout positions
     conn.execute(
@@ -158,15 +180,26 @@ def init_db():
         "content TEXT,"
         "embedding TEXT,"
         "filepath TEXT,"
+        "status TEXT DEFAULT 'UPLOADED',"
+        "meta TEXT,"
         "FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE"
         ")"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id)")
-    # Add filepath column if missing for backward compatibility
+    # Add backward-compatible columns for documents
     cur = conn.execute("PRAGMA table_info(documents)")
     cols = [row[1] for row in cur.fetchall()]
     if "filepath" not in cols:
         conn.execute("ALTER TABLE documents ADD COLUMN filepath TEXT")
+    if "status" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN status TEXT DEFAULT 'UPLOADED'")
+    if "meta" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN meta TEXT")
+    # Ensure legacy rows have a status value
+    has_chunks_table = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='document_chunks'").fetchone()
+    if has_chunks_table:
+        conn.execute("UPDATE documents SET status = 'ANALYZED' WHERE status IS NULL AND EXISTS (SELECT 1 FROM document_chunks WHERE doc_id = documents.id)")
+    conn.execute("UPDATE documents SET status = COALESCE(status, 'UPLOADED')")
     
     # Add user_uid column to projects table for backward compatibility
     cur = conn.execute("PRAGMA table_info(projects)")
@@ -223,7 +256,9 @@ def init_db():
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             completed_at TEXT,
             request_id TEXT,
-            tool_phase INTEGER DEFAULT 0
+            tool_phase INTEGER DEFAULT 0,
+            meta TEXT,
+            user_uid TEXT
         )
         """
     )
@@ -237,6 +272,14 @@ def init_db():
         pass
     try:
         conn.execute("ALTER TABLE runs ADD COLUMN tool_phase INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN meta TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN user_uid TEXT")
     except sqlite3.OperationalError:
         pass
         
@@ -360,6 +403,7 @@ def init_db():
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tool_results_run ON tool_results(run_id, ts)"
     )
+    conn.commit()
     conn.close()
 
 
@@ -411,6 +455,24 @@ def update_run_tool_phase(run_id: str, tool_phase: bool) -> None:
     conn.execute(
         "UPDATE runs SET tool_phase=? WHERE run_id=?",
         (1 if tool_phase else 0, run_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_run_meta(run_id: str, updates: Dict[str, Any]) -> None:
+    conn = get_conn()
+    row = conn.execute("SELECT meta FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    current = {}
+    if row and row[0]:
+        try:
+            current = json.loads(row[0])
+        except Exception:
+            current = {}
+    current.update(updates or {})
+    conn.execute(
+        "UPDATE runs SET meta=? WHERE run_id=?",
+        (json.dumps(current) if current else None, run_id),
     )
     conn.commit()
     conn.close()
@@ -656,11 +718,14 @@ def get_project_for_user(project_id: int, user_uid: str) -> Optional[Project]:
     """Get a project if it belongs to the specified user."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM projects WHERE id = ? AND user_uid = ?", (project_id, user_uid))
+    cursor.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
     row = cursor.fetchone()
     conn.close()
     if row:
-        return Project(**dict(row))
+        record = dict(row)
+        owner = record.get("user_uid")
+        if owner is None or owner == user_uid:
+            return Project(**record)
     return None
 
 def get_projects() -> List[Project]:
@@ -756,13 +821,15 @@ def create_document(
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO documents (project_id, filename, content, embedding, filepath) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO documents (project_id, filename, content, embedding, filepath, status, meta) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             project_id,
             filename,
             content,
             json.dumps(embedding) if embedding is not None else None,
             filepath,
+            "UPLOADED",
+            None,
         ),
     )
     doc_id = cursor.lastrowid
@@ -770,6 +837,9 @@ def create_document(
     cursor.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
     row = cursor.fetchone()
     conn.close()
+    row_keys = row.keys() if hasattr(row, 'keys') else []
+    status_value = row["status"] if 'status' in row_keys else "UPLOADED"
+    meta_raw = row["meta"] if 'meta' in row_keys else None
     return Document(
         id=row["id"],
         project_id=row["project_id"],
@@ -777,6 +847,8 @@ def create_document(
         content=row["content"],
         embedding=json.loads(row["embedding"]) if row["embedding"] else None,
         filepath=row["filepath"],
+        status=status_value or "UPLOADED",
+        meta=json.loads(meta_raw) if meta_raw else None,
     )
 
 
@@ -789,6 +861,7 @@ def get_document(doc_id: int) -> Optional[dict]:
     conn.close()
     if not row:
         return None
+    row_keys = row.keys() if hasattr(row, 'keys') else []
     return {
         "id": row["id"],
         "project_id": row["project_id"],
@@ -796,7 +869,24 @@ def get_document(doc_id: int) -> Optional[dict]:
         "content": row["content"],
         "embedding": json.loads(row["embedding"]) if row["embedding"] else None,
         "filepath": row["filepath"],
+        "status": row["status"] if 'status' in row_keys else "UPLOADED",
+        "meta": json.loads(row["meta"]) if 'meta' in row_keys and row["meta"] else None,
     }
+
+
+
+def update_document_status(doc_id: int, status: str, meta: Optional[Dict[str, Any]] = None) -> None:
+    """Update document processing status and optional metadata."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE documents SET status = ?, meta = ? WHERE id = ?",
+        (status, json.dumps(meta) if meta is not None else None, doc_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 
 
 def get_documents(project_id: int) -> List[Document]:
@@ -807,6 +897,7 @@ def get_documents(project_id: int) -> List[Document]:
     conn.close()
     documents = []
     for row in rows:
+        row_keys = row.keys() if hasattr(row, 'keys') else []
         documents.append(
             Document(
                 id=row["id"],
@@ -815,6 +906,8 @@ def get_documents(project_id: int) -> List[Document]:
                 content=row["content"],
                 embedding=json.loads(row["embedding"]) if row["embedding"] else None,
                 filepath=row["filepath"],
+                status=row["status"] if 'status' in row_keys else "UPLOADED",
+                meta=json.loads(row["meta"]) if 'meta' in row_keys and row["meta"] else None,
             )
         )
     return documents
@@ -933,6 +1026,26 @@ def get_document_chunks(doc_id: int) -> List[dict]:
     
     return chunks
 
+
+def document_chunk_stats(doc_id: int) -> tuple[int, int]:
+    """Return (total_chunks, chunks_with_embeddings) for the document."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS total,
+               SUM(CASE WHEN embedding IS NOT NULL AND embedding != '' THEN 1 ELSE 0 END) AS with_embedding
+        FROM document_chunks
+        WHERE doc_id = ?
+        """,
+        (doc_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    total = row[0] if row and row[0] is not None else 0
+    with_embedding = row[1] if row and row[1] is not None else 0
+    return int(total), int(with_embedding)
+
 def get_all_chunks_for_project(project_id: int) -> List[dict]:
     """
     Get all document chunks for a project.
@@ -950,7 +1063,7 @@ def get_all_chunks_for_project(project_id: int) -> List[dict]:
         SELECT dc.*, d.filename, d.project_id
         FROM document_chunks dc
         JOIN documents d ON dc.doc_id = d.id
-        WHERE d.project_id = ?
+        WHERE d.project_id = ? AND COALESCE(d.status, 'ANALYZED') = 'ANALYZED'
         ORDER BY d.id, dc.chunk_index
         """,
         (project_id,)
@@ -1010,41 +1123,36 @@ def search_similar_chunks(
     """
     Search for similar chunks in a project using embeddings.
     Note: This is a basic implementation. For production, consider using a vector database.
-    
-    Args:
-        project_id: ID of the project to search in
-        query_embedding: Query embedding vector
-        limit: Maximum number of results to return
-        embedding_model: Optional filter by embedding model
-        
-    Returns:
-        List of similar chunks (similarity calculation done in application layer)
     """
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     query = """
-        SELECT dc.*, d.filename, d.project_id
+        SELECT dc.id, dc.doc_id, dc.chunk_index, dc.text, dc.start_char, dc.end_char,
+               dc.token_count, dc.embedding, dc.embedding_model, dc.created_at,
+               d.filename, d.project_id
         FROM document_chunks dc
         JOIN documents d ON dc.doc_id = d.id
-        WHERE d.project_id = ? AND dc.embedding IS NOT NULL
+        WHERE d.project_id = ?
+          AND COALESCE(d.status, 'UPLOADED') = 'ANALYZED'
+          AND dc.embedding IS NOT NULL
     """
-    params = [project_id]
-    
+    params: List[Any] = [project_id]
+
     if embedding_model:
         query += " AND dc.embedding_model = ?"
         params.append(embedding_model)
-    
+
     query += " ORDER BY dc.created_at DESC"
-    
+
     if limit:
         query += " LIMIT ?"
-        params.append(limit * 5)  # Get more chunks for similarity calculation
-    
+        params.append(limit * 5)
+
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-    
+
     chunks = []
     for row in rows:
         chunks.append({
@@ -1059,9 +1167,9 @@ def search_similar_chunks(
             "embedding_model": row["embedding_model"],
             "created_at": row["created_at"],
             "filename": row["filename"],
-            "project_id": row["project_id"]
+            "project_id": row["project_id"],
         })
-    
+
     return chunks
 
 
@@ -1078,13 +1186,30 @@ def create_item(item: BacklogItemCreate) -> BacklogItem:
     optional_fields = [
         "state", "benefit_hypothesis", "leading_indicators", "mvp_definition", "wsjf",
         "acceptance_criteria", "story_points", "program_increment", "iteration",
-        "owner", "invest_compliant", "status"
+        "owner", "invest_compliant", "status",
+        "ia_review_status", "last_modified_by", "ia_last_run_id", "validated_at", "validated_by",
     ]
-    
+
     for field in optional_fields:
         if field in item_dict and item_dict[field] is not None:
             fields.append(field)
             values.append(item_dict[field])
+
+    if "ia_review_status" not in fields:
+        fields.append("ia_review_status")
+        values.append("approved")
+    if "last_modified_by" not in fields:
+        fields.append("last_modified_by")
+        values.append("user")
+    if "ia_last_run_id" not in fields:
+        fields.append("ia_last_run_id")
+        values.append(None)
+    if "validated_at" not in fields:
+        fields.append("validated_at")
+        values.append(None)
+    if "validated_by" not in fields:
+        fields.append("validated_by")
+        values.append(None)
     
     placeholders = ", ".join(["?" for _ in fields])
     fields_str = ", ".join(fields)
@@ -1110,19 +1235,26 @@ def get_item(item_id: int) -> Optional[BacklogItem]:
     return None
 
 
-def get_items(project_id: int, type: str | None = None, limit: int = 50, offset: int = 0) -> List[BacklogItem]:
+def get_items(
+    project_id: int,
+    type: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    review: str | None = None,
+) -> List[BacklogItem]:
     conn = get_db_connection()
     cursor = conn.cursor()
+    query = "SELECT * FROM backlog WHERE project_id = ? AND is_deleted = 0"
+    params: List[Any] = [project_id]
     if type:
-        cursor.execute(
-            "SELECT * FROM backlog WHERE project_id = ? AND type = ? AND is_deleted = 0 ORDER BY id LIMIT ? OFFSET ?",
-            (project_id, type, limit, offset),
-        )
-    else:
-        cursor.execute(
-            "SELECT * FROM backlog WHERE project_id = ? AND is_deleted = 0 ORDER BY id LIMIT ? OFFSET ?",
-            (project_id, limit, offset),
-        )
+        query += " AND type = ?"
+        params.append(type)
+    if review in {"pending", "approved"}:
+        query += " AND ia_review_status = ?"
+        params.append(review)
+    query += " ORDER BY id LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [create_item_from_row(dict(row)) for row in rows]
@@ -1131,7 +1263,9 @@ def get_items(project_id: int, type: str | None = None, limit: int = 50, offset:
 def update_item(item_id: int, data: BacklogItemUpdate) -> Optional[BacklogItem]:
     fields = []
     values = []
-    for field, value in data.model_dump(exclude_none=True).items():
+    data_dict = data.model_dump(exclude_none=True)
+
+    for field, value in data_dict.items():
         fields.append(f"{field} = ?")
         values.append(value)
     if not fields:
@@ -1146,6 +1280,84 @@ def update_item(item_id: int, data: BacklogItemUpdate) -> Optional[BacklogItem]:
     conn.commit()
     conn.close()
     return get_item(item_id)
+
+
+def _publish_review_event(item: BacklogItem, run_id: Optional[str] = None) -> None:
+    if not item:
+        return
+    payload = {
+        "node": "item_review_status_changed",
+        "item": {
+            "id": item.id,
+            "project_id": item.project_id,
+            "ia_review_status": item.ia_review_status,
+            "validated_by": item.validated_by,
+            "validated_at": item.validated_at.isoformat() if hasattr(item.validated_at, "isoformat") else item.validated_at,
+            "last_modified_by": item.last_modified_by,
+        },
+    }
+    keys: list[str] = []
+    if run_id:
+        keys.append(run_id)
+    keys.append(f"project:{item.project_id}")
+    for key in keys:
+        try:
+            stream.publish(key, payload)
+        except Exception:
+            continue
+
+
+def mark_item_ai_touch(item_id: int, run_id: Optional[str] = None) -> Optional[BacklogItem]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE backlog SET ia_review_status=?, last_modified_by=?, ia_last_run_id=?, validated_at=NULL, validated_by=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        ("pending", "ai", run_id, item_id),
+    )
+    conn.commit()
+    conn.close()
+    updated = get_item(item_id)
+    _publish_review_event(updated, run_id)
+    return updated
+
+
+def mark_item_user_touch(item_id: int) -> Optional[BacklogItem]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE backlog SET last_modified_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        ("user", item_id),
+    )
+    conn.commit()
+    conn.close()
+    return get_item(item_id)
+
+
+def validate_item(item_id: int, user_uid: Optional[str], run_id: Optional[str] = None) -> Optional[BacklogItem]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE backlog SET ia_review_status='approved', validated_by=?, validated_at=?, last_modified_by='user', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        (
+            user_uid,
+            datetime.utcnow().isoformat(),
+            item_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    updated = get_item(item_id)
+    _publish_review_event(updated, run_id)
+    return updated
+
+
+def validate_items(item_ids: List[int], user_uid: Optional[str]) -> List[BacklogItem]:
+    validated: List[BacklogItem] = []
+    for item_id in item_ids:
+        item = validate_item(item_id, user_uid)
+        if item:
+            validated.append(item)
+    return validated
 
 
 def delete_item(item_id: int) -> int:

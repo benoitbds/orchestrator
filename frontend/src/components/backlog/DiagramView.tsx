@@ -30,6 +30,8 @@ export interface NodeDatum {
   fy?: number;
   pinned?: boolean;
   generated_by_ai?: boolean;
+  ia_review_status?: 'pending' | 'approved';
+  ia_fields?: string[] | null;
 }
 
 const typeColor: Record<string, string> = {
@@ -87,6 +89,8 @@ export function DiagramView({ projectId, onEdit }: DiagramViewProps) {
       x: 0,
       y: 0,
       generated_by_ai: item.generated_by_ai,
+      ia_review_status: item.ia_review_status,
+      ia_fields: item.ia_fields ?? null,
     }));
     const e = n
       .filter(nd => nd.parent_id !== null)
@@ -246,7 +250,7 @@ export function DiagramView({ projectId, onEdit }: DiagramViewProps) {
               onDoubleClick={() => setFocused(focused === n.id ? null : n.id)}
             >
               <rect width={n.width} height={n.height} rx={20} fill={typeColor[n.type]} />
-              {n.generated_by_ai && (
+              {(n.ia_review_status === 'pending' || n.generated_by_ai) && (
                 <g
                   className="pointer-events-none"
                   transform={`translate(${n.width - 18},4)`}

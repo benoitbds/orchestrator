@@ -1,5 +1,6 @@
 "use client";
 import dynamic from 'next/dynamic';
+import clsx from 'clsx';
 
 const Loader2 = dynamic(() => import('lucide-react').then(mod => ({ default: mod.Loader2 })), { ssr: false });
 const Pencil = dynamic(() => import('lucide-react').then(mod => ({ default: mod.Pencil })), { ssr: false });
@@ -77,6 +78,11 @@ interface ItemProps {
 function Item({ item, onEdit, level = 0, collapsed, toggle, onDragStart, onDrop }: ItemProps) {
   const isCollapsed = collapsed.has(item.id);
   const hasChildren = item.children && item.children.length > 0;
+  const pending = item.ia_review_status === 'pending' || item.generated_by_ai;
+  const titleClasses = clsx(
+    'cursor-pointer font-medium',
+    pending && 'bg-amber-100 px-1 rounded'
+  );
 
   const getTooltipContent = () => {
     const parts = [`${item.type}: ${item.title}`];
@@ -166,12 +172,12 @@ function Item({ item, onEdit, level = 0, collapsed, toggle, onDragStart, onDrop 
 
         <div className="flex-1 flex items-center gap-2">
           <span
-            className="cursor-pointer font-medium"
+            className={titleClasses}
             onClick={() => onEdit(item)}
           >
             {item.title}
           </span>
-          {item.generated_by_ai && (
+          {pending && (
             <Badge className="bg-purple-600 text-white text-xs flex items-center gap-1">
               <CpuIcon className="w-3 h-3" />
               IA

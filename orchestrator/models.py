@@ -1,7 +1,7 @@
 # orchestrator/models.py
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Any, Literal, Union
+from typing import Any, Dict, Literal, Union, List
 
 class Project(BaseModel):
     id: int
@@ -21,6 +21,9 @@ class User(BaseModel):
     is_admin: bool = False
 
 
+DocumentStatus = Literal["UPLOADED", "ANALYZING", "ANALYZED", "ERROR"]
+
+
 class Document(BaseModel):
     """File uploaded to a project."""
 
@@ -30,6 +33,8 @@ class Document(BaseModel):
     content: str | None = None
     embedding: list[float] | None = None
     filepath: str | None = None
+    status: DocumentStatus = "UPLOADED"
+    meta: Dict[str, Any] | None = None
 
 
 class DocumentCreate(BaseModel):
@@ -38,6 +43,8 @@ class DocumentCreate(BaseModel):
     content: str | None = None
     embedding: list[float] | None = None
     filepath: str | None = None
+    status: DocumentStatus = "UPLOADED"
+    meta: Dict[str, Any] | None = None
 
 
 # For symmetry with other models
@@ -132,6 +139,13 @@ class ItemBase(BaseModel):
     project_id: int
     parent_id: int | None = None
     is_deleted: bool = False
+    ia_review_status: Literal["pending", "approved"] = "approved"
+    last_modified_by: Literal["ai", "user"] = "user"
+    ia_last_run_id: str | None = None
+    ia_fields: List[str] | None = None
+    validated_at: datetime | None = None
+    validated_by: str | None = None
+    generated_by_ai: bool = False
 
 # Extra fields per type
 # Base extras for creation (more flexible)

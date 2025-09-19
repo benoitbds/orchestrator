@@ -4,6 +4,8 @@ import json
 import os
 import logging
 import asyncio
+import re
+import unicodedata
 from typing import Any, Dict, List, Tuple
 from dotenv import load_dotenv
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
@@ -13,6 +15,8 @@ from orchestrator.llm.factory import build_llm
 from orchestrator.llm.provider import OpenAIProvider, BoundLLMProvider
 from orchestrator.settings import LLM_PROVIDER_ORDER
 from agents.tools import TOOLS as LC_TOOLS  # StructuredTool list (async funcs)
+from agents import tools as agent_tools
+from agents import handlers as agent_handlers
 from agents.tools_context import set_current_run_id
 from orchestrator import crud, stream
 from orchestrator.crud import init_db as init_crud_db
@@ -41,8 +45,45 @@ AGENT_NAME = "chat_tools"
 RUN_LOCKS: dict[str, asyncio.Lock] = {}
 
 # Simple intent keywords for tool exposure
-CREATE_VERBS = {"create", "add", "génère", "crée", "ajoute"}
+CREATE_VERBS = {"create", "add", "génère", "crée", "ajoute", "genere"}
+CHILD_KEYWORDS = ("us", "user stories", "stories", "uc", "use cases")
+CHILD_COUNT_PATTERN = re.compile(
+    r"(\d+)\s*(us|user stories|stories|uc|use cases)",
+    re.IGNORECASE,
+)
+CHILD_PARENT_PATTERN = re.compile(
+    r"feature\s*(?:#|n[°o]?|num(?:ero)?|id)?\s*(\d+)|\[\s*feature\s*#?(\d+)\s*\]",
+    re.IGNORECASE,
+)
 DELETE_VERBS = {"delete", "remove", "supprime", "nettoie", "archive"}
+
+
+def _extract_generate_children(objective: str) -> dict | None:
+    if not objective:
+        return None
+    normalized = unicodedata.normalize("NFKD", objective)
+    normalized = normalized.encode("ascii", "ignore").decode("ascii")
+    normalized_low = normalized.lower()
+    if not any(verb in normalized_low for verb in ("genere", "generate", "create")):
+        return None
+    if not any(keyword in normalized_low for keyword in CHILD_KEYWORDS):
+        return None
+    parent_match = CHILD_PARENT_PATTERN.search(normalized)
+    if not parent_match:
+        return None
+    parent_id_str = parent_match.group(1) or parent_match.group(2)
+    try:
+        parent_id = int(parent_id_str)
+    except (TypeError, ValueError):
+        return None
+    count_match = CHILD_COUNT_PATTERN.search(normalized)
+    target_count = int(count_match.group(1)) if count_match else 5
+    return {
+        "action": "generate_children",
+        "parent_id": parent_id,
+        "target_type": "US",
+        "target_count": max(1, min(10, target_count)),
+    }
 
 
 def _filter_tools_by_objective(objective: str, tools: list[Any]) -> list[Any]:
@@ -55,8 +96,19 @@ def _filter_tools_by_objective(objective: str, tools: list[Any]) -> list[Any]:
 
     text = (objective or "").lower()
 
+    if _extract_generate_children(objective):
+        allowed = {
+            "get_item",
+            "generate_items_from_parent",
+            "list_items",
+            "update_item",
+            "search_documents",
+        }
+        logger.info("Generate-children intent detected; restricting tools to %s", allowed)
+        return [t for t in tools if getattr(t, "name", None) in allowed]
+
     if any(verb in text for verb in CREATE_VERBS):
-        allowed = {"get_item", "list_items", "create_item", "update_item"}
+        allowed = {"get_item", "list_items", "create_item", "update_item", "generate_items_from_parent"}
         logger.info("Create intent detected; restricting tools to %s", allowed)
     else:
         allowed = {getattr(t, "name", None) for t in tools if getattr(t, "name", None) != "delete_item"}
@@ -70,6 +122,10 @@ def _filter_tools_by_objective(objective: str, tools: list[Any]) -> list[Any]:
 def _tool_sig(tc: Dict[str, Any]) -> str:
     """Return a stable signature for a tool call used for deduplication."""
     return f"{tc.get('name')}|{json.dumps(tc.get('args') or {}, sort_keys=True, ensure_ascii=False)}"
+
+
+def _normalize_title_key(title: str) -> str:
+    return re.sub(r"\s+", " ", (title or "").strip()).lower()
 
 
 def _sanitize(obj: Any) -> Any:
@@ -152,6 +208,152 @@ def _extract_model_name(msg: AIMessage) -> str | None:
     return meta.get("model_name") or getattr(msg, "model", None)
 
 
+async def _handle_generate_children(intent: dict, project_id: int | None, run_id: str) -> dict:
+    parent_id = intent["parent_id"]
+    target_count = intent["target_count"]
+    target_type = intent["target_type"]
+    max_iters = 3
+    duplicates_skipped = 0
+    created_ids: list[int] = []
+    doc_citations: set[str] = set()
+    created_count = 0
+    message: str | None = None
+
+    parent = crud.get_item(parent_id)
+    if not parent:
+        summary = f"Feature #{parent_id} introuvable."
+        artifacts = {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []}
+        html = _build_html(summary, artifacts)
+        clean_summary = _build_clean_summary(summary, artifacts)
+        events.emit_status_update(run_id, "completed", clean_summary)
+        crud.finish_run(run_id, html, clean_summary, artifacts)
+        stream.publish(run_id, {"node": "write", "summary": clean_summary})
+        stream.close(run_id)
+        stream.discard(run_id)
+        events.cleanup_run(run_id)
+        return {"html": html}
+
+    if parent.type != "Feature":
+        summary = f"L'item #{parent_id} n'est pas une Feature."
+        artifacts = {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []}
+        html = _build_html(summary, artifacts)
+        clean_summary = _build_clean_summary(summary, artifacts)
+        events.emit_status_update(run_id, "completed", clean_summary)
+        crud.finish_run(run_id, html, clean_summary, artifacts)
+        stream.publish(run_id, {"node": "write", "summary": clean_summary})
+        stream.close(run_id)
+        stream.discard(run_id)
+        events.cleanup_run(run_id)
+        return {"html": html}
+
+    project_id = project_id or parent.project_id
+    if parent.project_id != project_id:
+        summary = f"Feature #{parent_id} appartient au projet {parent.project_id}, pas {project_id}."
+        artifacts = {"created_item_ids": [], "updated_item_ids": [], "deleted_item_ids": []}
+        html = _build_html(summary, artifacts)
+        clean_summary = _build_clean_summary(summary, artifacts)
+        events.emit_status_update(run_id, "completed", clean_summary)
+        crud.finish_run(run_id, html, clean_summary, artifacts)
+        stream.publish(run_id, {"node": "write", "summary": clean_summary})
+        stream.close(run_id)
+        stream.discard(run_id)
+        events.cleanup_run(run_id)
+        return {"html": html}
+
+    crud.update_run_meta(run_id, {"target_count": target_count, "intent": "generate_children"})
+
+    handler_available = "generate_items_from_parent" in agent_tools.HANDLERS and agent_tools.HANDLERS.get("generate_items_from_parent")
+
+    for iteration in range(1, max_iters + 1):
+        remaining = target_count - created_count
+        if remaining <= 0:
+            break
+        batch_n = min(remaining, 10)
+        tool_args = {
+            "project_id": project_id,
+            "parent_id": parent_id,
+            "target_type": target_type,
+            "n": batch_n,
+            "format": "As a / I want / So that + Gherkin AC",
+            "dedup": True,
+            "trace_to_doc": True,
+        }
+        if handler_available:
+            raw = await agent_tools._exec("generate_items_from_parent", run_id, tool_args)
+            result = json.loads(raw)
+        else:
+            result = await agent_handlers.generate_items_from_parent_handler(tool_args)
+
+        if not result.get("ok"):
+            err = result.get("error", "generation_failed")
+            if err in {"NO_MATCHES", "DUPLICATE_ONLY"}:
+                message = result.get("message") or err
+                break
+            message = result.get("message") or err
+            break
+
+        items = result.get("items") or []
+        if not items:
+            duplicates_skipped += batch_n
+            message = "Aucune user story additionnelle unique n'a pu être générée."
+            break
+
+        created_count += len(items)
+        duplicates_skipped += max(0, batch_n - len(items))
+        for item in items:
+            item_id = item.get("id")
+            if isinstance(item_id, int):
+                created_ids.append(item_id)
+        citations = result.get("result", {}).get("citations") if isinstance(result.get("result"), dict) else None
+        if isinstance(citations, list):
+            for cit in citations:
+                if isinstance(cit, str):
+                    doc_citations.add(cit)
+
+        if created_count >= target_count:
+            break
+
+    artifacts = {
+        "created_item_ids": created_ids,
+        "updated_item_ids": [],
+        "deleted_item_ids": [],
+    }
+
+    if created_count:
+        summary = (
+            f"{created_count}/{target_count} user stories générées sous '{parent.title}'."
+        )
+    else:
+        summary = message or "Aucune user story n'a été générée."
+
+    if created_count < target_count and not message:
+        summary = (
+            f"{summary} (Objectif initial: {target_count})."
+        )
+    elif message:
+        summary = f"{summary} ({message})" if created_count else summary
+
+    html = _build_html(summary, artifacts)
+    clean_summary = _build_clean_summary(summary, artifacts)
+
+    payload = {
+        "created_count": created_count,
+        "target_count": target_count,
+        "duplicates_skipped": duplicates_skipped,
+        "doc_citations": sorted(doc_citations),
+        "message": message,
+    }
+    stream.publish(run_id, {"node": "generate_children", "summary": payload})
+
+    events.emit_status_update(run_id, "completed", clean_summary)
+    crud.finish_run(run_id, html, clean_summary, artifacts)
+    stream.publish(run_id, {"node": "write", "summary": clean_summary})
+    stream.close(run_id)
+    stream.discard(run_id)
+    events.cleanup_run(run_id)
+    return {"html": html}
+
+
 async def _build_provider_chain(valid_tools: list[Any]) -> list[Any]:
     providers: list[Any] = []
     for name in LLM_PROVIDER_ORDER:
@@ -189,6 +391,10 @@ async def _run_chat_tools_impl(
     crud.update_run_tool_phase(run_id, False)
     events.emit_status_update(run_id, "started", "Initializing agent")
 
+    intent_info = _extract_generate_children(objective)
+    if intent_info:
+        return await _handle_generate_children(intent_info, project_id, run_id)
+
     # 1) Prépare le modèle + binding outils (LangChain)
     # Verify tools are valid before binding
     valid_tools = []
@@ -224,6 +430,8 @@ async def _run_chat_tools_impl(
         "deleted_item_ids": [],
     }
     created_ids: set[int] = set()
+    drafted_features: dict[str, Dict[str, Any]] = {}
+    last_successful_tool: str | None = None
 
     providers = await _build_provider_chain(valid_tools)
     if not providers:
@@ -455,7 +663,7 @@ Current project_id: {project_id if project_id else "Not specified"}
 
                 blocked = False
                 status = "ok"
-                result: dict
+                result: dict = {}
                 if name == "delete_item":
                     explicit = bool(args.get("explicit_confirm", False))
                     item_id = args.get("id")
@@ -470,6 +678,50 @@ Current project_id: {project_id if project_id else "Not specified"}
                         }
                         status = "error"
                         blocked = True
+
+                if (
+                    name == "bulk_create_features"
+                    and last_successful_tool == "draft_features_from_matches"
+                    and drafted_features
+                ):
+                    items_arg = args.get("items") or []
+                    requested_titles: set[str] = set()
+                    ordered_titles: list[str] = []
+                    for payload in items_arg:
+                        if isinstance(payload, dict):
+                            title = payload.get("title")
+                        else:
+                            title = getattr(payload, "title", None)
+                        if not title:
+                            continue
+                        title_str = str(title)
+                        ordered_titles.append(title_str)
+                        requested_titles.add(_normalize_title_key(title_str))
+                    if requested_titles and requested_titles.issubset(drafted_features.keys()):
+                        blocked = True
+                        matched_items: list[Dict[str, Any]] = []
+                        for title in ordered_titles:
+                            key = _normalize_title_key(title)
+                            item = drafted_features.get(key)
+                            if item and item not in matched_items:
+                                matched_items.append(item)
+                        result = {
+                            "ok": True,
+                            "result": {
+                                "created_ids": [
+                                    item.get("id")
+                                    for item in matched_items
+                                    if isinstance(item, dict) and item.get("id") is not None
+                                ],
+                                "skipped": True,
+                                "reason": "draft_features_from_matches_already_created",
+                            },
+                            "items": matched_items,
+                        }
+                        logger.info(
+                            "Skipping bulk_create_features; draft_features_from_matches already created: %s",
+                            ordered_titles,
+                        )
 
                 if not blocked:
                     try:
@@ -515,7 +767,22 @@ Current project_id: {project_id if project_id else "Not specified"}
                 except Exception as e:
                     logger.error(f"Failed to emit tool_result event: {e}")
 
+                if name == "draft_features_from_matches":
+                    if result.get("ok") and isinstance(result.get("items"), list) and result.get("items"):
+                        drafted_features = {
+                            _normalize_title_key(str(item.get("title")))
+                            : item
+                            for item in result.get("items", [])
+                            if isinstance(item, dict) and item.get("title")
+                        }
+                    else:
+                        drafted_features = {}
+
                 ok = bool(result.get("ok", True))
+                if ok:
+                    last_successful_tool = name
+                elif name == "draft_features_from_matches":
+                    last_successful_tool = None
                 if ok:
                     # MAJ artifacts si handler a renvoyé un item_id
                     if name == "create_item" and "item_id" in result:

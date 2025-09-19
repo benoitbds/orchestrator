@@ -14,60 +14,43 @@ class TestDocumentUploadWithEmbeddings:
     def setup_method(self):
         """Set up test environment."""
         crud.init_db()
-        # Create a test project
         self.project = crud.create_project("Test Project", "Test description")
     
-    def test_upload_document_generates_embeddings(self):
-        """Test that document upload generates embeddings."""
-        # Mock embedding generation and chunking
-        class DummyEnc:
-            def encode(self, text):
-                return [0] * len(text.split())
-            def decode(self, toks):
-                return " ".join("x" for _ in toks)
-        with patch('api.main.embed_texts') as mock_embed, \
-             patch('api.main.chunk_text', return_value=["Test content chunk 1. Test content chunk 2."]), \
-             patch('tiktoken.get_encoding', return_value=DummyEnc()):
-            mock_embed.return_value = [[0.1, 0.2, 0.3]]
+    def test_analyze_document_generates_embeddings(self):
+        """Analyzing a document should chunk content and store embeddings."""
+        with patch('api.main.chunk_text', return_value=['chunk one', 'chunk two']) as mock_chunk, \
+             patch('api.main.embed_texts') as mock_embed:
+            mock_embed.return_value = [[0.1, 0.2], [0.3, 0.4]]
 
-            files = {"file": ("test.txt", "Test content chunk 1. Test content chunk 2.", "text/plain")}
+            files = {"file": ("test.txt", "chunk one\nchunk two", "text/plain")}
             response = client.post(f"/projects/{self.project.id}/documents", files=files)
-
             assert response.status_code == 201
             document_data = response.json()
+            assert document_data["status"] == "UPLOADED"
+            assert crud.get_document_chunks(document_data["id"]) == []
 
-            assert document_data["filename"] == "test.txt"
-            assert document_data["project_id"] == self.project.id
+            analyze = client.post(f"/documents/{document_data['id']}/analyze")
+            assert analyze.status_code == 200
+            analyzed_payload = analyze.json()
+            assert analyzed_payload["status"] == "ANALYZED"
 
+            mock_chunk.assert_called_once()
             mock_embed.assert_called_once()
 
             chunks = crud.get_document_chunks(document_data["id"])
-            assert len(chunks) == 1
-            assert chunks[0]["embedding"] == [0.1, 0.2, 0.3]
+            assert len(chunks) == 2
+            assert chunks[0]["embedding"] == [0.1, 0.2]
+            assert chunks[1]["embedding"] == [0.3, 0.4]
     
-    def test_upload_document_embedding_failure_doesnt_fail_upload(self):
-        """Test that embedding failure doesn't prevent document upload."""
-        class DummyEnc:
-            def encode(self, text):
-                return [0] * len(text.split())
-            def decode(self, toks):
-                return " ".join("x" for _ in toks)
-        with patch('api.main.embed_texts') as mock_embed, \
-             patch('api.main.chunk_text', return_value=["Test content"]), \
-             patch('tiktoken.get_encoding', return_value=DummyEnc()):
-            mock_embed.side_effect = Exception("Embedding API failed")
+    def test_upload_document_defers_chunking(self):
+        """Uploading a document stores it without creating chunks immediately."""
+        files = {"file": ("test.txt", "Test content", "text/plain")}
+        response = client.post(f"/projects/{self.project.id}/documents", files=files)
 
-            files = {"file": ("test.txt", "Test content", "text/plain")}
-            response = client.post(f"/projects/{self.project.id}/documents", files=files)
-
-            assert response.status_code == 201
-            document_data = response.json()
-
-            assert document_data["filename"] == "test.txt"
-
-            chunks = crud.get_document_chunks(document_data["id"])
-            assert len(chunks) == 1
-            assert chunks[0]["embedding"] == []
+        assert response.status_code == 201
+        document_data = response.json()
+        assert document_data["status"] == "UPLOADED"
+        assert crud.get_document_chunks(document_data["id"]) == []
     
     def test_upload_unsupported_file_format(self):
         """Test uploading unsupported file format."""
@@ -76,6 +59,7 @@ class TestDocumentUploadWithEmbeddings:
         
         assert response.status_code == 422
         assert "Document parsing failed" in response.json()["detail"]
+
 
 
 class TestDocumentChunksAPI:

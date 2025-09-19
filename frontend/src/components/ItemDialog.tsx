@@ -21,8 +21,9 @@ import { BacklogItem } from '@/models/backlogItem';
 import { useItems } from '@/lib/hooks';
 import { useBacklog } from '@/context/BacklogContext';
 import { mutate } from 'swr';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, validateItem } from '@/lib/api';
 import dynamic from 'next/dynamic';
+import { toast } from 'sonner';
 const Loader2 = dynamic(
   () => import('lucide-react').then((mod) => ({ default: mod.Loader2 })),
   { ssr: false }
@@ -37,7 +38,7 @@ interface ItemDialogProps {
 }
 
 export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDialogProps) {
-  const { deleteItem } = useBacklog();
+  const { deleteItem, refreshItems } = useBacklog();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState<'Epic' | 'Capability' | 'Feature' | 'US' | 'UC'>('US');
@@ -56,8 +57,8 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
   const { data: items } = useItems(projectId);
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const saveLabel = item?.generated_by_ai ? 'Valider' : 'Enregistrer';
   const [isGeneratingFeatures, setIsGeneratingFeatures] = useState(false);
+  const [validating, setValidating] = useState(false);
 
   useEffect(() => {
     if (item) {
@@ -135,13 +136,27 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
       };
     }
 
-    // Si c'était généré par l'IA, on marque validé
-    if (item?.generated_by_ai) {
-      extraData.generated_by_ai = false;
-    }
-
     await onSave({ ...baseData, ...extraData });
     onClose();
+  };
+
+  const requiresValidation = !!item && (item.ia_review_status === 'pending' || item.generated_by_ai);
+
+  const handleValidate = async () => {
+    if (!item) return;
+    try {
+      setValidating(true);
+      await validateItem(item.id);
+      await refreshItems();
+      const keys = ['all', 'pending', 'approved'].map((review) => `/items?project_id=${projectId}&review=${review}`);
+      keys.forEach((key) => mutate(key));
+      toast.success('Item validé');
+      onClose();
+    } catch (err) {
+      toast.error('Impossible de valider cet item');
+    } finally {
+      setValidating(false);
+    }
   };
 
   // Logique de filtrage des parents selon le type sélectionné
@@ -418,7 +433,23 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
               )}
             </Button>
           )}
-          <Button onClick={handleSubmit}>{saveLabel}</Button>
+          {requiresValidation && (
+            <Button
+              variant="secondary"
+              disabled={validating}
+              onClick={handleValidate}
+            >
+              {validating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Validation…
+                </>
+              ) : (
+                'Valider'
+              )}
+            </Button>
+          )}
+          <Button onClick={handleSubmit}>Enregistrer</Button>
         </DialogFooter>
       </DialogContent>
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>

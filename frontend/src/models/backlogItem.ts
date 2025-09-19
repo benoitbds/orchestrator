@@ -6,6 +6,12 @@ export interface ItemBase {
   type: "Epic" | "Capability" | "Feature" | "US" | "UC";
   project_id: number;
   parent_id: number | null;
+  ia_review_status?: "pending" | "approved";
+  last_modified_by?: "ai" | "user";
+  ia_last_run_id?: string | null;
+  ia_fields?: string[] | null;
+  validated_at?: string | null;
+  validated_by?: string | null;
   /** Indique si cet item a été généré par l'IA et doit être validé */
   generated_by_ai?: boolean;
   created_at?: string | null;
