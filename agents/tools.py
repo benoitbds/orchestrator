@@ -16,6 +16,7 @@ from enum import Enum
 
 from agents.tools_context import get_current_run_id
 from agents.schemas import FeatureInput
+from agents.generators.generate_full_tree import generate_full_tree_v1
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,11 @@ class GenerateItemsArgs(BaseModel):
     parent_id: int = Field(..., description="Parent item ID")
     target_type: Literal["Feature", "US", "UC"]
     n: int | None = Field(6, description="How many items to generate (3..10)")
+
+
+class GenerateFullTreeArgs(BaseModel):
+    project_id: int
+    theme: str | None = "e-commerce"
 
 # ---------- HANDLERS réels ----------
 from .handlers import (  # noqa: E402 - handlers import requires models above
@@ -250,6 +256,11 @@ TOOLS = [
         "Infer and create Feature backlog items from project documents. Returns {items:[{id,title}]}.",
         DraftFeaturesArgs,
     ),
+    _mk_tool(
+        "generate_full_tree_v1",
+        "Créer une arborescence complète (Épics → Features → User Stories) pour un projet e-commerce.",
+        GenerateFullTreeArgs,
+    ),
 ]
 
 # On conserve HANDLERS exporté si utilisé ailleurs
@@ -268,4 +279,5 @@ HANDLERS = {
     "get_document": get_document_handler,
     "draft_features_from_matches": draft_features_from_matches_handler,
     "generate_items_from_parent": generate_items_from_parent_handler,
+    "generate_full_tree_v1": generate_full_tree_v1,
 }
