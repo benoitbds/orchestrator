@@ -4,9 +4,9 @@ import { apiFetch } from '@/lib/api';
 
 const fetcher = (url: string) => apiFetch(url).then(res => res.json());
 
-export interface TreeNode extends BacklogItem {
+export type TreeNode = BacklogItem & {
   children: TreeNode[];
-}
+};
 
 export function useItems(projectId: number | null, options?: { review?: 'all' | 'pending' | 'approved' }) {
   const review = options?.review ?? 'all';

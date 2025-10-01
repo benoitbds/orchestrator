@@ -15,6 +15,8 @@ from pydantic import BaseModel
 from typing import Literal
 
 from api.ws import router as ws_router
+from api.ws_langgraph import register_websocket_routes
+from api.approvals import router as approvals_router
 from backend.app.security import get_current_user_optional
 from backend.app.routes.projects import router as project_router
 
@@ -102,9 +104,17 @@ else:
     logger.warning("FIREBASE_SERVICE_ACCOUNT_PATH not set or Firebase already initialized")
 
 app = FastAPI()
+
+allowed_origins = ["https://agent4ba.baq.ovh"]
+if os.getenv("ENVIRONMENT", "production") == "development":
+    allowed_origins.extend([
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://agent4ba.baq.ovh"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -142,6 +152,80 @@ async def run_agent(payload: RunAgentPayload, user=Depends(get_current_user_opti
     return {"ok": True, "run_id": run_id}
 
 
+@app.post("/agent/run_langgraph")
+async def run_langgraph_agent(
+    payload: RunAgentPayload,
+    user=Depends(get_current_user_optional)
+):
+    """Nouveau endpoint avec orchestration LangGraph (Phase 1)."""
+    
+    # Validate project access
+    if payload.project_id:
+        project = crud.get_project_for_user(payload.project_id, user["uid"])
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    
+    try:
+        from agents_v2.graph import build_agent_graph
+        from agents_v2.state import AgentState
+        from config.redis import get_checkpointer
+        from uuid import uuid4
+        
+        run_id = str(uuid4())
+        
+        # Try to get Redis checkpointer, fallback to None if Redis unavailable
+        try:
+            checkpointer = await get_checkpointer()
+            logger.info("Using Redis checkpointer for LangGraph")
+        except Exception as e:
+            logger.warning(f"Redis checkpointer unavailable, proceeding without: {e}")
+            checkpointer = None
+        
+        graph = build_agent_graph(checkpointer)
+        
+        config = {"configurable": {"thread_id": run_id}} if checkpointer else None
+        
+        initial_state: AgentState = {
+            "messages": [],
+            "project_id": payload.project_id,
+            "user_uid": user["uid"],
+            "objective": payload.objective,
+            "next_agent": "",
+            "iteration": 0,
+            "max_iterations": 10,
+            "tool_results": {},
+            "error": None,
+            "run_id": run_id,
+            "current_agent": None,
+            "progress_steps": None,
+            "documents_searched": None,
+            "status_message": None,
+            "synthesis_complete": None,
+            "final_response": None,
+            "is_stub": None
+        }
+        
+        logger.info(f"Starting LangGraph execution for run_id: {run_id}")
+        result = await graph.ainvoke(initial_state, config=config)
+        
+        return {
+            "run_id": run_id,
+            "status": "completed",
+            "result": {
+                "final_state": result,
+                "tool_results": result.get("tool_results", {}),
+                "iterations": result.get("iteration", 0)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"LangGraph execution failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"LangGraph agent execution failed: {str(e)}"
+        )
+
+
 @app.on_event("startup")
 def startup_event():
     crud.init_db()
@@ -152,6 +236,10 @@ def startup_event():
 # Include websocket routes after middleware setup
 app.include_router(ws_router)
 app.include_router(project_router)
+app.include_router(approvals_router)
+
+# Register LangGraph streaming WebSocket routes
+register_websocket_routes(app)
 
 @app.middleware("http")
 async def log_origin(request, call_next):

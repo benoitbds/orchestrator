@@ -80,7 +80,7 @@ function calculateWebLayout(tree: TreeNode[], centerX: number, centerY: number):
       }
       
       if (node.children && node.children.length > 0) {
-        flattenNodes(node.children as TreeNode[], depth + 1, node.id);
+        flattenNodes(node.children, depth + 1, node.id);
       }
     });
   };
@@ -92,7 +92,7 @@ function calculateWebLayout(tree: TreeNode[], centerX: number, centerY: number):
   // Calculate positions using a web/network layout
   const calculateWebPositions = () => {
     const maxDepth = Math.max(...Array.from(nodeDepth.values()));
-    const layers = Array.from({length: maxDepth + 1}, () => []);
+    const layers: TreeNode[][] = Array.from({length: maxDepth + 1}, () => []);
     
     // Group nodes by depth level
     allNodes.forEach(node => {

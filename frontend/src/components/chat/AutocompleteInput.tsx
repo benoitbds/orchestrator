@@ -124,15 +124,21 @@ export function AutocompleteInput({
 
   // Fetch items for a specific type
   const fetchItems = async (type: ItemType) => {
-    if (!projectId) return;
+    if (!projectId) {
+      console.warn('No projectId, cannot fetch items');
+      return;
+    }
     
+    console.log(`Fetching ${type.type} items for project ${projectId}`);
     setIsLoadingItems(true);
     try {
       const response = await apiFetch(`/items?project_id=${projectId}&type=${type.type}`);
       if (response.ok) {
         const data = await response.json();
+        console.log(`Fetched ${data.length} ${type.type} items:`, data.map((i: BacklogItem) => ({id: i.id, title: i.title})));
         setItems(data || []);
       } else {
+        console.error(`Failed to fetch items: ${response.status}`);
         setItems([]);
       }
     } catch (error) {
@@ -245,9 +251,10 @@ export function AutocompleteInput({
   const handleSuggestionSelect = (suggestion: ItemType | BacklogItem) => {
     const { startPos, endPos } = autocompleteContext;
     
-    if ('type' in suggestion && suggestion.id) {
+    if ('type' in suggestion && 'id' in suggestion && suggestion.id) {
       // It's a BacklogItem
       const item = suggestion as BacklogItem;
+      console.log(`Inserting reference for item:`, { id: item.id, type: item.type, title: item.title });
       const replacement = `[${item.type} #${item.id}] `;
       const newValue = value.slice(0, startPos) + replacement + value.slice(endPos || startPos);
       onChange(newValue);

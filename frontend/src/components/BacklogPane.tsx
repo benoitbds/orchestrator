@@ -59,7 +59,7 @@ export default function BacklogPane() {
       setIsDialogOpen(false);
     } catch (error) {
       console.error('Save error:', error);
-      alert(`Erreur: ${error.message}`);
+      alert(`Erreur: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 

@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { AutocompleteInput } from './AutocompleteInput';
 import { cn } from '@/lib/utils';
+import { resolveShortRefs, extractIntentMetadata, type AgentRunPayload } from '@/lib/api';
+import { toast } from 'sonner';
 
 interface ChatComposerProps {
-  onSendMessage: (message: string) => Promise<void>;
+  onSendMessage: (message: string, meta?: AgentRunPayload['meta']) => Promise<void>;
   isLoading?: boolean;
   disabled?: boolean;
   projectId?: number;
@@ -39,10 +41,22 @@ export function ChatComposer({
     setMessage('');
     
     try {
-      await onSendMessage(messageToSend);
+      if (!projectId) {
+        throw new Error('No project selected');
+      }
+      
+      const { text: resolved, references } = await resolveShortRefs(messageToSend, projectId);
+      const metadata = extractIntentMetadata(messageToSend, references);
+      
+      if (metadata) {
+        console.log('Extracted metadata:', metadata);
+      }
+      
+      await onSendMessage(resolved, metadata || undefined);
     } catch (error) {
-      // Restore message on error
       setMessage(messageToSend);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
+      toast.error(errorMessage);
       console.error('Failed to send message:', error);
     }
   };

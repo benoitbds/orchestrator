@@ -17,6 +17,7 @@ from enum import Enum
 from agents.tools_context import get_current_run_id
 from agents.schemas import FeatureInput
 from agents.generators.generate_full_tree import generate_full_tree_v1
+from agents.generators.generate_full_tree_v2 import generate_full_tree_v2
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,16 @@ class GenerateItemsArgs(BaseModel):
 class GenerateFullTreeArgs(BaseModel):
     project_id: int
     theme: str | None = "e-commerce"
+
+
+class GenerateFullTreeV2Args(BaseModel):
+    project_id: int
+    theme: str | None = "e-commerce"
+    n_epics: int = 6
+    n_features: int = 6
+    n_us: int = 3
+    n_uc: int = 2
+    dry_run: bool = False
 
 # ---------- HANDLERS réels ----------
 from .handlers import (  # noqa: E402 - handlers import requires models above
@@ -261,6 +272,11 @@ TOOLS = [
         "Créer une arborescence complète (Épics → Features → User Stories) pour un projet e-commerce.",
         GenerateFullTreeArgs,
     ),
+    _mk_tool(
+        "generate_full_tree_v2",
+        "Créer/compléter l'arborescence e-commerce (Epic → Feature → US → UC) avec quotas configurables.",
+        GenerateFullTreeV2Args,
+    ),
 ]
 
 # On conserve HANDLERS exporté si utilisé ailleurs
@@ -280,4 +296,5 @@ HANDLERS = {
     "draft_features_from_matches": draft_features_from_matches_handler,
     "generate_items_from_parent": generate_items_from_parent_handler,
     "generate_full_tree_v1": generate_full_tree_v1,
+    "generate_full_tree_v2": generate_full_tree_v2,
 }

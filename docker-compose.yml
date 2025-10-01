@@ -7,9 +7,11 @@ services:
       - .:/app
     container_name: orchestrator_api
     env_file:
-      - .env
-    ports:
-      - "8000:8000"
+      - .env.docker
+    expose:
+      - "8000"
+    # ports:
+    #   - "8000:8000"  # Commenté car Caddy fait le reverse proxy
     restart: unless-stopped
 
   frontend:
@@ -19,10 +21,27 @@ services:
     depends_on:
       - app
 
+  redis:
+    image: redis:7-alpine
+    container_name: orchestrator_redis
+    expose:
+      - "6379"
+    # ports:
+    #   - "6379:6379"  # Commenté - accessible seulement depuis les autres conteneurs
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   reverse:
     image: caddy:2
     container_name: orchestrator_proxy
-    depends_on: [app, frontend]
+    depends_on: [app, frontend, redis]
     ports:
       - "9080:80"
       - "9443:443"
@@ -34,3 +53,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  redis_data:

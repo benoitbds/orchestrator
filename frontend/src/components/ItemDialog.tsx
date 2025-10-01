@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { BacklogItem } from '@/models/backlogItem';
+import { BacklogItem, isEpic, isCapability, isFeature, isUS, isUC } from '@/models/backlogItem';
 import { useItems } from '@/lib/hooks';
 import { useBacklog } from '@/context/BacklogContext';
 import { mutate } from 'swr';
@@ -66,17 +66,17 @@ export function ItemDialog({ isOpen, onClose, item, projectId, onSave }: ItemDia
       setDescription(item.description || '');
       setType(item.type);
       setParentId(item.parent_id);
-      setState(item.state || '');
-      setBenefitHypothesis(item.benefit_hypothesis || '');
-      setLeadingIndicators(item.leading_indicators || '');
-      setMvpDefinition(item.mvp_definition || '');
-      setWsjf(item.wsjf);
-      setAcceptanceCriteria(item.acceptance_criteria || '');
-      setStoryPoints(item.story_points);
-      setProgramIncrement(item.program_increment || '');
-      setIteration(item.iteration || '');
-      setOwner(item.owner || '');
-      setInvestCompliant(item.invest_compliant || false);
+      setState((isEpic(item) || isCapability(item)) ? (item.state || '') : '');
+      setBenefitHypothesis((isEpic(item) || isCapability(item) || isFeature(item)) ? (item.benefit_hypothesis || '') : '');
+      setLeadingIndicators((isEpic(item) || isCapability(item)) ? (item.leading_indicators || '') : '');
+      setMvpDefinition((isEpic(item) || isCapability(item)) ? (item.mvp_definition || '') : '');
+      setWsjf((isEpic(item) || isCapability(item) || isFeature(item)) ? (item.wsjf ?? null) : null);
+      setAcceptanceCriteria((isFeature(item) || isUS(item) || isUC(item)) ? (item.acceptance_criteria || '') : '');
+      setStoryPoints((isUS(item) || isUC(item)) ? item.story_points : 0);
+      setProgramIncrement(isFeature(item) ? (item.program_increment || '') : '');
+      setIteration((isUS(item) || isUC(item)) ? (item.iteration || '') : '');
+      setOwner(isFeature(item) ? (item.owner || '') : '');
+      setInvestCompliant((isUS(item) || isUC(item)) ? (item.invest_compliant || false) : false);
     } else {
       setTitle('');
       setDescription('');

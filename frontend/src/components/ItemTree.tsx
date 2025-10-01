@@ -227,7 +227,7 @@ export function ItemTree({ projectId, onEdit }: { projectId: number | null, onEd
     const parentType = parent ? parent.type : null;
     if (allowedParent[dragged.type] !== parentType) return;
     try {
-      await apiFetch(`/items/${dragged.id}`, {
+      await apiFetch(`/api/items/${dragged.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ parent_id: parent ? parent.id : null }),

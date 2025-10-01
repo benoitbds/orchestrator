@@ -56,7 +56,7 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
 
   const updateItem = async (id: number, item: Omit<BacklogItem, 'id'>) => {
     try {
-      const res = await apiFetch(`/items/${id}`, {
+      const res = await apiFetch(`/api/items/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
@@ -73,7 +73,7 @@ export const BacklogProvider = ({ children }: { children: ReactNode }) => {
 
   const deleteItem = async (id: number) => {
     try {
-      const res = await apiFetch(`/items/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/items/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed');
       await fetchItems();
       return true;

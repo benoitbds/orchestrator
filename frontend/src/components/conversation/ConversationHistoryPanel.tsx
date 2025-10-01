@@ -115,7 +115,7 @@ export function ConversationHistoryPanel({
           <ToggleGroup
             type="single"
             value={displayMode}
-            onValueChange={(value) => value && setDisplayMode(value as DisplayMode['mode'])}
+            onValueChange={(value: string) => value && setDisplayMode(value as DisplayMode['mode'])}
             className="bg-muted/50 p-1 rounded-lg"
             size="sm"
           >
