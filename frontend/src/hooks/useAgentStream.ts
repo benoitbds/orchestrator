@@ -3,7 +3,7 @@ import { useRunsStore } from "@/stores/useRunsStore";
 import { useHistory } from "@/store/useHistory";
 import { toLabel } from "@/lib/historyAdapter";
 import { safeId } from "@/lib/safeId";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, type AgentRunPayload } from "@/lib/api";
 import { useAgentActionsStore } from "@/hooks/useAgentActions";
 import { getWSUrl } from "@/lib/ws";
 import { auth } from "@/lib/firebase";
@@ -23,6 +23,7 @@ interface UseAgentStreamOptions {
   onRunIdUpdate?: (tempRunId: string, realRunId: string) => void;
   objective?: string;
   projectId?: number;
+  metadata?: AgentRunPayload['meta'];
 }
 
 interface RunState {
@@ -270,7 +271,7 @@ export function useAgentStream(
             setTimeout(async () => {
               if (!runRef.current || r.wsId !== runRef.current.wsId) return;
               try {
-                const reWs = await openSocket(WS_URL, r.wsId!);
+                const reWs = await openSocket(url, r.wsId!);
                 if (!runRef.current || r.wsId !== runRef.current.wsId) {
                   try {
                     reWs.close();
@@ -352,7 +353,11 @@ export function useAgentStream(
       if (!r.objectiveSent) {
         r.objectiveSent = true;
         if (objective && projectId) {
-          ws.send(JSON.stringify({ action: "start", objective, project_id: projectId }));
+          const payload: any = { action: "start", objective, project_id: projectId };
+          if (options.metadata) {
+            payload.meta = options.metadata;
+          }
+          ws.send(JSON.stringify(payload));
         } else if (runId) {
           ws.send(JSON.stringify({ action: "subscribe", run_id: runId }));
         }

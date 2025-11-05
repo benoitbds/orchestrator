@@ -11,8 +11,13 @@ from orchestrator import crud
 from orchestrator import stream  # assume stream.register/publish/close exist
 import json
 import asyncio
+from datetime import datetime, date
+from enum import Enum
 
 from agents.tools_context import get_current_run_id
+from agents.schemas import FeatureInput
+from agents.generators.generate_full_tree import generate_full_tree_v1
+from agents.generators.generate_full_tree_v2 import generate_full_tree_v2
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +125,21 @@ class GenerateItemsArgs(BaseModel):
     target_type: Literal["Feature", "US", "UC"]
     n: int | None = Field(6, description="How many items to generate (3..10)")
 
+
+class GenerateFullTreeArgs(BaseModel):
+    project_id: int
+    theme: str | None = "e-commerce"
+
+
+class GenerateFullTreeV2Args(BaseModel):
+    project_id: int
+    theme: str | None = "e-commerce"
+    n_epics: int = 6
+    n_features: int = 6
+    n_us: int = 3
+    n_uc: int = 2
+    dry_run: bool = False
+
 # ---------- HANDLERS réels ----------
 from .handlers import (  # noqa: E402 - handlers import requires models above
     create_item_tool,
@@ -138,18 +158,42 @@ from .handlers import (  # noqa: E402 - handlers import requires models above
     generate_items_from_parent_handler,
 )
 
+def _jsonable(obj: Any) -> Any:
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, Enum):
+        return obj.value
+    if isinstance(obj, BaseModel):
+        return _jsonable(obj.model_dump())
+    if isinstance(obj, dict):
+        return {str(k): _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_jsonable(v) for v in list(obj)]
+    return str(obj)
+
+
 def _sanitize(obj: Any) -> Any:
     if isinstance(obj, dict):
-        return {k: _sanitize(v) for k,v in obj.items() if "key" not in k.lower() and "secret" not in k.lower()}
-    if isinstance(obj, list):
-        return [_sanitize(v) for v in obj]
-    return obj
+        sanitized: Dict[str, Any] = {}
+        for k, v in obj.items():
+            key_str = str(k)
+            lowered = key_str.lower()
+            if "key" in lowered or "secret" in lowered:
+                continue
+            sanitized[key_str] = _sanitize(v)
+        return sanitized
+    if isinstance(obj, (list, tuple, set)):
+        return [_sanitize(v) for v in list(obj)]
+    return _jsonable(obj)
 
 # Chaque tool wrapper reçoit **run_id** dans le kwargs (injecté par l’agent, voir plus bas)
 async def _exec(name: str, run_id: str, args: dict):
     logger.info("Executing tool '%s' with args: %s (run_id: %s)", name, args, run_id)
     safe_args = _sanitize(args or {})
-    crud.record_run_step(run_id, f"tool:{name}:request", json.dumps({"name": name, "args": safe_args}), broadcast=False)
+    serialized_request = json.dumps({"name": name, "args": safe_args})
+    crud.record_run_step(run_id, f"tool:{name}:request", serialized_request, broadcast=False)
     stream.publish(run_id, {"node": f"tool:{name}:request", "args": safe_args})
     
     handler = HANDLERS.get(name)
@@ -171,7 +215,7 @@ async def _exec(name: str, run_id: str, args: dict):
             "message": str(ve),
             "expected": "For bulk_create_features you MUST provide 'items': [...]. See planner guidance.",
         }
-        crud.record_run_step(run_id, f"tool:{name}:validation_error", json.dumps(hint), broadcast=False)
+        crud.record_run_step(run_id, f"tool:{name}:validation_error", json.dumps(_sanitize(hint)), broadcast=False)
         stream.publish(run_id, {"node": f"tool:{name}:validation_error", **hint})
         return json.dumps(hint)
     except asyncio.TimeoutError:
@@ -181,12 +225,13 @@ async def _exec(name: str, run_id: str, args: dict):
         logger.error("Tool '%s' failed with exception: %s", name, str(e), exc_info=True)
         res = {"ok": False, "error": f"Tool execution failed: {str(e)}"}
     
-    data = {k: v for k, v in res.items() if k not in {"ok","error"}}
+    data = {k: v for k, v in res.items() if k not in {"ok", "error"}}
     safe_res = _sanitize(data)
-    crud.record_run_step(run_id, f"tool:{name}:response", json.dumps({"ok": res.get("ok"), "result": safe_res, "error": res.get("error")}), broadcast=False)
-    stream.publish(run_id, {"node": f"tool:{name}:response", "ok": res.get("ok"), "result": safe_res, "error": res.get("error")})
+    response_payload = {"ok": res.get("ok"), "result": safe_res, "error": res.get("error")}
+    crud.record_run_step(run_id, f"tool:{name}:response", json.dumps(response_payload), broadcast=False)
+    stream.publish(run_id, {"node": f"tool:{name}:response", **response_payload})
     # Renvoie une **string** (LC attend du texte des tools)
-    result_json = json.dumps(res)
+    result_json = json.dumps(_sanitize(res))
     logger.info("Tool '%s' execution completed, returning: %s", name, result_json)
     return result_json
 
@@ -241,6 +286,16 @@ TOOLS = [
         "Infer and create Feature backlog items from project documents. Returns {items:[{id,title}]}.",
         DraftFeaturesArgs,
     ),
+    _mk_tool(
+        "generate_full_tree_v1",
+        "Créer une arborescence complète (Épics → Features → User Stories) pour un projet e-commerce.",
+        GenerateFullTreeArgs,
+    ),
+    _mk_tool(
+        "generate_full_tree_v2",
+        "Créer/compléter l'arborescence e-commerce (Epic → Feature → US → UC) avec quotas configurables.",
+        GenerateFullTreeV2Args,
+    ),
 ]
 
 # On conserve HANDLERS exporté si utilisé ailleurs
@@ -259,4 +314,6 @@ HANDLERS = {
     "get_document": get_document_handler,
     "draft_features_from_matches": draft_features_from_matches_handler,
     "generate_items_from_parent": generate_items_from_parent_handler,
+    "generate_full_tree_v1": generate_full_tree_v1,
+    "generate_full_tree_v2": generate_full_tree_v2,
 }

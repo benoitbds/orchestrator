@@ -17,9 +17,10 @@ export default function RunsPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   useEffect(() => {
     if (!currentProject) return;
     let cancelled = false;
+    const projectId = currentProject.id;
     async function fetchRuns() {
       try {
-        const res = await apiFetch(`/runs?project_id=${currentProject.id}`);
+        const res = await apiFetch(`/runs?project_id=${projectId}`);
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data)) {

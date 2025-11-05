@@ -1,31 +1,33 @@
 'use client';
 
 import { useState } from 'react';
-import { AgentStep } from '@/hooks/useRunStream';
+import { useAgentActions } from '@/hooks/useAgentActions';
+import { useRunsStore } from '@/stores/useRunsStore';
 import { Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface Props {
-  steps?: AgentStep[];
-  status: 'idle' | 'running' | 'done' | 'error';
+  runId?: string;
 }
 
-export function AgentActionsPanel({ steps = [], status }: Props) {
+export function AgentActionsPanel({ runId }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const toggle = (id: string) => setOpen((p) => ({ ...p, [id]: !p[id] }));
+  const { actions, done } = useAgentActions(runId);
+  const { getCurrentRun } = useRunsStore();
+  const currentRun = getCurrentRun();
+  const status = done ? 'done' : currentRun?.status === 'running' ? 'running' : 'idle';
 
   const badge =
     status === 'running'
       ? 'Running…'
       : status === 'done'
       ? 'Done'
-      : status === 'error'
-      ? 'Failed'
       : undefined;
 
-  const iconFor = (s: AgentStep['state']) => {
-    if (s === 'running') return <Loader2 className="h-4 w-4 animate-spin" />;
-    if (s === 'success') return <CheckCircle className="h-4 w-4 text-green-600" />;
-    if (s === 'failed') return <AlertCircle className="h-4 w-4 text-rose-600" />;
+  const iconFor = (phase: string, ok?: boolean) => {
+    if (phase === 'request') return <Loader2 className="h-4 w-4 animate-spin" />;
+    if (phase === 'response' && ok !== false) return <CheckCircle className="h-4 w-4 text-green-600" />;
+    if (phase === 'response' && ok === false) return <AlertCircle className="h-4 w-4 text-rose-600" />;
     return null;
   };
 
@@ -41,43 +43,37 @@ export function AgentActionsPanel({ steps = [], status }: Props) {
   return (
     <div className="border rounded-md overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 border-b text-sm font-medium">
-        <span>Agent actions ({steps.length})</span>
+        <span>Agent actions ({actions.length})</span>
         {badge && <span className="text-xs">{badge}</span>}
       </div>
       <div className="max-h-96 overflow-y-auto divide-y text-sm">
-        {steps.map((s, idx) => (
-          <div key={s.id} className="px-3 py-2">
+        {actions.map((action, idx) => (
+          <div key={action.id} className="px-3 py-2">
             <button
               className="w-full text-left flex items-start justify-between"
-              onClick={() => toggle(s.id)}
+              onClick={() => toggle(action.id)}
             >
               <div className="flex items-center gap-2">
-                {iconFor(s.state)}
+                {iconFor(action.phase, action.ok)}
                 <span>
-                  {s.tool} #{idx + 1}
+                  {action.tool} ({action.phase})
                 </span>
                 <code className="text-xs opacity-70">
-                  {preview(s.request)}
+                  {preview(action.payload)}
                 </code>
-                {s.state === 'failed' && s.error ? (
-                  <span className="ml-2 text-xs text-rose-600">Failed: {s.error}</span>
+                {action.phase === 'response' && action.ok === false ? (
+                  <span className="ml-2 text-xs text-rose-600">Failed</span>
                 ) : null}
               </div>
             </button>
-            {open[s.id] && (
+            {open[action.id] && (
               <pre className="mt-1 bg-muted rounded p-2 text-xs max-h-40 overflow-auto">
-                {JSON.stringify(
-                  s.ok
-                    ? { request: s.request, result: s.result }
-                    : { request: s.request, error: s.error },
-                  null,
-                  2,
-                )}
+                {JSON.stringify(action.payload, null, 2)}
               </pre>
             )}
           </div>
         ))}
-        {!steps.length && (
+        {!actions.length && (
           <div className="px-3 py-2 text-xs text-muted-foreground">
             No actions yet
           </div>

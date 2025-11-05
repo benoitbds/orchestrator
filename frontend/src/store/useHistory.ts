@@ -17,6 +17,8 @@ export type HistoryState = {
   ) => void;
   setAgentTextOnce: (turnId: string, text: string) => void;
   finalizeTurn: (turnId: string, ok: boolean) => void;
+  getTurnsByProject: (projectId: number) => ConversationTurn[];
+  clearProjectTurns: (projectId: number) => void;
 };
 
 export const useHistory = create<HistoryState>()(
@@ -104,6 +106,25 @@ export const useHistory = create<HistoryState>()(
               ...s.turns,
               [realId]: { ...turn, phase: ok ? 'completed' : 'failed' },
             },
+          };
+        }),
+      getTurnsByProject: (projectId) => {
+        const state = get();
+        return state.orderDesc
+          .filter((id) => state.turns[id]?.projectId === projectId)
+          .map((id) => state.turns[id])
+          .filter(Boolean);
+      },
+      clearProjectTurns: (projectId) =>
+        set((s) => {
+          const turnIdsToRemove = s.orderDesc.filter(
+            (id) => s.turns[id]?.projectId === projectId
+          );
+          const newTurns = { ...s.turns };
+          turnIdsToRemove.forEach((id) => delete newTurns[id]);
+          return {
+            turns: newTurns,
+            orderDesc: s.orderDesc.filter((id) => !turnIdsToRemove.includes(id)),
           };
         }),
     }),

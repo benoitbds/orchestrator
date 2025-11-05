@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import Dict, Optional
 
 from orchestrator import crud
@@ -12,10 +13,23 @@ from orchestrator import crud
 CREATE_KEYWORDS = r"(?:cr[eé]er?|ajoute?r?|create|add)"
 UPDATE_KEYWORDS = r"(?:modifie?r?|update|rename|renomm(?:e|er)?|change)"
 TYPE_PATTERN = r"epic|capability|feature|us|uc"
+CHILD_KEYWORDS = ("us", "user stories", "stories", "uc", "use cases")
+CHILD_COUNT_PATTERN = re.compile(
+    r"(\d+)\s*(us|user stories|stories|uc|use cases)",
+    re.IGNORECASE,
+)
+CHILD_PARENT_PATTERN = re.compile(
+    r"feature\s*(?:#|n[°o]?|num(?:ero)?|id)?\s*(\d+)|\[\s*feature\s*#?(\d+)\s*\]",
+    re.IGNORECASE,
+)
 
 
 def _norm_type(raw: str) -> str:
     return raw.upper() if raw.lower() in {"us", "uc"} else raw.capitalize()
+
+
+def _strip_accents(text: str) -> str:
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
 
 
 def parse_intent(objective: str) -> Optional[Dict]:
@@ -24,9 +38,51 @@ def parse_intent(objective: str) -> Optional[Dict]:
         return None
     obj = objective.strip()
     obj_low = obj.lower()
+    obj_norm = _strip_accents(obj).lower()
+
+    if any(verb in obj_norm for verb in ("genere", "generate", "create")) and any(
+        keyword in obj_norm for keyword in CHILD_KEYWORDS
+    ):
+        parent_match = CHILD_PARENT_PATTERN.search(_strip_accents(obj))
+        if parent_match:
+            parent_id_str = parent_match.group(1) or parent_match.group(2)
+            try:
+                parent_id = int(parent_id_str)
+            except (TypeError, ValueError):
+                parent_id = None
+            if parent_id is not None:
+                count_match = CHILD_COUNT_PATTERN.search(_strip_accents(obj))
+                target_count = (
+                    int(count_match.group(1)) if count_match else 5
+                )
+                return {
+                    "action": "generate_children",
+                    "target": {"type": "Feature", "id": parent_id},
+                    "target_type": "US",
+                    "target_count": max(1, min(10, target_count)),
+                }
 
     # ----- Create -----------------------------------------------------
     if re.search(CREATE_KEYWORDS, obj_low):
+        if any(keyword in obj_low for keyword in ("us", "user stories", "stories", "use cases", "uc")):
+            parent_match = CHILD_PARENT_PATTERN.search(_strip_accents(obj))
+            if parent_match:
+                parent_id_str = parent_match.group(1) or parent_match.group(2)
+                try:
+                    parent_id = int(parent_id_str)
+                except (TypeError, ValueError):
+                    parent_id = None
+                if parent_id is not None:
+                    count_match = CHILD_COUNT_PATTERN.search(_strip_accents(obj))
+                    target_count = (
+                        int(count_match.group(1)) if count_match else 5
+                    )
+                    return {
+                        "action": "generate_children",
+                        "target": {"type": "Feature", "id": parent_id},
+                        "target_type": "US",
+                        "target_count": max(1, min(10, target_count)),
+                    }
         type_match = re.search(TYPE_PATTERN, obj_low)
         if not type_match:
             return None

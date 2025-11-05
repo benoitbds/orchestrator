@@ -5,10 +5,23 @@ import { Send, Loader2, Paperclip, Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { AutocompleteInput } from './AutocompleteInput';
+import { ApprovalModal as ApprovalPanel } from '@/components/ApprovalModal';
 import { cn } from '@/lib/utils';
+import { resolveShortRefs, extractIntentMetadata, type AgentRunPayload } from '@/lib/api';
+import { toast } from 'sonner';
+
+interface PendingApproval {
+  run_id: string;
+  step_index: number;
+  agent: string;
+  objective: string;
+  created_at: string;
+  timeout_at: string;
+  context?: unknown;
+}
 
 interface ChatComposerProps {
-  onSendMessage: (message: string) => Promise<void>;
+  onSendMessage: (message: string, meta?: AgentRunPayload['meta']) => Promise<void>;
   isLoading?: boolean;
   disabled?: boolean;
   projectId?: number;
@@ -16,6 +29,8 @@ interface ChatComposerProps {
   className?: string;
   showAttachments?: boolean;
   showVoice?: boolean;
+  pendingApproval?: PendingApproval | null;
+  onApprovalDecision?: (decision: 'approve' | 'reject' | 'modify', reason: string) => void;
 }
 
 export function ChatComposer({
@@ -26,7 +41,9 @@ export function ChatComposer({
   placeholder = "Ask about your backlog... (type / to reference items)",
   className,
   showAttachments = false,
-  showVoice = false
+  showVoice = false,
+  pendingApproval = null,
+  onApprovalDecision
 }: ChatComposerProps) {
   const [message, setMessage] = useState('');
   const [isRecording, setIsRecording] = useState(false);
@@ -39,10 +56,22 @@ export function ChatComposer({
     setMessage('');
     
     try {
-      await onSendMessage(messageToSend);
+      if (!projectId) {
+        throw new Error('No project selected');
+      }
+      
+      const { text: resolved, references } = await resolveShortRefs(messageToSend, projectId);
+      const metadata = extractIntentMetadata(messageToSend, references);
+      
+      if (metadata) {
+        console.log('Extracted metadata:', metadata);
+      }
+      
+      await onSendMessage(resolved, metadata || undefined);
     } catch (error) {
-      // Restore message on error
       setMessage(messageToSend);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
+      toast.error(errorMessage);
       console.error('Failed to send message:', error);
     }
   };
@@ -69,9 +98,30 @@ export function ChatComposer({
 
   const canSend = message.trim().length > 0 && !isLoading && !disabled;
 
+  // Debug logging
+  if (pendingApproval) {
+    console.log('[ChatComposer] Rendering with pending approval:', pendingApproval);
+    console.log('[ChatComposer] onApprovalDecision present:', !!onApprovalDecision);
+  }
+
   return (
     <Card className={cn("p-4", className)} ref={composerRef}>
       <div className="space-y-3">
+        {/* Approval Panel */}
+        {pendingApproval && onApprovalDecision && (
+          <ApprovalPanel
+            runId={pendingApproval.run_id}
+            stepIndex={pendingApproval.step_index}
+            agent={pendingApproval.agent}
+            objective={pendingApproval.objective}
+            createdAt={pendingApproval.created_at}
+            timeoutAt={pendingApproval.timeout_at}
+            context={pendingApproval.context}
+            projectId={projectId}
+            onDecision={onApprovalDecision}
+          />
+        )}
+        
         {/* Main input area */}
         <div className="flex items-end gap-3">
           {/* Attachments button */}

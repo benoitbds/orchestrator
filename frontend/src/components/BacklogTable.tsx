@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { BacklogItem, isEpic, isCapability, isFeature, isUS, isUC } from '@/models/backlogItem';
 import { useItems } from '@/lib/hooks';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +19,9 @@ const ArrowUpDown = dynamic(() => import('lucide-react').then(mod => ({ default:
 const ArrowUp = dynamic(() => import('lucide-react').then(mod => ({ default: mod.ArrowUp })), { ssr: false });
 const ArrowDown = dynamic(() => import('lucide-react').then(mod => ({ default: mod.ArrowDown })), { ssr: false });
 const CpuIcon = dynamic(() => import('lucide-react').then(mod => ({ default: mod.Cpu })), { ssr: false });
+import clsx from 'clsx';
+import { toast } from 'sonner';
+import { validateItem, validateItems } from '@/lib/api';
 
 const typeColors: { [key: string]: string } = {
   Epic: 'bg-purple-500',
@@ -52,11 +55,15 @@ interface BacklogTableProps {
 }
 
 export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
-  const { data: items, isLoading, error } = useItems(projectId);
+  const [reviewFilter, setReviewFilter] = useState<'all' | 'pending' | 'approved'>('all');
+  const { data: items, isLoading, error, mutate } = useItems(projectId, { review: reviewFilter });
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [sortField, setSortField] = useState<SortField>('wsjf');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [validatingId, setValidatingId] = useState<number | null>(null);
+  const [bulkValidating, setBulkValidating] = useState(false);
 
   // Flatten tree data pour la table
   const flatItems = useMemo(() => {
@@ -64,11 +71,9 @@ export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
     return items;
   }, [items]);
 
-  // Filtrage et tri
   const processedItems = useMemo(() => {
     let filtered = flatItems;
 
-    // Filtre par recherche
     if (searchTerm) {
       filtered = filtered.filter(item =>
         item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -76,12 +81,10 @@ export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
       );
     }
 
-    // Filtre par type
     if (typeFilter !== 'all') {
       filtered = filtered.filter(item => item.type === typeFilter);
     }
 
-    // Tri
     if (sortField && sortDirection) {
       filtered = [...filtered].sort((a, b) => {
         let aValue: any = '';
@@ -123,6 +126,76 @@ export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
     return filtered;
   }, [flatItems, searchTerm, typeFilter, sortField, sortDirection]);
 
+  const isPending = (item: BacklogItem) => {
+    if (item.ia_review_status) {
+      return item.ia_review_status === 'pending';
+    }
+    return !!item.generated_by_ai;
+  };
+
+  const selectableIds = useMemo(
+    () => processedItems.filter(isPending).map((item) => item.id),
+    [processedItems]
+  );
+
+  useEffect(() => {
+    setSelectedIds((prev) => prev.filter((id) => selectableIds.includes(id)));
+  }, [selectableIds]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [reviewFilter, projectId]);
+
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.includes(id));
+
+  const toggleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedIds(selectableIds);
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const toggleSelect = (id: number, checked: boolean) => {
+    setSelectedIds((prev) => {
+      if (checked) {
+        return prev.includes(id) ? prev : [...prev, id];
+      }
+      return prev.filter((value) => value !== id);
+    });
+  };
+
+  const handleValidateSingle = async (event: React.MouseEvent, id: number) => {
+    event.stopPropagation();
+    try {
+      setValidatingId(id);
+      await validateItem(id);
+      await mutate();
+      setSelectedIds((prev) => prev.filter((value) => value !== id));
+      toast.success('Item validé');
+    } catch (err) {
+      toast.error('Validation impossible');
+    } finally {
+      setValidatingId(null);
+    }
+  };
+
+  const handleBulkValidate = async () => {
+    if (!selectedIds.length) return;
+    try {
+      setBulkValidating(true);
+      await validateItems(selectedIds);
+      await mutate();
+      setSelectedIds([]);
+      toast.success('Éléments validés');
+    } catch (err) {
+      toast.error('Impossible de valider la sélection');
+    } finally {
+      setBulkValidating(false);
+    }
+  };
+
+  // Filtrage et tri
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortDirection(
@@ -195,6 +268,23 @@ export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
             <SelectItem value="UC">UC</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={reviewFilter} onValueChange={(value: string) => setReviewFilter(value as 'all' | 'pending' | 'approved')}>
+          <SelectTrigger className="w-44">
+            <SelectValue placeholder="Filtrer" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous</SelectItem>
+            <SelectItem value="pending">À valider (IA)</SelectItem>
+            <SelectItem value="approved">Validés</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button
+          variant="outline"
+          disabled={!selectedIds.length || bulkValidating}
+          onClick={handleBulkValidate}
+        >
+          {bulkValidating ? 'Validation…' : `Valider la sélection (${selectedIds.length})`}
+        </Button>
       </div>
 
       {/* Table */}
@@ -202,6 +292,16 @@ export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
         <table className="w-full">
           <thead className="bg-gray-50">
             <tr>
+              <th className="px-4 py-3 w-10">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={allSelected && selectableIds.length > 0}
+                  disabled={!selectableIds.length}
+                  onChange={(e) => toggleSelectAll(e.target.checked)}
+                  aria-label="Sélectionner tout"
+                />
+              </th>
               <th className="px-4 py-3 text-left">
                 <Button
                   variant="ghost"
@@ -252,44 +352,69 @@ export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
             </tr>
           </thead>
           <tbody>
-            {processedItems.map((item) => (
-              <tr
-                key={item.id}
-                className="border-t hover:bg-gray-50 cursor-pointer"
-                onClick={() => onEdit(item)}
-                data-item-id={item.id}
-              >
-                <td className="px-4 py-3">
-                  <Badge className={`${getBadgeColor(item)} text-white`}>
-                    {item.type}
-                  </Badge>
-                </td>
-                <td className="px-4 py-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="font-medium cursor-pointer"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onEdit(item);
-                        }}
-                      >
-                        {item.title}
-                      </span>
-                      {item.generated_by_ai && (
-                        <Badge className="bg-purple-600 text-white text-xs flex items-center gap-1">
-                          <CpuIcon className="w-3 h-3" />
-                          IA
-                        </Badge>
+            {processedItems.map((item) => {
+              const pending = isPending(item);
+              const iaFields = item.ia_fields || [];
+              const titleHighlighted = pending && iaFields.includes('title');
+              const descriptionHighlighted = pending && iaFields.includes('description');
+              const titleClasses = clsx(
+                'font-medium cursor-pointer',
+                pending && 'bg-amber-100 px-1 rounded'
+              );
+              const descriptionClasses = clsx(
+                'text-sm text-gray-500 truncate max-w-xs',
+                pending && 'bg-amber-50 px-1 rounded'
+              );
+
+              return (
+                <tr
+                  key={item.id}
+                  className="border-t hover:bg-gray-50 cursor-pointer"
+                  onClick={() => onEdit(item)}
+                  data-item-id={item.id}
+                >
+                  <td
+                    className="px-4 py-3"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      disabled={!pending}
+                      checked={selectedIds.includes(item.id)}
+                      onChange={(e) => toggleSelect(item.id, e.target.checked)}
+                      aria-label={`Sélectionner ${item.title}`}
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <Badge className={`${getBadgeColor(item)} text-white`}>
+                      {item.type}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={titleClasses}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onEdit(item);
+                          }}
+                        >
+                          {item.title}
+                        </span>
+                        {pending && (
+                          <Badge className="bg-purple-600 text-white text-xs flex items-center gap-1">
+                            <CpuIcon className="w-3 h-3" />
+                            IA
+                          </Badge>
+                        )}
+                      </div>
+                      {item.description && (
+                        <div className={descriptionClasses}>{item.description}</div>
                       )}
                     </div>
-                    {item.description && (
-                      <div className="text-sm text-gray-500 truncate max-w-xs">
-                        {item.description}
-                      </div>
-                    )}
-                  </div>
-                </td>
+                  </td>
                 <td className="px-4 py-3">
                   {(isEpic(item) || isCapability(item) || isFeature(item)) && item.wsjf ? (
                     <Badge variant="outline">{item.wsjf}</Badge>
@@ -335,16 +460,33 @@ export function BacklogTable({ projectId, onEdit }: BacklogTableProps) {
                     )}
                   </div>
                 </td>
-                <td className="px-4 py-3">
-                  <Button variant="ghost" size="sm" onClick={(e) => {
-                    e.stopPropagation();
-                    onEdit(item);
-                  }}>
-                    Modifier
-                  </Button>
-                </td>
-              </tr>
-            ))}
+                  <td className="px-4 py-3">
+                    <div className="flex gap-2">
+                      {pending && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => handleValidateSingle(e, item.id)}
+                          disabled={validatingId === item.id}
+                        >
+                          {validatingId === item.id ? 'Validation…' : 'Valider'}
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEdit(item);
+                        }}
+                      >
+                        Modifier
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

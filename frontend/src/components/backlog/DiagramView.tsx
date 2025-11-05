@@ -30,6 +30,8 @@ export interface NodeDatum {
   fy?: number;
   pinned?: boolean;
   generated_by_ai?: boolean;
+  ia_review_status?: 'pending' | 'approved';
+  ia_fields?: string[] | null;
 }
 
 const typeColor: Record<string, string> = {
@@ -53,7 +55,7 @@ export function DiagramView({ projectId, onEdit }: DiagramViewProps) {
   const [nodes, setNodes] = useState<NodeDatum[]>([]);
   const [edges, setEdges] = useState<{ source: number; target: number }[]>([]);
   const [focused, setFocused] = useState<number | null>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null!);
   const zoomRef = useRef(returnZoom());
   const autoFit = useAutoFit(svgRef);
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
@@ -87,6 +89,8 @@ export function DiagramView({ projectId, onEdit }: DiagramViewProps) {
       x: 0,
       y: 0,
       generated_by_ai: item.generated_by_ai,
+      ia_review_status: item.ia_review_status,
+      ia_fields: item.ia_fields ?? null,
     }));
     const e = n
       .filter(nd => nd.parent_id !== null)
@@ -114,11 +118,11 @@ export function DiagramView({ projectId, onEdit }: DiagramViewProps) {
     const g = new dagre.graphlib.Graph();
     g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80 });
     g.setDefaultEdgeLabel(() => ({}));
-    nodes.forEach(nd => g.setNode(nd.id, { width: nd.width, height: nd.height, rank: nd.rank }));
-    edges.forEach(e => g.setEdge(e.source, e.target));
+    nodes.forEach(nd => g.setNode(String(nd.id), { width: nd.width, height: nd.height, rank: nd.rank }));
+    edges.forEach(e => g.setEdge(String(e.source), String(e.target)));
     dagre.layout(g);
     const initial = nodes.map(nd => {
-      const pos = g.node(nd.id);
+      const pos = g.node(String(nd.id));
       return { ...nd, x: nd.pinned ? nd.x : pos.x, y: nd.pinned ? nd.y : pos.y };
     });
     const sim = forceSimulation(initial)
@@ -178,7 +182,7 @@ export function DiagramView({ projectId, onEdit }: DiagramViewProps) {
 
   function pointer(event: React.PointerEvent, svg: SVGSVGElement | null) {
     const pt = svg?.createSVGPoint();
-    if (!pt) return [0, 0];
+    if (!pt || !svg) return [0, 0];
     pt.x = event.clientX;
     pt.y = event.clientY;
     const gpt = pt.matrixTransform(svg.getScreenCTM()?.inverse());
@@ -246,7 +250,7 @@ export function DiagramView({ projectId, onEdit }: DiagramViewProps) {
               onDoubleClick={() => setFocused(focused === n.id ? null : n.id)}
             >
               <rect width={n.width} height={n.height} rx={20} fill={typeColor[n.type]} />
-              {n.generated_by_ai && (
+              {(n.ia_review_status === 'pending' || n.generated_by_ai) && (
                 <g
                   className="pointer-events-none"
                   transform={`translate(${n.width - 18},4)`}

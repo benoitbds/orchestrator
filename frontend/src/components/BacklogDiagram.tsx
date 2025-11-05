@@ -80,7 +80,7 @@ function calculateWebLayout(tree: TreeNode[], centerX: number, centerY: number):
       }
       
       if (node.children && node.children.length > 0) {
-        flattenNodes(node.children as TreeNode[], depth + 1, node.id);
+        flattenNodes(node.children, depth + 1, node.id);
       }
     });
   };
@@ -92,7 +92,7 @@ function calculateWebLayout(tree: TreeNode[], centerX: number, centerY: number):
   // Calculate positions using a web/network layout
   const calculateWebPositions = () => {
     const maxDepth = Math.max(...Array.from(nodeDepth.values()));
-    const layers = Array.from({length: maxDepth + 1}, () => []);
+    const layers: TreeNode[][] = Array.from({length: maxDepth + 1}, () => []);
     
     // Group nodes by depth level
     allNodes.forEach(node => {
@@ -404,7 +404,7 @@ export function BacklogDiagram({ projectId, onEdit }: BacklogDiagramProps) {
                   y2={pos.y}
                   stroke={isHighlighted ? "#4f46e5" : "#cbd5e1"}
                   strokeWidth={isHighlighted ? "3" : "2"}
-                  strokeDasharray={pos.item.generated_by_ai ? "5,5" : "none"}
+                  strokeDasharray={(pos.item.ia_review_status === 'pending' || pos.item.generated_by_ai) ? "5,5" : "none"}
                   className="transition-all duration-200"
                   opacity={isHighlighted ? 1 : 0.6}
                 />
@@ -497,7 +497,7 @@ export function BacklogDiagram({ projectId, onEdit }: BacklogDiagramProps) {
                 )}
 
                 {/* Badge IA */}
-                {pos.item.generated_by_ai && (
+                {(pos.item.ia_review_status === 'pending' || pos.item.generated_by_ai) && (
                   <circle
                     cx={pos.x + size.width / 2 - 8}
                     cy={pos.y - size.height / 2 + 8}
@@ -580,7 +580,7 @@ export function BacklogDiagram({ projectId, onEdit }: BacklogDiagramProps) {
           {diagram.hoveredNode.description && (
             <div className="text-xs text-gray-500 mt-2">{diagram.hoveredNode.description}</div>
           )}
-          {diagram.hoveredNode.generated_by_ai && (
+          {(diagram.hoveredNode.ia_review_status === 'pending' || diagram.hoveredNode.generated_by_ai) && (
             <Badge className="bg-purple-600 text-white text-xs mt-2">
               <CpuIcon className="w-3 h-3 mr-1" />
               Généré par IA

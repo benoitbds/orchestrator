@@ -4,15 +4,14 @@ import { apiFetch } from '@/lib/api';
 
 const fetcher = (url: string) => apiFetch(url).then(res => res.json());
 
-export interface TreeNode extends BacklogItem {
+export type TreeNode = BacklogItem & {
   children: TreeNode[];
-}
+};
 
-export function useItems(projectId: number | null) {
-  const { data, error, isLoading } = useSWR<BacklogItem[]>(
-    projectId ? `/items?project_id=${projectId}` : null,
-    fetcher
-  );
+export function useItems(projectId: number | null, options?: { review?: 'all' | 'pending' | 'approved' }) {
+  const review = options?.review ?? 'all';
+  const key = projectId ? `/items?project_id=${projectId}&review=${review}` : null;
+  const { data, error, isLoading, mutate } = useSWR<BacklogItem[]>(key, fetcher);
 
   const tree = buildTree(data || []);
 
@@ -21,6 +20,7 @@ export function useItems(projectId: number | null) {
     data: data || [],
     error,
     isLoading,
+    mutate,
   };
 }
 

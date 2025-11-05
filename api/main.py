@@ -12,8 +12,11 @@ from dotenv import load_dotenv
 from fastapi import File, FastAPI, HTTPException, Query, UploadFile, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Literal
 
 from api.ws import router as ws_router
+from api.ws_langgraph import register_websocket_routes
+from api.approvals import router as approvals_router
 from backend.app.security import get_current_user_optional
 from backend.app.routes.projects import router as project_router
 
@@ -79,6 +82,14 @@ httpx.AsyncClient.__aexit__ = _no_aexit
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
+class ValidateBody(BaseModel):
+    fields: list[str] | None = None
+
+
+class BulkValidateBody(BaseModel):
+    ids: list[int]
+
 cred_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
 if cred_path and not firebase_admin._apps:
     try:
@@ -93,9 +104,17 @@ else:
     logger.warning("FIREBASE_SERVICE_ACCOUNT_PATH not set or Firebase already initialized")
 
 app = FastAPI()
+
+allowed_origins = ["https://agent4ba.baq.ovh"]
+if os.getenv("ENVIRONMENT", "production") == "development":
+    allowed_origins.extend([
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://agent4ba.baq.ovh"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -109,28 +128,78 @@ class RunAgentPayload(BaseModel):
     objective: str
 
 
-@app.post("/agent/run")
-async def run_agent(payload: RunAgentPayload, user=Depends(get_current_user_optional)):
-    project = crud.get_project_for_user(payload.project_id, user["uid"])
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    # Generate run_id upfront to return it immediately
-    from uuid import uuid4
-    run_id = str(uuid4())
+@app.post("/agent/run_langgraph")
+async def run_langgraph_agent(
+    payload: RunAgentPayload,
+    user=Depends(get_current_user_optional)
+):
+    """Nouveau endpoint avec orchestration LangGraph (Phase 1)."""
     
-    async def _bg() -> None:
+    # Validate project access
+    if payload.project_id:
+        project = crud.get_project_for_user(payload.project_id, user["uid"])
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    
+    try:
+        from agents_v2.graph import build_agent_graph
+        from agents_v2.state import AgentState
+        from config.redis import get_checkpointer
+        from uuid import uuid4
+        
+        run_id = str(uuid4())
+        
+        # Try to get Redis checkpointer, fallback to None if Redis unavailable
         try:
-            # Create the run first
-            crud.create_run(run_id, payload.objective, payload.project_id)
-            # Then execute it
-            from orchestrator.core_loop import run_chat_tools
-            await run_chat_tools(payload.objective, payload.project_id, run_id)
-        except Exception as e:  # pragma: no cover - unexpected runtime errors
-            logger.warning("planner failed: %s", e)
-
-    asyncio.create_task(_bg())
-    return {"ok": True, "run_id": run_id}
+            checkpointer = await get_checkpointer()
+            logger.info("Using Redis checkpointer for LangGraph")
+        except Exception as e:
+            logger.warning(f"Redis checkpointer unavailable, proceeding without: {e}")
+            checkpointer = None
+        
+        graph = build_agent_graph(checkpointer)
+        
+        config = {"configurable": {"thread_id": run_id}} if checkpointer else None
+        
+        initial_state: AgentState = {
+            "messages": [],
+            "project_id": payload.project_id,
+            "user_uid": user["uid"],
+            "objective": payload.objective,
+            "next_agent": "",
+            "iteration": 0,
+            "max_iterations": 10,
+            "tool_results": {},
+            "error": None,
+            "run_id": run_id,
+            "current_agent": None,
+            "progress_steps": None,
+            "documents_searched": None,
+            "status_message": None,
+            "synthesis_complete": None,
+            "final_response": None,
+            "is_stub": None
+        }
+        
+        logger.info(f"Starting LangGraph execution for run_id: {run_id}")
+        result = await graph.ainvoke(initial_state, config=config)
+        
+        return {
+            "run_id": run_id,
+            "status": "completed",
+            "result": {
+                "final_state": result,
+                "tool_results": result.get("tool_results", {}),
+                "iterations": result.get("iteration", 0)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"LangGraph execution failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"LangGraph agent execution failed: {str(e)}"
+        )
 
 
 @app.on_event("startup")
@@ -143,6 +212,10 @@ def startup_event():
 # Include websocket routes after middleware setup
 app.include_router(ws_router)
 app.include_router(project_router)
+app.include_router(approvals_router)
+
+# Register LangGraph streaming WebSocket routes
+register_websocket_routes(app)
 
 @app.middleware("http")
 async def log_origin(request, call_next):
@@ -348,13 +421,113 @@ async def delete_project(project_id: int, user=Depends(get_current_user_optional
 # ---- Document endpoints ----
 
 
+async def _analyze_document_async(doc_id: int, project_id: int):
+    """Background task to analyze document asynchronously."""
+    from orchestrator import stream
+    
+    # Use project_id as the stream key for WebSocket notifications
+    stream_key = f"project:{project_id}"
+    
+    try:
+        logger.info(f"Starting async analysis for document {doc_id}")
+        
+        # Emit start event
+        stream.publish(stream_key, {
+            "type": "document_analysis_started",
+            "doc_id": doc_id,
+            "status": "ANALYZING"
+        })
+        
+        doc = crud.get_document(doc_id)
+        if not doc:
+            logger.error(f"Document {doc_id} not found during async analysis")
+            return
+        
+        crud.update_document_status(doc_id, "ANALYZING", None)
+        content = (doc.get("content") or "").strip()
+        
+        if not content:
+            crud.update_document_status(doc_id, "ERROR", {"error": "Document content is empty"})
+            stream.publish(stream_key, {
+                "type": "document_analysis_failed",
+                "doc_id": doc_id,
+                "error": "Document content is empty"
+            })
+            return
+        
+        # Chunk the document
+        chunks = chunk_text(content, target_tokens=400, overlap_tokens=60)
+        if not chunks:
+            crud.update_document_status(doc_id, "ERROR", {"error": "No analyzable content"})
+            stream.publish(stream_key, {
+                "type": "document_analysis_failed",
+                "doc_id": doc_id,
+                "error": "No analyzable content"
+            })
+            return
+        
+        # Emit progress
+        stream.publish(stream_key, {
+            "type": "document_analysis_progress",
+            "doc_id": doc_id,
+            "status": "generating_embeddings",
+            "chunk_count": len(chunks)
+        })
+        
+        # Generate embeddings
+        embeddings = await embed_texts(chunks)
+        if len(embeddings) < len(chunks):
+            embeddings.extend([[] for _ in range(len(chunks) - len(embeddings))])
+        
+        non_null_embeddings = sum(1 for emb in embeddings if emb)
+        if non_null_embeddings == 0:
+            crud.update_document_status(doc_id, "ERROR", {"error": "Embedding generation failed"})
+            stream.publish(stream_key, {
+                "type": "document_analysis_failed",
+                "doc_id": doc_id,
+                "error": "Embedding generation failed"
+            })
+            return
+        
+        # Store chunks
+        payload = [(i, chunk, embeddings[i]) for i, chunk in enumerate(chunks)]
+        crud.delete_document_chunks(doc_id)
+        if payload:
+            crud.upsert_document_chunks(doc_id, payload)
+        
+        total_chunks, stored_with_embeddings = crud.document_chunk_stats(doc_id)
+        logger.info(f"Indexed {total_chunks} chunks, {stored_with_embeddings} with embeddings (doc_id={doc_id})")
+        
+        crud.update_document_status(doc_id, "ANALYZED", {"chunk_count": total_chunks})
+        
+        # Emit success event
+        stream.publish(stream_key, {
+            "type": "document_analysis_completed",
+            "doc_id": doc_id,
+            "status": "ANALYZED",
+            "chunk_count": total_chunks,
+            "embeddings_count": stored_with_embeddings
+        })
+        
+        logger.info(f"Document {doc_id} analysis completed successfully")
+        
+    except Exception as exc:
+        logger.exception(f"Document analysis failed for doc_id={doc_id}", exc_info=exc)
+        crud.update_document_status(doc_id, "ERROR", {"error": str(exc)})
+        stream.publish(stream_key, {
+            "type": "document_analysis_failed",
+            "doc_id": doc_id,
+            "error": str(exc)
+        })
+
+
 @app.post(
     "/projects/{project_id}/documents",
     response_model=DocumentOut,
     status_code=201,
 )
 async def upload_document(project_id: int, file: UploadFile = File(...), user=Depends(get_current_user_optional)):
-    """Upload a document for a project."""
+    """Upload a document for a project and automatically trigger analysis."""
 
     if not crud.get_project_for_user(project_id, user["uid"]):
         raise HTTPException(status_code=404, detail="project not found")
@@ -371,20 +544,10 @@ async def upload_document(project_id: int, file: UploadFile = File(...), user=De
 
     # Create the document first
     document = crud.create_document(project_id, file.filename, content_text, None)
-
-    chunks = chunk_text(content_text, target_tokens=400, overlap_tokens=60)
-    try:
-        embeddings = await embed_texts(chunks)
-    except Exception as e:  # pragma: no cover - unexpected
-        logger.warning("Failed to embed document %s: %s", document.id, e)
-        embeddings = [[] for _ in chunks]
-
-    payload = [
-        (i, chunk, embeddings[i] if i < len(embeddings) else [])
-        for i, chunk in enumerate(chunks)
-    ]
-    if payload:
-        crud.upsert_document_chunks(document.id, payload)
+    
+    # Trigger automatic analysis in background
+    asyncio.create_task(_analyze_document_async(document.id, project_id))
+    logger.info(f"Document {document.id} uploaded, automatic analysis triggered")
 
     return document
 
@@ -399,6 +562,75 @@ async def list_documents(project_id: int, user=Depends(get_current_user_optional
     if not crud.get_project_for_user(project_id, user["uid"]):
         raise HTTPException(status_code=404, detail="project not found")
     return crud.get_documents(project_id)
+
+
+@app.get("/documents", response_model=list[DocumentOut])
+async def list_documents_v2(project_id: int = Query(..., ge=1), user=Depends(get_current_user_optional)):
+    """List documents for a project (v2) with status metadata."""
+    if not crud.get_project_for_user(project_id, user["uid"]):
+        raise HTTPException(status_code=404, detail="project not found")
+    return crud.get_documents(project_id)
+
+
+@app.post("/documents/{doc_id}/analyze", response_model=DocumentOut)
+async def analyze_document(doc_id: int, user=Depends(get_current_user_optional)):
+    """Chunk and embed a document, updating its status lifecycle."""
+    doc = crud.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="document not found")
+    if not crud.get_project_for_user(doc["project_id"], user["uid"]):
+        raise HTTPException(status_code=404, detail="project not found")
+
+    crud.update_document_status(doc_id, "ANALYZING", None)
+    content = (doc.get("content") or "").strip()
+    if not content:
+        crud.update_document_status(doc_id, "ERROR", {"error": "Document content is empty"})
+        raise HTTPException(status_code=400, detail="Document content is empty")
+
+    try:
+        chunks = chunk_text(content, target_tokens=400, overlap_tokens=60)
+        if not chunks:
+            crud.update_document_status(doc_id, "ERROR", {"error": "No analyzable content"})
+            raise HTTPException(status_code=400, detail="Document contains no analyzable content")
+
+        embeddings = await embed_texts(chunks)
+        if len(embeddings) < len(chunks):
+            embeddings.extend([[] for _ in range(len(chunks) - len(embeddings))])
+
+        non_null_embeddings = sum(1 for emb in embeddings if emb)
+        if non_null_embeddings == 0:
+            crud.update_document_status(
+                doc_id,
+                "ERROR",
+                {"error": "Embedding generation failed"},
+            )
+            raise HTTPException(status_code=500, detail="Document analysis failed")
+
+        payload = [
+            (i, chunk, embeddings[i])
+            for i, chunk in enumerate(chunks)
+        ]
+
+        crud.delete_document_chunks(doc_id)
+        if payload:
+            crud.upsert_document_chunks(doc_id, payload)
+
+        total_chunks, stored_with_embeddings = crud.document_chunk_stats(doc_id)
+        logger.info(
+            "Indexed %s chunks, %s with embeddings (doc_id=%s)",
+            total_chunks,
+            stored_with_embeddings,
+            doc_id,
+        )
+        crud.update_document_status(doc_id, "ANALYZED", {"chunk_count": total_chunks})
+        updated = crud.get_document(doc_id)
+        return DocumentOut(**updated)
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - unexpected runtime error
+        logger.exception("Document analysis failed for doc_id=%s", doc_id, exc_info=exc)
+        crud.update_document_status(doc_id, "ERROR", {"error": str(exc)})
+        raise HTTPException(status_code=500, detail="Document analysis failed")
 
 
 @app.get("/documents/{doc_id}/content")
@@ -525,8 +757,16 @@ async def list_items(
     type: str | None = Query(None),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    review: Literal["pending", "approved", "all"] = Query("all"),
 ):
-    return crud.get_items(project_id=project_id, type=type, limit=limit, offset=offset)
+    review_filter = None if review == "all" else review
+    return crud.get_items(
+        project_id=project_id,
+        type=type,
+        limit=limit,
+        offset=offset,
+        review=review_filter,
+    )
 
 
 @app.post("/api/items", response_model=BacklogItem, status_code=201)
@@ -574,8 +814,46 @@ async def create_project_item(project_id: int, item_data: dict):
 
 
 @app.get("/projects/{project_id}/items", response_model=list[BacklogItem])
-async def list_project_items(project_id: int, type: str | None = Query(None), limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)):
-    return crud.get_items(project_id=project_id, type=type, limit=limit, offset=offset)
+async def list_project_items(
+    project_id: int,
+    type: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    review: Literal["pending", "approved", "all"] = Query("all"),
+):
+    review_filter = None if review == "all" else review
+    return crud.get_items(
+        project_id=project_id,
+        type=type,
+        limit=limit,
+        offset=offset,
+        review=review_filter,
+    )
+
+
+@app.post("/items/{item_id}/validate", response_model=BacklogItem)
+async def validate_item_endpoint(item_id: int, body: ValidateBody, user=Depends(get_current_user_optional)):
+    if not user:
+        raise HTTPException(status_code=401, detail="authentication required")
+    item = crud.get_item(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="item not found")
+    user_uid = user.get("uid") or user.get("email")
+    updated = crud.validate_item(item_id, user_uid)
+    if not updated:
+        raise HTTPException(status_code=404, detail="item not found")
+    return updated
+
+
+@app.post("/items/validate", response_model=list[BacklogItem])
+async def validate_items_endpoint(payload: BulkValidateBody, user=Depends(get_current_user_optional)):
+    if not user:
+        raise HTTPException(status_code=401, detail="authentication required")
+    if not payload.ids:
+        return []
+    user_uid = user.get("uid") or user.get("email")
+    updated = crud.validate_items(payload.ids, user_uid)
+    return updated
 
 
 @app.post("/api/feature_proposals", status_code=201)
@@ -634,7 +912,9 @@ async def update_item(item_id: int, payload: BacklogItemUpdate):
             current = crud.get_item(current.parent_id)
             if current is None:
                 break
-    return crud.update_item(item_id, BacklogItemUpdate(**data))
+    updated = crud.update_item(item_id, BacklogItemUpdate(**data))
+    updated = crud.mark_item_user_touch(item_id) if updated else updated
+    return updated
 
 
 @app.delete("/api/items/{item_id}", status_code=204)

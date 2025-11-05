@@ -66,7 +66,7 @@ export function useRunStream(options: UseRunStreamOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const manualClose = useRef(false);
   const seqRef = useRef<Record<string, number>>({});
-  const reconnectTimer = useRef<number>();
+  const reconnectTimer = useRef<number | undefined>(undefined);
 
   const closeSocket = () => {
     if (wsRef.current) {

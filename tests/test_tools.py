@@ -1,6 +1,8 @@
 import pytest
 from orchestrator import crud
 from orchestrator.models import ProjectCreate, EpicCreate, FeatureCreate, USCreate
+from agents.tools_context import set_current_run_id
+from agents.schemas import ensure_acceptance_list
 from agents.handlers import (
     create_item_tool,
     update_item_tool,

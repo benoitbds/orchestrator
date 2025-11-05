@@ -7,7 +7,7 @@ from httpx_ws import aconnect_ws, WebSocketDisconnect
 from httpx_ws.transport import ASGIWebSocketTransport
 from api.main import app
 from orchestrator import crud
-from orchestrator.models import ProjectCreate
+from orchestrator.models import ProjectCreate, EpicCreate, FeatureCreate
 import fitz
 from firebase_admin import auth as fb_auth
 
@@ -351,3 +351,58 @@ async def test_pdf_content_extraction(tmp_path, monkeypatch):
         rcontent = await ac.get(f"/documents/{doc_id}/content")
         assert rcontent.status_code == 200
         assert "sample pdf text" in rcontent.text
+
+
+@pytest.mark.asyncio
+async def test_validate_item_endpoints(monkeypatch, tmp_path):
+    db = tmp_path / "db.sqlite"
+    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
+    crud.init_db()
+    project = crud.create_project(ProjectCreate(name="P", description=""))
+    item = crud.create_item(EpicCreate(title="AI", description="", project_id=project.id, parent_id=None))
+    crud.mark_item_ai_touch(item.id, "run-1")
+
+    async with AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+        res = await ac.post(
+            f"/items/{item.id}/validate",
+            json={},
+            headers={"Authorization": "Bearer good"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["ia_review_status"] == "approved"
+        assert data["validated_by"] == "u1"
+
+        res_bulk = await ac.post(
+            "/items/validate",
+            json={"ids": [item.id]},
+            headers={"Authorization": "Bearer good"},
+        )
+        assert res_bulk.status_code == 200
+        payload = res_bulk.json()
+        assert len(payload) == 1
+        assert payload[0]["ia_review_status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_list_items_review_filter(monkeypatch, tmp_path):
+    db = tmp_path / "db.sqlite"
+    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
+    crud.init_db()
+    project = crud.create_project(ProjectCreate(name="P", description=""))
+    pending = crud.create_item(FeatureCreate(title="Pending", description="", project_id=project.id, parent_id=None))
+    approved = crud.create_item(FeatureCreate(title="Approved", description="", project_id=project.id, parent_id=None))
+    crud.mark_item_ai_touch(pending.id, "run-pending")
+    crud.validate_item(approved.id, "user")
+
+    async with AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+        res_pending = await ac.get(f"/items?project_id={project.id}&review=pending")
+        assert res_pending.status_code == 200
+        pending_items = res_pending.json()
+        assert len(pending_items) == 1
+        assert pending_items[0]["id"] == pending.id
+
+        res_all = await ac.get(f"/items?project_id={project.id}&review=approved")
+        assert res_all.status_code == 200
+        approved_items = res_all.json()
+        assert all(it["ia_review_status"] == "approved" for it in approved_items)

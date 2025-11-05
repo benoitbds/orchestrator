@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { getWSUrl } from './ws';
 
 const originalEnv = { ...process.env };
-let originalWindow: any = global.window;
+const originalWindow: any = global.window;
 
 beforeEach(() => {
   process.env = { ...originalEnv };

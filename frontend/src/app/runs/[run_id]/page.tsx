@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import RunTimeline from "@/components/RunTimeline";
 import { apiFetch } from "@/lib/api";
 import { getWSUrl } from "@/lib/ws";
@@ -16,24 +17,28 @@ interface Run {
   summary?: string | null;
 }
 
-export default function RunDetail({ params }: { params: { run_id: string } }) {
+export default function RunDetail() {
+  const params = useParams<{ run_id: string }>();
+  const run_id = params?.run_id;
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
+    if (!run_id) return;
+
     let cancelled = false;
     async function load() {
       try {
-        const res = await apiFetch(`/runs/${params.run_id}`);
+        const res = await apiFetch(`/runs/${run_id}`);
         if (res.ok) {
           const data = await res.json();
           if (!cancelled) setRun(data);
         } else if (res.status === 404) {
-          console.warn(`Run ${params.run_id} not found`);
+          console.warn(`Run ${run_id} not found`);
           if (!cancelled) setError("Run not found or has been deleted");
         } else {
-          console.warn(`Failed to fetch run ${params.run_id}: ${res.status}`);
+          console.warn(`Failed to fetch run ${run_id}: ${res.status}`);
           if (!cancelled) setError("Failed to load run");
         }
       } catch (e) {
@@ -52,7 +57,7 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
       const ws = new WebSocket(url);
       wsRef.current = ws;
       ws.onopen = () => {
-        ws.send(JSON.stringify({ run_id: params.run_id }));
+        ws.send(JSON.stringify({ run_id }));
       };
       ws.onmessage = (evt) => {
         const msg = JSON.parse(evt.data);
@@ -73,11 +78,12 @@ export default function RunDetail({ params }: { params: { run_id: string } }) {
       };
       ws.onerror = () => ws.close();
     })();
+
     return () => {
       cancelled = true;
       wsRef.current?.close();
     };
-  }, [params.run_id]);
+  }, [run_id]);
 
   if (error)
     return (
