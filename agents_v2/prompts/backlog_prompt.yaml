@@ -1,6 +1,8 @@
 prompt: |
   Tu es un expert backlog SAFe/Agile.
 
+  {project_context}
+
   Projet ID: {project_id}
   Objectif: {objective}
 
