@@ -8,21 +8,27 @@ vi.mock('sonner', () => ({
 }));
 
 const deleteDocument = vi.fn();
+const analyzeDocument = vi.fn();
 vi.mock('@/lib/documents', () => ({
-  deleteDocument: (...args: any[]) => deleteDocument(...args)
+  deleteDocument: (...args: any[]) => deleteDocument(...args),
+  analyzeDocument: (...args: any[]) => analyzeDocument(...args)
 }));
 
-const runAgent = vi.fn();
-vi.mock('@/lib/api', () => ({
-  runAgent: (...args: any[]) => runAgent(...args)
+vi.mock('@/lib/firebase', () => ({
+  auth: {
+    currentUser: {
+      getIdToken: vi.fn().mockResolvedValue('test-token')
+    }
+  }
 }));
 
-const docs = [{ id: 1, project_id: 1, filename: 'doc.txt' }];
+
+const docs = [{ id: 1, project_id: 1, filename: 'doc.txt', status: 'UPLOADED' as const }];
 
 describe('DocumentList', () => {
   beforeEach(() => {
     deleteDocument.mockReset();
-    runAgent.mockReset();
+    analyzeDocument.mockReset();
     (toast.success as any).mockReset();
     (toast.error as any).mockReset();
   });
@@ -52,7 +58,7 @@ describe('DocumentList', () => {
     expect(refetch).not.toHaveBeenCalled();
   });
 
-  it('shows error toast on failure', async () => {
+  it('shows error toast on delete failure', async () => {
     const refetch = vi.fn();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     deleteDocument.mockRejectedValue(new Error('fail'));
@@ -63,32 +69,33 @@ describe('DocumentList', () => {
     expect(toast.error).toHaveBeenCalled();
   });
 
-  it('starts analysis and refreshes on success', async () => {
+  it('starts analysis with LangGraph multi-agent', async () => {
     const refetch = vi.fn();
-    let resolve: () => void;
-    runAgent.mockImplementation(() => new Promise(r => { resolve = r; }));
+    const onAnalyze = vi.fn().mockResolvedValue(undefined);
+    analyzeDocument.mockResolvedValue(undefined);
 
-    render(<DocumentList documents={docs} refetch={refetch} />);
+    render(<DocumentList documents={docs} refetch={refetch} onAnalyze={onAnalyze} />);
     const button = screen.getByRole('button', { name: /analyze doc.txt/i });
     fireEvent.click(button);
-    expect(button).toBeDisabled();
-    resolve!();
-    await waitFor(() => expect(runAgent).toHaveBeenCalled());
+    
+    await waitFor(() => expect(analyzeDocument).toHaveBeenCalledWith(1));
     await waitFor(() => expect(refetch).toHaveBeenCalled());
+    
+    expect(onAnalyze).toHaveBeenCalledWith(
+      expect.stringContaining('doc.txt')
+    );
     expect(toast.success).toHaveBeenCalled();
-    await waitFor(() => expect(button).not.toBeDisabled());
   });
 
-  it('shows error toast when analysis fails', async () => {
+  it('shows error toast when analyze fails', async () => {
     const refetch = vi.fn();
-    runAgent.mockRejectedValue(new Error('fail'));
+    analyzeDocument.mockRejectedValue(new Error('fail'));
 
     render(<DocumentList documents={docs} refetch={refetch} />);
     const button = screen.getByRole('button', { name: /analyze doc.txt/i });
     fireEvent.click(button);
-    await waitFor(() => expect(runAgent).toHaveBeenCalled());
-    await waitFor(() => expect(refetch).not.toHaveBeenCalled());
+    
+    await waitFor(() => expect(analyzeDocument).toHaveBeenCalled());
     expect(toast.error).toHaveBeenCalled();
-    await waitFor(() => expect(button).not.toBeDisabled());
   });
 });

@@ -1,7 +1,7 @@
 """Human-in-the-Loop approval system."""
 import asyncio
 from typing import Literal
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
@@ -135,10 +135,10 @@ async def approval_node(state):
     if decision == "approve":
         await stream.emit_status("✅ Approved - Continuing workflow", 0)
         
-        # Mark step as approved in workflow
+        # Mark step as approved AND ready to execute
         workflow_steps = state.get("workflow_steps", [])
         if step_index < len(workflow_steps):
-            workflow_steps[step_index]["status"] = "pending"  # Ready to execute
+            workflow_steps[step_index]["status"] = "approved"  # Explicitly approved, ready to execute
         
         return {
             "is_paused": False,
@@ -165,7 +165,7 @@ async def approval_node(state):
         
         workflow_steps = state.get("workflow_steps", [])
         if step_index < len(workflow_steps):
-            workflow_steps[step_index]["status"] = "pending"
+            workflow_steps[step_index]["status"] = "approved"  # Explicitly approved after modification
         
         return {
             "is_paused": False,

@@ -5,10 +5,7 @@ import { Trash } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
-import { runAgent } from '@/lib/api';
 import { analyzeDocument, deleteDocument } from '@/lib/documents';
-import { useHistory } from '@/store/useHistory';
-import { useAgentStream } from '@/hooks/useAgentStream';
 import type { Document, DocumentStatus } from '@/models/document';
 
 const STATUS_BADGES: Record<DocumentStatus, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
@@ -27,27 +24,13 @@ const getMetaError = (doc: Document): string | null => {
 interface DocumentListProps {
   documents: Document[];
   refetch: () => Promise<void>;
+  onAnalyze?: (objective: string) => Promise<void>;
 }
 
-export function DocumentList({ documents, refetch }: DocumentListProps) {
+export function DocumentList({ documents, refetch, onAnalyze }: DocumentListProps) {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [analyzingId, setAnalyzingId] = useState<number | null>(null);
-  const [currentRunId, setCurrentRunId] = useState<string | undefined>(undefined);
   const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL || '').replace(/\/+$/, '');
-  const { createTurn, promoteTurn } = useHistory();
-  
-  // WebSocket connection for the current analysis
-  useAgentStream(currentRunId, {
-    onFinish: async (summary) => {
-      toast.success('Document analysis completed!');
-      await refetch();
-      setCurrentRunId(undefined);
-    },
-    onError: (error) => {
-      toast.error(`Analysis failed: ${error}`);
-      setCurrentRunId(undefined);
-    }
-  });
 
   const handleDelete = async (id: number) => {
     if (!confirm('Supprimer ce document ?')) return;
@@ -64,7 +47,7 @@ export function DocumentList({ documents, refetch }: DocumentListProps) {
   };
 
   const handleAnalyze = async (doc: Document) => {
-    if (analyzingId !== null) return;
+    if (analyzingId !== null || !onAnalyze) return;
     setAnalyzingId(doc.id);
     let preprocessingComplete = false;
     try {
@@ -76,18 +59,10 @@ export function DocumentList({ documents, refetch }: DocumentListProps) {
         `Analyze the document "${doc.filename}" and generate Features -> User Stories -> Use Cases with acceptance criteria. ` +
         `Use search_documents to cite relevant excerpts (page/section). De-duplicate and group by theme.`;
 
-      const tempId = `temp-${Date.now()}`;
-      createTurn(tempId, `Analyzing document: ${doc.filename}`, doc.project_id);
-
-      const response = await runAgent({ project_id: doc.project_id, objective });
-
-      if (response && response.run_id) {
-        promoteTurn(tempId, response.run_id);
-        setCurrentRunId(response.run_id);
-      }
-
+      // Delegate to parent component (AgentShell) to handle the agent execution
+      await onAnalyze(objective);
+      
       toast.success('Analysis started. Check the conversation history for progress.');
-      await refetch();
     } catch (e) {
       if (!preprocessingComplete) {
         const message = e instanceof Error ? e.message : 'Could not analyze document';
@@ -124,15 +99,33 @@ export function DocumentList({ documents, refetch }: DocumentListProps) {
                 {errorMessage}
               </span>
             )}
-            <Button
-              variant="secondary"
-              size="sm"
-              aria-label={`Analyze ${doc.filename}`}
-              disabled={analyzingId === doc.id || doc.status === 'ANALYZING'}
-              onClick={() => handleAnalyze(doc)}
-            >
-              Analyze
-            </Button>
+            {doc.status === 'UPLOADED' && (
+              <Button
+                variant="secondary"
+                size="sm"
+                aria-label={`Re-analyze ${doc.filename}`}
+                disabled={analyzingId === doc.id}
+                onClick={() => handleAnalyze(doc)}
+              >
+                Re-analyze
+              </Button>
+            )}
+            {doc.status === 'ANALYZING' && (
+              <span className="text-sm text-muted-foreground animate-pulse">
+                Analyzing...
+              </span>
+            )}
+            {doc.status === 'ERROR' && (
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label={`Retry analysis for ${doc.filename}`}
+                disabled={analyzingId === doc.id}
+                onClick={() => handleAnalyze(doc)}
+              >
+                Retry
+              </Button>
+            )}
             <Button
               variant="destructive"
               size="icon"

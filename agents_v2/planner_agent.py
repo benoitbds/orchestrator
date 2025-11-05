@@ -42,7 +42,7 @@ def parse_workflow_plan(plan_text: str) -> list[WorkflowStep]:
         agent_name = agent_match.group(1).lower()
         
         # Validate agent name
-        valid_agents = ["backlog", "document", "planner", "writer", "integration"]
+        valid_agents = ["backlog", "document", "planner", "writer", "integration", "conversation"]
         if agent_name not in valid_agents:
             agent_name = "backlog"  # Default fallback
         
@@ -72,9 +72,39 @@ async def planner_agent_node(state: AgentState) -> dict:
     run_id = state.get("run_id", "unknown")
     stream = get_stream_manager(run_id)
     
-    await stream.emit_agent_start("planner", state["objective"], state["iteration"])
+    # Define todos for planner execution
+    todos = [
+        "Analyser l'objectif utilisateur",
+        "Identifier les agents nécessaires",
+        "Créer le workflow en étapes"
+    ]
+    
+    workflow_context = state.get("workflow_context")
+    await stream.emit_agent_start(
+        "planner", 
+        state["objective"], 
+        state["iteration"],
+        step_info=workflow_context,
+        todos=todos
+    )
+    
+    # Emit initial narration
+    await stream.emit_agent_narration(
+        "planner",
+        "Je crée un plan d'exécution structuré",
+        state["iteration"]
+    )
     
     try:
+        # Todo 1: Analyze objective
+        await stream.emit_todo_update(
+            "planner",
+            "planner-todo-0",
+            todos[0],
+            "in_progress",
+            state["iteration"]
+        )
+        
         llm = ChatOpenAI(model="gpt-4o", temperature=0)
         
         prompt_template = load_prompt("planner.yaml")
@@ -95,22 +125,81 @@ async def planner_agent_node(state: AgentState) -> dict:
         response = await llm.ainvoke(messages)
         plan_text = response.content
         
+        # Todo 1: Complete
+        await stream.emit_todo_update(
+            "planner",
+            "planner-todo-0",
+            todos[0],
+            "completed",
+            state["iteration"]
+        )
+        
+        # Todo 2: Identify agents
+        await stream.emit_todo_update(
+            "planner",
+            "planner-todo-1",
+            todos[1],
+            "in_progress",
+            state["iteration"]
+        )
+        
         # Parse structured workflow
         workflow_steps = parse_workflow_plan(plan_text)
         
         logger.info(f"PlannerAgent created {len(workflow_steps)} workflow steps")
         
+        # Todo 2: Complete
+        await stream.emit_todo_update(
+            "planner",
+            "planner-todo-1",
+            todos[1],
+            "completed",
+            state["iteration"]
+        )
+        
+        # Todo 3: Create workflow
+        await stream.emit_todo_update(
+            "planner",
+            "planner-todo-2",
+            todos[2].replace("X", str(len(workflow_steps))),
+            "in_progress",
+            state["iteration"]
+        )
+        
+        # Small delay for visual effect
+        import asyncio
+        await asyncio.sleep(0.5)
+        
+        # Todo 3: Complete
+        await stream.emit_todo_update(
+            "planner",
+            "planner-todo-2",
+            todos[2].replace("X", str(len(workflow_steps))),
+            "completed",
+            state["iteration"]
+        )
+        
+        # Emit final narration
+        await stream.emit_agent_narration(
+            "planner",
+            f"Plan créé avec {len(workflow_steps)} étapes",
+            state["iteration"]
+        )
+        
         await stream.emit_agent_end(
             "planner",
             f"Created workflow plan with {len(workflow_steps)} steps",
-            state["iteration"]
+            state["iteration"],
+            success=True,
+            extra_data={"workflow_steps": workflow_steps}
         )
         
         # Set next agent to workflow executor
         next_agent = "workflow_executor" if workflow_steps else "end"
         
         return {
-            "messages": [response],
+            **state,  # Preserve existing state
+            "messages": state["messages"] + [response],
             "current_agent": "planner",
             "next_agent": next_agent,
             "iteration": state["iteration"] + 1,
@@ -138,6 +227,7 @@ async def planner_agent_node(state: AgentState) -> dict:
         )
         
         return {
+            **state,  # Preserve existing state
             "iteration": state["iteration"] + 1,
             "error": f"PlannerAgent error: {str(e)}",
             "current_agent": "planner",

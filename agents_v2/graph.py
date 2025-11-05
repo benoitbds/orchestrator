@@ -7,6 +7,7 @@ from .document_agent import document_agent_node
 from .planner_agent import planner_agent_node
 from .writer_agent import writer_agent_node
 from .integration_agent import integration_agent_node
+from .conversation_agent import conversation_agent_node
 from .workflow_executor import workflow_executor_node, advance_workflow_node
 from .approval import approval_node
 import logging
@@ -33,6 +34,7 @@ def build_agent_graph(checkpointer=None):
     workflow.add_node("planner", planner_agent_node)
     workflow.add_node("writer", writer_agent_node)
     workflow.add_node("integration", integration_agent_node)
+    workflow.add_node("conversation", conversation_agent_node)
     
     # Phase 2C: Workflow orchestration nodes
     workflow.add_node("workflow_executor", workflow_executor_node)
@@ -63,6 +65,7 @@ def build_agent_graph(checkpointer=None):
             "document": "document", 
             "writer": "writer",
             "integration": "integration",
+            "conversation": "conversation",
             "approval": "approval",
             END: END
         }
@@ -72,6 +75,7 @@ def build_agent_graph(checkpointer=None):
     workflow.add_edge("backlog", "advance_workflow")
     workflow.add_edge("document", "advance_workflow")
     workflow.add_edge("writer", "advance_workflow")
+    workflow.add_edge("conversation", "advance_workflow")
     
     # Integration ends directly
     workflow.add_edge("integration", END)

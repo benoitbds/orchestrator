@@ -23,11 +23,20 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const fetchProjects = async () => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser) {
+      console.log("[ProjectContext] No auth user, skipping fetchProjects");
+      return;
+    }
+    
+    console.log("[ProjectContext] Fetching projects for user:", auth.currentUser.uid);
     setIsLoading(true);
     try {
       const response = await apiFetch(`/projects`);
+      console.log("[ProjectContext] API response status:", response.status);
+      
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error("[ProjectContext] API error:", response.status, errorText);
         setProjects([]);
         setCurrentProject(null);
         return;
@@ -35,6 +44,7 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
       let data: unknown = null;
       try {
         data = await response.json();
+        console.log("[ProjectContext] Received data:", data);
       } catch {
         data = null;
       }
@@ -46,6 +56,7 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
             : Array.isArray((data as any)?.items)
               ? (data as any).items
               : [];
+      console.log("[ProjectContext] Normalized projects:", normalized);
       setProjects(normalized);
       if (normalized.length > 0 && !currentProject) {
         setCurrentProject(normalized[0]); // Select first by default

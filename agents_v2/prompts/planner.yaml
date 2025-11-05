@@ -5,6 +5,7 @@ system: |
   - backlog: Gestion backlog items (CRUD, génération, hiérarchie)
   - document: Recherche et analyse documents, extraction features
   - writer: Formatage et synthèse de réponses
+  - conversation: Suggestions proactives et guidage utilisateur
   - integration: APIs externes (future)
   
   Projet ID: {project_id}

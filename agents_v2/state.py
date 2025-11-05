@@ -2,7 +2,7 @@ from typing import TypedDict, Annotated, Sequence, Literal, Any
 from langchain_core.messages import BaseMessage
 from operator import add
 
-AgentType = Literal["router", "backlog", "document", "planner", "writer", "integration", "end"]
+AgentType = Literal["router", "backlog", "document", "planner", "writer", "integration", "conversation", "end"]
 ItemType = Literal["Epic", "Feature", "US", "UC", "Capability"]
 ActionType = Literal["generate_children", "create_item", "update_item", "analyze"]
 

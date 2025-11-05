@@ -128,30 +128,6 @@ class RunAgentPayload(BaseModel):
     objective: str
 
 
-@app.post("/agent/run")
-async def run_agent(payload: RunAgentPayload, user=Depends(get_current_user_optional)):
-    project = crud.get_project_for_user(payload.project_id, user["uid"])
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    # Generate run_id upfront to return it immediately
-    from uuid import uuid4
-    run_id = str(uuid4())
-    
-    async def _bg() -> None:
-        try:
-            # Create the run first
-            crud.create_run(run_id, payload.objective, payload.project_id)
-            # Then execute it
-            from orchestrator.core_loop import run_chat_tools
-            await run_chat_tools(payload.objective, payload.project_id, run_id)
-        except Exception as e:  # pragma: no cover - unexpected runtime errors
-            logger.warning("planner failed: %s", e)
-
-    asyncio.create_task(_bg())
-    return {"ok": True, "run_id": run_id}
-
-
 @app.post("/agent/run_langgraph")
 async def run_langgraph_agent(
     payload: RunAgentPayload,
@@ -445,13 +421,113 @@ async def delete_project(project_id: int, user=Depends(get_current_user_optional
 # ---- Document endpoints ----
 
 
+async def _analyze_document_async(doc_id: int, project_id: int):
+    """Background task to analyze document asynchronously."""
+    from orchestrator import stream
+    
+    # Use project_id as the stream key for WebSocket notifications
+    stream_key = f"project:{project_id}"
+    
+    try:
+        logger.info(f"Starting async analysis for document {doc_id}")
+        
+        # Emit start event
+        stream.publish(stream_key, {
+            "type": "document_analysis_started",
+            "doc_id": doc_id,
+            "status": "ANALYZING"
+        })
+        
+        doc = crud.get_document(doc_id)
+        if not doc:
+            logger.error(f"Document {doc_id} not found during async analysis")
+            return
+        
+        crud.update_document_status(doc_id, "ANALYZING", None)
+        content = (doc.get("content") or "").strip()
+        
+        if not content:
+            crud.update_document_status(doc_id, "ERROR", {"error": "Document content is empty"})
+            stream.publish(stream_key, {
+                "type": "document_analysis_failed",
+                "doc_id": doc_id,
+                "error": "Document content is empty"
+            })
+            return
+        
+        # Chunk the document
+        chunks = chunk_text(content, target_tokens=400, overlap_tokens=60)
+        if not chunks:
+            crud.update_document_status(doc_id, "ERROR", {"error": "No analyzable content"})
+            stream.publish(stream_key, {
+                "type": "document_analysis_failed",
+                "doc_id": doc_id,
+                "error": "No analyzable content"
+            })
+            return
+        
+        # Emit progress
+        stream.publish(stream_key, {
+            "type": "document_analysis_progress",
+            "doc_id": doc_id,
+            "status": "generating_embeddings",
+            "chunk_count": len(chunks)
+        })
+        
+        # Generate embeddings
+        embeddings = await embed_texts(chunks)
+        if len(embeddings) < len(chunks):
+            embeddings.extend([[] for _ in range(len(chunks) - len(embeddings))])
+        
+        non_null_embeddings = sum(1 for emb in embeddings if emb)
+        if non_null_embeddings == 0:
+            crud.update_document_status(doc_id, "ERROR", {"error": "Embedding generation failed"})
+            stream.publish(stream_key, {
+                "type": "document_analysis_failed",
+                "doc_id": doc_id,
+                "error": "Embedding generation failed"
+            })
+            return
+        
+        # Store chunks
+        payload = [(i, chunk, embeddings[i]) for i, chunk in enumerate(chunks)]
+        crud.delete_document_chunks(doc_id)
+        if payload:
+            crud.upsert_document_chunks(doc_id, payload)
+        
+        total_chunks, stored_with_embeddings = crud.document_chunk_stats(doc_id)
+        logger.info(f"Indexed {total_chunks} chunks, {stored_with_embeddings} with embeddings (doc_id={doc_id})")
+        
+        crud.update_document_status(doc_id, "ANALYZED", {"chunk_count": total_chunks})
+        
+        # Emit success event
+        stream.publish(stream_key, {
+            "type": "document_analysis_completed",
+            "doc_id": doc_id,
+            "status": "ANALYZED",
+            "chunk_count": total_chunks,
+            "embeddings_count": stored_with_embeddings
+        })
+        
+        logger.info(f"Document {doc_id} analysis completed successfully")
+        
+    except Exception as exc:
+        logger.exception(f"Document analysis failed for doc_id={doc_id}", exc_info=exc)
+        crud.update_document_status(doc_id, "ERROR", {"error": str(exc)})
+        stream.publish(stream_key, {
+            "type": "document_analysis_failed",
+            "doc_id": doc_id,
+            "error": str(exc)
+        })
+
+
 @app.post(
     "/projects/{project_id}/documents",
     response_model=DocumentOut,
     status_code=201,
 )
 async def upload_document(project_id: int, file: UploadFile = File(...), user=Depends(get_current_user_optional)):
-    """Upload a document for a project."""
+    """Upload a document for a project and automatically trigger analysis."""
 
     if not crud.get_project_for_user(project_id, user["uid"]):
         raise HTTPException(status_code=404, detail="project not found")
@@ -468,6 +544,10 @@ async def upload_document(project_id: int, file: UploadFile = File(...), user=De
 
     # Create the document first
     document = crud.create_document(project_id, file.filename, content_text, None)
+    
+    # Trigger automatic analysis in background
+    asyncio.create_task(_analyze_document_async(document.id, project_id))
+    logger.info(f"Document {document.id} uploaded, automatic analysis triggered")
 
     return document
 

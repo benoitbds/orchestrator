@@ -7,18 +7,25 @@ function getAPIBaseUrl(): string {
   if (typeof window !== "undefined") {
     const proto = window.location.protocol;
     const host = window.location.host;
-    return `${proto}//${host}`;
+    return `${proto}//${host}/api`;
   }
   
-  return "https://agent4ba.baq.ovh";
+  return "https://agent4ba.baq.ovh/api";
 }
 
 export async function apiFetch(path: string, init?: RequestInit) {
   const headers = new Headers(init?.headers);
   try {
     const token = await auth.currentUser?.getIdToken();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-  } catch {}
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+      console.log(`[apiFetch] ${path} - Token added (length: ${token.length})`);
+    } else {
+      console.warn(`[apiFetch] ${path} - No token available`);
+    }
+  } catch (e) {
+    console.error(`[apiFetch] ${path} - Error getting token:`, e);
+  }
   return fetch(`${getAPIBaseUrl()}${path}`, {
     ...init,
     headers,
@@ -39,15 +46,6 @@ export interface AgentRunPayload {
   meta?: AgentRunMetadata;
 }
 
-export async function runAgent(payload: AgentRunPayload) {
-  const res = await apiFetch("/agent/run", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error("Agent run failed");
-  return res.json();
-}
 
 export async function validateItem(id: number, fields?: string[]) {
   const res = await apiFetch(`/api/items/${id}/validate`, {

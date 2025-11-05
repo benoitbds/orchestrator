@@ -3,6 +3,7 @@ import json
 import asyncio
 import uuid
 from typing import Dict, Any
+from datetime import datetime
 from fastapi import WebSocket, WebSocketDisconnect, HTTPException
 from langchain_core.messages import HumanMessage
 
@@ -44,34 +45,73 @@ async def websocket_endpoint(websocket: WebSocket, run_id: str = None):
     if not run_id:
         run_id = str(uuid.uuid4())
     
-    print(f"=== WEBSOCKET CONNECTING: {run_id} ===")
-    await manager.connect(websocket, run_id)
-    print(f"=== WEBSOCKET CONNECTED: {run_id} ===")
+    print(f"\n{'='*60}")
+    print("✅ WEBSOCKET CONNECTION ATTEMPT")
+    print(f"Run ID: {run_id}")
+    print(f"Client: {websocket.client}")
+    print(f"Headers: {dict(websocket.headers)}")
+    print(f"{'='*60}\n")
     
     try:
+        await manager.connect(websocket, run_id)
+        print(f"✅ WEBSOCKET ACCEPTED: {run_id}")
+    except Exception as e:
+        print(f"❌ WEBSOCKET ACCEPT FAILED: {e}")
+        raise
+    
+    try:
+        print(f"[{run_id}] 🔄 Entering message receive loop...")
+        
+        # Send initial hello message to confirm connection
+        await websocket.send_text(json.dumps({
+            "type": "connected",
+            "run_id": run_id,
+            "message": "WebSocket connection established"
+        }))
+        print(f"[{run_id}] 📤 Sent connection confirmation")
+        
         while True:
-            # Wait for client message
-            print(f"[{run_id}] Waiting for client message...")
-            data = await websocket.receive_text()
-            message = json.loads(data)
-            print(f"[{run_id}] Received message: {message.get('type')}")
-            
-            if message["type"] == "start_agents":
-                print(f"[{run_id}] Starting agent execution...")
-                await handle_agent_execution(run_id, message["payload"])
-            elif message["type"] == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}))
+            # Wait for client message with timeout to prevent hanging
+            print(f"[{run_id}] ⏳ Waiting for client message...")
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
+                print(f"[{run_id}] 📨 Received raw data: {data[:200]}...")
+                message = json.loads(data)
+                print(f"[{run_id}] 📦 Parsed message type: {message.get('type')}")
                 
-    except WebSocketDisconnect:
+                if message["type"] == "start_agents":
+                    print(f"[{run_id}] Starting agent execution...")
+                    await handle_agent_execution(run_id, message["payload"])
+                elif message["type"] == "ping":
+                    print(f"[{run_id}] 🏓 Received ping, sending pong")
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+                else:
+                    print(f"[{run_id}] ⚠️ Unknown message type: {message.get('type')}")
+                    
+            except asyncio.TimeoutError:
+                # Send keepalive ping
+                print(f"[{run_id}] 💓 Sending keepalive ping")
+                await websocket.send_text(json.dumps({"type": "keepalive"}))
+                
+    except WebSocketDisconnect as e:
+        print(f"[{run_id}] 🔴 WebSocket disconnected by client: {e}")
         manager.disconnect(run_id)
         cleanup_stream(run_id)
     except Exception as e:
-        await websocket.send_text(json.dumps({
-            "type": "error",
-            "error": str(e)
-        }))
+        print(f"[{run_id}] ❌ WebSocket error: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "error": str(e)
+            }))
+        except Exception as send_error:
+            print(f"[{run_id}] ❌ Failed to send error to client: {send_error}")
         manager.disconnect(run_id)
         cleanup_stream(run_id)
+    finally:
+        print(f"[{run_id}] 🏁 WebSocket handler exiting")
 
 async def handle_agent_execution(run_id: str, payload: Dict[str, Any]):
     """Execute agents with real-time streaming."""
@@ -110,6 +150,19 @@ async def handle_agent_execution(run_id: str, payload: Dict[str, Any]):
         print(f"[{run_id}] Building agent graph...")
         graph = build_agent_graph(checkpointer=checkpointer)
         print(f"[{run_id}] Graph built successfully")
+        
+        # Create Run record with project_id
+        from orchestrator.storage.db import get_session
+        from orchestrator.storage.models import Run
+        print(f"[{run_id}] Creating Run record with project_id={project_id}, user_uid={user_uid}")
+        with get_session() as session:
+            if session.get(Run, run_id) is None:
+                new_run = Run(id=run_id, project_id=project_id, user_uid=user_uid)
+                session.add(new_run)
+                session.commit()
+                print(f"[{run_id}] Run record created successfully")
+            else:
+                print(f"[{run_id}] Run record already exists")
         
         # Set up streaming manager
         stream_manager = get_stream_manager(run_id)
@@ -156,8 +209,9 @@ async def handle_agent_execution(run_id: str, payload: Dict[str, Any]):
         print(f"[{run_id}] Starting graph execution with ainvoke...")
         
         try:
-            # Use async API since nodes are async functions
-            result = await graph.ainvoke(initial_state)
+            # Use async API with increased recursion limit for approval workflows
+            config = {"recursion_limit": 50}
+            result = await graph.ainvoke(initial_state, config=config)
             print(f"[{run_id}] Graph.ainvoke() completed. Result type: {type(result)}")
             print(f"[{run_id}] Result keys: {list(result.keys()) if result else 'None'}")
             if result:
@@ -198,10 +252,29 @@ async def stream_events_to_websocket(run_id: str, stream_manager):
     """Stream events from AgentStreamManager to WebSocket."""
     queue = stream_manager.subscribe()
     
+    async def send_keepalive():
+        """Send periodic keepalive pings to maintain connection."""
+        while True:
+            await asyncio.sleep(30)  # Every 30 seconds
+            try:
+                await manager.send_event(run_id, {
+                    "type": "keepalive",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "run_id": run_id
+                })
+            except Exception:
+                break  # Connection closed, stop keepalive
+    
+    keepalive_task = asyncio.create_task(send_keepalive())
+    
     try:
         while True:
-            # Get next event from stream
-            event = await queue.get()
+            # Get next event from stream with timeout
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=60.0)
+            except asyncio.TimeoutError:
+                # No events for 60s, but keepalive should keep connection alive
+                continue
             
             # Send to WebSocket
             await manager.send_event(run_id, event)
@@ -213,6 +286,7 @@ async def stream_events_to_websocket(run_id: str, stream_manager):
     except Exception as e:
         print(f"Error in event streaming for {run_id}: {e}")
     finally:
+        keepalive_task.cancel()
         stream_manager.unsubscribe(queue)
 
 # Integration with existing FastAPI app

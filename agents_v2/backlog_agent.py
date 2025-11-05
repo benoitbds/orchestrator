@@ -11,7 +11,8 @@ from .tools.backlog_tools import (
     move_backlog_item,
     summarize_project_backlog,
     bulk_create_features,
-    generate_children_items
+    generate_children_items,
+    set_current_run_id
 )
 import yaml
 import os
@@ -85,8 +86,39 @@ async def backlog_agent_node(state: AgentState) -> AgentState:
                     "error": error_msg
                 }
         
-        # Emit agent start event
-        await stream_manager.emit_agent_start("backlog", state["objective"], state["iteration"])
+        # Set run_id for real-time item creation events
+        set_current_run_id(run_id)
+        
+        # Emit agent start event with workflow context if available
+        workflow_context = state.get("workflow_context")
+        await stream_manager.emit_agent_start(
+            "backlog", 
+            state["objective"], 
+            state["iteration"],
+            step_info=workflow_context
+        )
+        
+        # Emit initial narration based on action type
+        if meta and meta.get("action") == "generate_children":
+            target_type = meta.get("target_type", "US")
+            type_labels = {
+                "US": "User Stories",
+                "UC": "Use Cases",
+                "Feature": "Features",
+                "Epic": "Epics"
+            }
+            item_label = type_labels.get(target_type, target_type)
+            await stream_manager.emit_agent_narration(
+                "backlog",
+                f"Je vais créer les {item_label} dans le backlog",
+                state["iteration"]
+            )
+        else:
+            await stream_manager.emit_agent_narration(
+                "backlog",
+                "Je vais gérer les éléments du backlog",
+                state["iteration"]
+            )
         
         llm = ChatOpenAI(model="gpt-4o", temperature=0)
         tools = [
@@ -144,11 +176,6 @@ async def backlog_agent_node(state: AgentState) -> AgentState:
                 tool_args = tool_call["args"]
                 
                 logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
-                
-                # Emit tool call start
-                await stream_manager.emit_tool_call(
-                    "backlog", tool_name, tool_args, state["iteration"]
-                )
                 
                 try:
                     # Execute the tool
@@ -218,7 +245,6 @@ async def backlog_agent_node(state: AgentState) -> AgentState:
                                 "error": error_msg
                             }
                     
-                    # Emit tool call end with result
                     await stream_manager.emit_tool_call(
                         "backlog", tool_name, tool_args, state["iteration"], 
                         result=result
@@ -252,13 +278,53 @@ async def backlog_agent_node(state: AgentState) -> AgentState:
                     new_messages.append(tool_msg)
                     messages.append(tool_msg)
         
-        # Emit agent completion
+        # Emit agent completion with items_created count
         tool_count = len(tool_results)
+        items_created = 0
+        parent_title = None
+        item_type = None
+        
+        # Count items created from tool results
+        for tool_name, result in tool_results.items():
+            if isinstance(result, dict):
+                if tool_name == "generate_children_items":
+                    items_created += len(result.get("children_created", []))
+                    parent_title = result.get("parent_title")
+                    item_type = result.get("target_type", "items")
+                elif tool_name == "bulk_create_features":
+                    items_created += result.get("count", 0)
+                    item_type = "Features"
+                elif tool_name == "create_backlog_item_tool" and result.get("success"):
+                    items_created += 1
+                    item_type = result.get("type", "item")
+        
+        # Emit final narration with summary
+        if items_created > 0:
+            type_labels = {
+                "US": "User Stories",
+                "UC": "Use Cases",
+                "Feature": "Features",
+                "Epic": "Epics"
+            }
+            item_label = type_labels.get(item_type, item_type or "items")
+            
+            if parent_title:
+                narration = f"{items_created} {item_label} créées sous '{parent_title}'"
+            else:
+                narration = f"{items_created} {item_label} créées dans le backlog"
+            
+            await stream_manager.emit_agent_narration(
+                "backlog",
+                narration,
+                state["iteration"]
+            )
+        
         await stream_manager.emit_agent_end(
             "backlog", 
             f"Completed backlog operations with {tool_count} tools", 
             state["iteration"], 
-            success=True
+            success=True,
+            extra_data={"items_created": items_created}
         )
         
         return {

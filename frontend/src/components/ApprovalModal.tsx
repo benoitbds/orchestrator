@@ -1,4 +1,22 @@
 import React, { useState } from 'react';
+import { apiFetch } from '@/lib/api';
+
+interface WorkflowStep {
+  agent: string;
+  objective: string;
+  status: 'pending' | 'running' | 'done' | 'error' | 'awaiting_approval';
+  requires_approval?: boolean;
+}
+
+interface ApprovalContext {
+  workflow_steps?: WorkflowStep[];
+  current_step_index?: number;
+  expected_results?: {
+    items_count?: number;
+    documents_count?: number;
+    description?: string;
+  };
+}
 
 interface Props {
   runId: string;
@@ -7,22 +25,49 @@ interface Props {
   objective: string;
   createdAt: string;
   timeoutAt: string;
+  context?: ApprovalContext;
+  projectId?: number;
   onDecision: (decision: 'approve' | 'reject' | 'modify', reason: string) => void;
-  onClose: () => void;
+  onClose?: () => void;
 }
+
+const getAutoApproveKey = (projectId: number, agent: string) => 
+  `auto_approve_${projectId}_${agent}`;
+
+const getAutoApprovePreference = (projectId: number | undefined, agent: string): boolean => {
+  if (!projectId) return false;
+  try {
+    const stored = localStorage.getItem(getAutoApproveKey(projectId, agent));
+    return stored === 'true';
+  } catch {
+    return false;
+  }
+};
+
+const setAutoApprovePreference = (projectId: number | undefined, agent: string, value: boolean) => {
+  if (!projectId) return;
+  try {
+    localStorage.setItem(getAutoApproveKey(projectId, agent), value.toString());
+  } catch {
+    // Ignore localStorage errors
+  }
+};
 
 export const ApprovalModal: React.FC<Props> = ({
   runId,
   stepIndex,
   agent,
   objective,
-  createdAt,
   timeoutAt,
+  context,
+  projectId,
   onDecision,
   onClose
 }) => {
-  const [reason, setReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [approvalStatus, setApprovalStatus] = useState<'idle' | 'approved' | 'rejected' | 'modified'>('idle');
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [rememberChoice, setRememberChoice] = useState(getAutoApprovePreference(projectId, agent));
 
   const getAgentIcon = (agent: string) => {
     switch (agent) {
@@ -39,22 +84,44 @@ export const ApprovalModal: React.FC<Props> = ({
     setIsSubmitting(true);
     
     try {
-      const response = await fetch(`/api/approvals/${runId}/${stepIndex}`, {
+      if (rememberChoice && decision === 'approve') {
+        setAutoApprovePreference(projectId, agent, true);
+      }
+      
+      const response = await apiFetch(`/approvals/${runId}/${stepIndex}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, reason })
+        body: JSON.stringify({ 
+          decision,
+          auto_approve_agent: autoApprove ? agent : undefined
+        })
       });
       
       if (response.ok) {
-        onDecision(decision, reason);
-        onClose();
+        if (decision === 'approve') {
+          setApprovalStatus('approved');
+          setTimeout(() => {
+            onDecision(decision, '');
+            if (onClose) onClose();
+          }, 1500);
+        } else if (decision === 'reject') {
+          setApprovalStatus('rejected');
+          setTimeout(() => {
+            onDecision(decision, '');
+            if (onClose) onClose();
+          }, 1000);
+        } else {
+          setApprovalStatus('modified');
+          onDecision(decision, '');
+          if (onClose) onClose();
+        }
       } else {
         const error = await response.json();
         alert('Failed to submit decision: ' + (error.detail || 'Unknown error'));
+        setIsSubmitting(false);
       }
     } catch (error) {
       alert('Error submitting decision: ' + error);
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -66,111 +133,170 @@ export const ApprovalModal: React.FC<Props> = ({
     const diffMinutes = Math.floor(diffMs / (1000 * 60));
     const diffSeconds = Math.floor((diffMs % (1000 * 60)) / 1000);
     
-    if (diffMs <= 0) return "Expired";
-    return `${diffMinutes}:${diffSeconds.toString().padStart(2, '0')}`;
+    if (diffMs <= 0) return { expired: true, text: "Expired" };
+    return { expired: false, text: `${diffMinutes}:${diffSeconds.toString().padStart(2, '0')}` };
   };
 
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full">
-        {/* Header */}
-        <div className="bg-yellow-50 border-b border-yellow-200 p-6 rounded-t-lg">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold text-yellow-800 flex items-center">
-              ⏸ Approval Required
-            </h2>
-            <button
-              onClick={onClose}
-              className="text-gray-500 hover:text-gray-700 text-xl"
-            >
-              ×
-            </button>
-          </div>
-          <div className="mt-2 text-sm text-yellow-700">
-            Time remaining: <span className="font-mono font-semibold">{timeRemaining()}</span>
+  const getContextPreview = () => {
+    if (!context) return null;
+    
+    const preview: string[] = [];
+    
+    if (agent === 'document' && context.expected_results?.documents_count) {
+      preview.push(`${context.expected_results.documents_count} document(s) will be analyzed`);
+    } else if (agent === 'backlog' && context.expected_results?.items_count) {
+      preview.push(`Will create ~${context.expected_results.items_count} backlog items`);
+    }
+    
+    if (context.workflow_steps && context.current_step_index !== undefined) {
+      const totalSteps = context.workflow_steps.length;
+      const completedSteps = context.workflow_steps.filter(s => s.status === 'done').length;
+      preview.push(`Step ${context.current_step_index + 1}/${totalSteps} (${completedSteps} completed)`);
+    }
+    
+    if (context.expected_results?.description) {
+      preview.push(context.expected_results.description);
+    }
+    
+    return preview.length > 0 ? preview : null;
+  };
+
+  const timer = timeRemaining();
+  const contextPreview = getContextPreview();
+
+  if (approvalStatus === 'approved') {
+    return (
+      <div className="bg-green-50 border border-green-300 rounded-lg p-4 mb-4 animate-pulse">
+        <div className="flex items-center gap-3">
+          <span className="text-3xl">✓</span>
+          <div>
+            <div className="font-semibold text-green-800">Step Approved!</div>
+            <div className="text-sm text-green-700">Execution in progress...</div>
           </div>
         </div>
+      </div>
+    );
+  }
 
-        <div className="p-6">
-          {/* Step Information */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-            <div className="flex items-center mb-2">
-              <span className="text-2xl mr-3">{getAgentIcon(agent)}</span>
-              <div>
-                <div className="text-sm text-gray-600">
-                  Step {stepIndex + 1} • {agent}Agent
-                </div>
-                <div className="font-semibold text-gray-900">{objective}</div>
-              </div>
+  if (approvalStatus === 'rejected') {
+    return (
+      <div className="bg-red-50 border border-red-300 rounded-lg p-4 mb-4">
+        <div className="flex items-center gap-3">
+          <span className="text-3xl">✗</span>
+          <div>
+            <div className="font-semibold text-red-800">Step Rejected</div>
+            <div className="text-sm text-red-700">Workflow stopped</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`border rounded-lg p-4 mb-4 ${
+      timer.expired 
+        ? 'bg-red-50 border-red-300' 
+        : 'bg-yellow-50 border-yellow-200'
+    }`}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-2xl">{getAgentIcon(agent)}</span>
+          <div>
+            <div className={`font-semibold ${
+              timer.expired ? 'text-red-800' : 'text-yellow-800'
+            }`}>
+              {timer.expired ? '⏱️ Approval Expired' : '⏸ Approval Required'}
+            </div>
+            <div className={`text-sm ${
+              timer.expired ? 'text-red-700' : 'text-yellow-700'
+            }`}>
+              Step {stepIndex + 1} • {agent}Agent
             </div>
           </div>
+        </div>
+        <div className={`text-xs font-mono ${
+          timer.expired ? 'text-red-700 font-bold' : 'text-yellow-700'
+        }`}>
+          {timer.text}
+        </div>
+      </div>
 
-          {/* Context Information */}
-          <div className="bg-gray-50 rounded-lg p-4 mb-6">
-            <h3 className="font-semibold mb-2 text-gray-800">Execution Context</h3>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <span className="text-gray-600">Run ID:</span>
-                <span className="ml-2 font-mono">{runId}</span>
-              </div>
-              <div>
-                <span className="text-gray-600">Created:</span>
-                <span className="ml-2">{new Date(createdAt).toLocaleTimeString()}</span>
-              </div>
-            </div>
-          </div>
+      {timer.expired && (
+        <div className="mb-3 bg-red-100 border border-red-200 rounded p-2 text-sm text-red-800">
+          This approval has expired. The workflow may have auto-rejected or timed out. You can still approve to retry this step.
+        </div>
+      )}
 
-          {/* Decision Reason */}
-          <div className="mb-6">
-            <label className="block text-sm font-medium mb-2 text-gray-700">
-              Decision Reason (optional)
-            </label>
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 h-24 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Add a comment about your decision..."
-              disabled={isSubmitting}
-            />
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-3">
-            <button
-              onClick={() => handleDecision('approve')}
-              disabled={isSubmitting}
-              className="flex-1 bg-green-600 text-white px-6 py-3 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
-            >
-              {isSubmitting ? 'Submitting...' : '✓ Approve & Continue'}
-            </button>
-            
-            <button
-              onClick={() => handleDecision('reject')}
-              disabled={isSubmitting}
-              className="flex-1 bg-red-600 text-white px-6 py-3 rounded-md hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
-            >
-              {isSubmitting ? 'Submitting...' : '✗ Reject & Stop'}
-            </button>
-            
-            <button
-              onClick={() => handleDecision('modify')}
-              disabled={isSubmitting}
-              className="flex-1 bg-yellow-600 text-white px-6 py-3 rounded-md hover:bg-yellow-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
-            >
-              {isSubmitting ? 'Submitting...' : '✏️ Modify & Continue'}
-            </button>
-          </div>
-
-          {/* Help Text */}
-          <div className="mt-4 text-xs text-gray-500 bg-gray-50 rounded p-3">
-            <strong>Actions:</strong>
-            <ul className="mt-1 space-y-1">
-              <li><strong>Approve:</strong> Continue workflow with this step as planned</li>
-              <li><strong>Reject:</strong> Cancel entire workflow and stop execution</li>
-              <li><strong>Modify:</strong> Continue but note modifications for future steps</li>
+      <div className="mb-3">
+        <div className="text-sm text-gray-900 mb-2 font-medium">{objective}</div>
+        
+        {contextPreview && contextPreview.length > 0 && (
+          <div className="mt-2 bg-blue-50 border border-blue-200 rounded p-3">
+            <div className="text-xs font-semibold text-blue-900 mb-1">📊 Context</div>
+            <ul className="space-y-1">
+              {contextPreview.map((item, idx) => (
+                <li key={idx} className="text-xs text-blue-800 flex items-start gap-1">
+                  <span className="text-blue-600">•</span>
+                  <span>{item}</span>
+                </li>
+              ))}
             </ul>
           </div>
-        </div>
+        )}
+      </div>
+
+      {/* Auto-approve checkboxes */}
+      <div className="mb-3 space-y-2">
+        <label className="flex items-center text-sm text-gray-700 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={autoApprove}
+            onChange={(e) => setAutoApprove(e.target.checked)}
+            className="mr-2 w-4 h-4 rounded border-gray-300 text-yellow-600 focus:ring-yellow-500"
+            disabled={isSubmitting}
+          />
+          <span>Auto-approve all future <strong>{agent}Agent</strong> steps in this run</span>
+        </label>
+        
+        {projectId && (
+          <label className="flex items-center text-sm text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={rememberChoice}
+              onChange={(e) => setRememberChoice(e.target.checked)}
+              className="mr-2 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              disabled={isSubmitting}
+            />
+            <span>Remember my choice for <strong>{agent}Agent</strong> in this project</span>
+          </label>
+        )}
+      </div>
+
+      {/* Action Buttons */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => handleDecision('approve')}
+          disabled={isSubmitting}
+          className="flex-1 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+        >
+          {isSubmitting ? 'Submitting...' : '✓ Approve'}
+        </button>
+        
+        <button
+          onClick={() => handleDecision('reject')}
+          disabled={isSubmitting}
+          className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+        >
+          {isSubmitting ? 'Submitting...' : '✗ Reject'}
+        </button>
+        
+        <button
+          onClick={() => handleDecision('modify')}
+          disabled={isSubmitting}
+          className="flex-1 bg-yellow-600 text-white px-4 py-2 rounded-md hover:bg-yellow-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+        >
+          {isSubmitting ? 'Submitting...' : '✏️ Modify'}
+        </button>
       </div>
     </div>
   );

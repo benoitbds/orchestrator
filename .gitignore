@@ -6,6 +6,7 @@ dist/
 build/
 .venv/
 .env
+.env.docker
 !backend/.env
 .mypy_cache/
 .pytest_cache/
@@ -22,6 +23,10 @@ node_modules/
 coverage/
 coverage.xml
 orchestrator.db
+
+# Environment files (keep .env.local for dev, but gitignore production configs)
+frontend/.env.local
+frontend/.env.production.local
 
 # Misc tools
 .DS_Store

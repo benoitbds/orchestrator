@@ -12,7 +12,7 @@ vi.mock('next/link', () => ({
 }));
 
 declare global {
-  // eslint-disable-next-line no-var
+   
   var fetch: any;
 }
 

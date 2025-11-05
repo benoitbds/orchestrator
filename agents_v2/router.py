@@ -23,7 +23,7 @@ ROUTER_PROMPT_TEMPLATE = load_prompt("router_prompt.yaml")
 
 async def router_node(state: AgentState) -> AgentState:
     """Route vers l'agent approprié selon l'intention."""
-    print(f"=== ROUTER_NODE CALLED ===")
+    print("=== ROUTER_NODE CALLED ===")
     logger.info(f"Router analyzing objective: {state['objective']}")
     
     # Get streaming manager for this run
@@ -33,8 +33,21 @@ async def router_node(state: AgentState) -> AgentState:
     
     try:
         # Emit agent start event
-        print(f"[ROUTER] Emitting agent_start event...")
-        await stream_manager.emit_agent_start("router", state["objective"], state["iteration"])
+        print("[ROUTER] Emitting agent_start event...")
+        workflow_context = state.get("workflow_context")
+        await stream_manager.emit_agent_start(
+            "router", 
+            state["objective"], 
+            state["iteration"],
+            step_info=workflow_context
+        )
+        
+        # Emit initial narration
+        await stream_manager.emit_agent_narration(
+            "router",
+            "J'analyse votre demande pour déterminer le workflow optimal",
+            state["iteration"]
+        )
         
         llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         
@@ -55,12 +68,29 @@ async def router_node(state: AgentState) -> AgentState:
         next_agent = response.content.strip().lower()
         
         # Validation routing (Phase 2A - tous agents disponibles)
-        valid_agents = ["backlog", "document", "planner", "writer", "integration"]
+        valid_agents = ["backlog", "document", "planner", "writer", "integration", "conversation"]
         if next_agent not in valid_agents:
             logger.warning(f"Invalid routing decision: {next_agent}, defaulting to 'backlog'")
             next_agent = "backlog"
         
         logger.info(f"Router decision: {next_agent}")
+        
+        # Emit routing decision narration
+        agent_names = {
+            "backlog": "BacklogAgent",
+            "document": "DocumentAgent",
+            "planner": "PlannerAgent",
+            "writer": "WriterAgent",
+            "integration": "IntegrationAgent",
+            "conversation": "ConversationAgent"
+        }
+        agent_display_name = agent_names.get(next_agent, next_agent.capitalize() + "Agent")
+        
+        await stream_manager.emit_agent_narration(
+            "router",
+            f"→ Routage vers {agent_display_name} basé sur votre objectif",
+            state["iteration"]
+        )
         
         # Emit completion event
         await stream_manager.emit_agent_end(

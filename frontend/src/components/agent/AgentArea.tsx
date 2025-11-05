@@ -10,7 +10,6 @@ import { useRunsStore, type AgentEvent } from '@/stores/useRunsStore';
 import { useAgentStream } from '@/hooks/useAgentStream';
 import { ChatComposer } from './ChatComposer';
 import { cn } from '@/lib/utils';
-import { mutate } from 'swr';
 import { apiFetch } from '@/lib/api';
 
 interface Message {
@@ -63,7 +62,6 @@ export function AgentArea({ onItemHighlight, onBacklogRefresh, currentProject }:
       // Refresh backlog data
       if (currentProject && onBacklogRefresh) {
         await onBacklogRefresh();
-        await mutate(`/items?project_id=${currentProject.id}`);
       }
     },
     onError: (error) => {
