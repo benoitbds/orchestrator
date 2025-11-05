@@ -1,5 +1,5 @@
-from typing import Optional, Literal, List, Dict, Any
-from pydantic import BaseModel, ValidationError, Field
+from typing import Optional, Literal, List, Any, Union
+from pydantic import BaseModel, ValidationError, Field, model_validator
 import logging
 import os
 try:
@@ -80,10 +80,29 @@ class SummarizeProjectArgs(BaseModel):
     project_id: int
     depth: int = 3
 
+class BulkFeatureItem(BaseModel):
+    title: str
+    description: str | None = None
+    acceptance_criteria: Union[str, List[str]] | None = None
+
+
 class BulkCreateFeaturesArgs(BaseModel):
     project_id: int
     parent_id: int
-    items: List[FeatureInput]
+    items: List[BulkFeatureItem]
+
+    @model_validator(mode="after")
+    def _normalize_acceptance_criteria(self):
+        for item in self.items:
+            ac = item.acceptance_criteria
+            if ac is None:
+                item.acceptance_criteria = ""
+            elif isinstance(ac, list):
+                cleaned = [str(x).strip() for x in ac if str(x).strip()]
+                item.acceptance_criteria = "- " + "\n- ".join(cleaned) if cleaned else ""
+            else:
+                item.acceptance_criteria = str(ac).strip()
+        return self
 
 class ListDocsArgs(BaseModel):
     project_id: int
