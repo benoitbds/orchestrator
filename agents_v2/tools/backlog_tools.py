@@ -3,11 +3,25 @@ from orchestrator import crud
 from orchestrator.models import USCreate, FeatureCreate, EpicCreate, UCCreate
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+from ..streaming import get_stream_manager
 import logging
 import re
 import json
 
 logger = logging.getLogger(__name__)
+
+# Global variable to store current run_id for streaming
+_current_run_id: str | None = None
+
+def set_current_run_id(run_id: str):
+    """Set the current run ID for streaming events."""
+    global _current_run_id
+    _current_run_id = run_id
+
+def get_current_run_id() -> str | None:
+    """Get the current run ID for streaming events."""
+    global _current_run_id
+    return _current_run_id
 
 GENERIC_RX = re.compile(r"^generated\s+(us|feature|epic)\s+#\d+$", re.I)
 
@@ -79,8 +93,19 @@ async def create_backlog_item_tool(
             "type": new_item.type,
             "project_id": new_item.project_id,
             "parent_id": new_item.parent_id,
+            "description": new_item.description,
             "success": True
         }
+        
+        # Emit real-time event if run_id is available
+        run_id = get_current_run_id()
+        if run_id:
+            import asyncio
+            try:
+                stream = get_stream_manager(run_id)
+                asyncio.create_task(stream.emit_item_created(result))
+            except Exception as e:
+                logger.warning(f"Failed to emit item_created event: {e}")
         
         logger.info(f"Created item: {result}")
         return result
@@ -333,12 +358,37 @@ async def bulk_create_features(
     try:
         logger.info(f"Bulk creating {len(feature_titles)} features under epic {epic_id}")
         
-        # Mock implementation
+        run_id = get_current_run_id()
         created_ids = []
+        
         for i, title in enumerate(feature_titles):
-            feature_id = 200 + i  # Mock IDs
-            created_ids.append(feature_id)
-            logger.info(f"Created Feature '{title}' with ID {feature_id}")
+            # Create the feature using CRUD
+            feature_create = FeatureCreate(
+                project_id=project_id,
+                title=title,
+                description=f"Generated feature: {title}",
+                parent_id=epic_id,
+                ia_review_status="pending"
+            )
+            new_feature = crud.create_item(feature_create)
+            created_ids.append(new_feature.id)
+            
+            # Emit real-time event
+            if run_id:
+                import asyncio
+                try:
+                    stream = get_stream_manager(run_id)
+                    item_data = {
+                        "id": new_feature.id,
+                        "title": new_feature.title,
+                        "type": new_feature.type,
+                        "project_id": new_feature.project_id,
+                        "parent_id": new_feature.parent_id,
+                        "description": new_feature.description
+                    }
+                    asyncio.create_task(stream.emit_item_created(item_data))
+                except Exception as e:
+                    logger.warning(f"Failed to emit item_created event: {e}")
         
         return {
             "project_id": project_id,
@@ -584,6 +634,24 @@ IMPORTANT:
                 })
                 
                 logger.info(f"Created {target_type_normalized}: {title} (ID: {new_item.id})")
+                
+                # Emit real-time event for each item created
+                run_id = get_current_run_id()
+                if run_id:
+                    import asyncio
+                    try:
+                        stream = get_stream_manager(run_id)
+                        item_data = {
+                            "id": new_item.id,
+                            "title": new_item.title,
+                            "type": new_item.type,
+                            "project_id": new_item.project_id,
+                            "parent_id": new_item.parent_id,
+                            "description": new_item.description
+                        }
+                        asyncio.create_task(stream.emit_item_created(item_data))
+                    except Exception as e:
+                        logger.warning(f"Failed to emit item_created event: {e}")
                 
             except Exception as create_error:
                 logger.error(f"Failed to create item '{title}': {create_error}")

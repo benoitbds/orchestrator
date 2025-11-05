@@ -1,15 +1,45 @@
-:80 {
-    reverse_proxy /api/*    app:8000
-    reverse_proxy /stream   app:8000
-    reverse_proxy /chat     app:8000
-
-    reverse_proxy /_next/*  frontend:3000   # servira CSS/JS/polices
-    reverse_proxy /         frontend:3000   # tout le reste (HTML)
+agent4ba.baq.ovh {
+    # Backend API routes
+    reverse_proxy /api/* app:8000
+    reverse_proxy /agent/* app:8000
+    reverse_proxy /stream app:8000
+    reverse_proxy /chat app:8000
+    reverse_proxy /projects* app:8000
+    reverse_proxy /documents* app:8000
+    reverse_proxy /items* app:8000
+    reverse_proxy /runs* app:8000
+    reverse_proxy /approvals* app:8000
+    reverse_proxy /ping app:8000
+    reverse_proxy /health app:8000
+    
+    # WebSocket routes with proper upgrade headers
+    @websockets {
+        path /ws/*
+    }
+    reverse_proxy @websockets app:8000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote}
+        header_up X-Forwarded-For {remote}
+        header_up X-Forwarded-Proto {scheme}
+    }
+    
+    # Frontend routes
+    reverse_proxy /_next/* frontend:3000
+    reverse_proxy / frontend:3000
 
     header {
-        Access-Control-Allow-Origin  *
-        Access-Control-Allow-Methods "GET,POST,OPTIONS"
-        Access-Control-Allow-Headers *
+        Access-Control-Allow-Origin https://agent4ba.baq.ovh
+        Access-Control-Allow-Credentials true
+        Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS,PATCH"
+        Access-Control-Allow-Headers "Authorization, Content-Type, Accept, Origin, X-Requested-With"
         defer
     }
+    
+    log {
+        output file /var/log/caddy/access.log
+    }
+}
+
+:80 {
+    redir https://agent4ba.baq.ovh{uri} permanent
 }

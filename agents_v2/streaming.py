@@ -1,7 +1,6 @@
 """Real-time streaming infrastructure for multi-agent UI."""
-from typing import Literal, TypedDict, Any
+from typing import TypedDict, Any
 from enum import Enum
-import json
 import asyncio
 from datetime import datetime
 
@@ -9,6 +8,8 @@ class EventType(str, Enum):
     """Types d'événements streamés vers l'UI."""
     AGENT_START = "agent_start"           # Agent commence son travail
     AGENT_THINKING = "agent_thinking"     # Agent réfléchit (LLM call)
+    AGENT_NARRATION = "agent_narration"   # Message narratif humain de l'agent
+    TODO_UPDATED = "todo_updated"         # Todo checké/décoché
     TOOL_CALL_START = "tool_call_start"   # Début appel outil
     TOOL_CALL_END = "tool_call_end"       # Fin appel outil (+ résultat)
     AGENT_END = "agent_end"               # Agent termine
@@ -16,6 +17,8 @@ class EventType(str, Enum):
     STATUS_UPDATE = "status_update"       # Mise à jour statut général
     ERROR = "error"                       # Erreur
     COMPLETE = "complete"                 # Workflow terminé
+    ITEM_CREATED = "item_created"         # Item backlog créé en temps réel
+    ITEM_CREATING = "item_creating"       # Item en cours de création (placeholder)
 
 class StreamEvent(TypedDict):
     """Structure d'un événement streamé."""
@@ -71,12 +74,36 @@ class AgentStreamManager:
         if queue in self.subscribers:
             self.subscribers.remove(queue)
     
-    async def emit_agent_start(self, agent: str, objective: str, iteration: int):
-        """Emit agent start event."""
+    async def emit_agent_start(
+        self, 
+        agent: str, 
+        objective: str, 
+        iteration: int,
+        step_info: dict | None = None,
+        todos: list[str] | None = None
+    ):
+        """Emit agent start event.
+        
+        Args:
+            agent: Agent name
+            objective: Agent objective
+            iteration: Iteration number
+            step_info: Optional workflow step info with keys:
+                - step_index: Current step index (0-based)
+                - total_steps: Total number of steps
+                - step_description: Description of the step
+            todos: Optional list of todo items to track
+        """
+        data = {"message": f"Starting {agent}Agent", "objective": objective}
+        if step_info:
+            data["step_info"] = step_info
+        if todos:
+            data["todos"] = todos
+        
         await self.emit(
             EventType.AGENT_START,
             agent,
-            {"message": f"Starting {agent}Agent", "objective": objective},
+            data,
             iteration
         )
     
@@ -86,6 +113,35 @@ class AgentStreamManager:
             EventType.AGENT_THINKING,
             agent,
             {"message": "Analyzing request...", "prompt_preview": prompt_preview[:100]},
+            iteration
+        )
+    
+    async def emit_agent_narration(self, agent: str, message: str, iteration: int):
+        """Emit human-readable narration from agent."""
+        await self.emit(
+            EventType.AGENT_NARRATION,
+            agent,
+            {"message": message},
+            iteration
+        )
+    
+    async def emit_todo_update(
+        self, 
+        agent: str, 
+        todo_id: str, 
+        todo_text: str, 
+        status: str, 
+        iteration: int
+    ):
+        """Emit todo status update (pending/in_progress/completed)."""
+        await self.emit(
+            EventType.TODO_UPDATED,
+            agent,
+            {
+                "todo_id": todo_id,
+                "todo_text": todo_text,
+                "status": status
+            },
             iteration
         )
     
@@ -120,13 +176,17 @@ class AgentStreamManager:
         agent: str,
         summary: str,
         iteration: int,
-        success: bool = True
+        success: bool = True,
+        extra_data: dict = None
     ):
         """Emit agent end event."""
+        data = {"message": summary, "success": success}
+        if extra_data:
+            data.update(extra_data)
         await self.emit(
             EventType.AGENT_END,
             agent,
-            {"message": summary, "success": success},
+            data,
             iteration
         )
     
@@ -154,6 +214,32 @@ class AgentStreamManager:
             EventType.COMPLETE,
             "system",
             {"summary": summary, "stats": stats},
+            0
+        )
+    
+    async def emit_item_creating(self, item_type: str, title: str, parent_id: int | None = None):
+        """Emit item creation start (placeholder)."""
+        await self.emit(
+            EventType.ITEM_CREATING,
+            "system",
+            {
+                "item_type": item_type,
+                "title": title,
+                "parent_id": parent_id,
+                "temp_id": f"temp-{datetime.utcnow().timestamp()}"
+            },
+            0
+        )
+    
+    async def emit_item_created(self, item: dict):
+        """Emit item created event for real-time backlog update."""
+        await self.emit(
+            EventType.ITEM_CREATED,
+            "system",
+            {
+                "item": item,
+                "animation": "slide-in"
+            },
             0
         )
 

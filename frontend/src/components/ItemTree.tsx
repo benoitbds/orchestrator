@@ -10,9 +10,8 @@ const ChevronDown = dynamic(() => import('lucide-react').then(mod => ({ default:
 import { useItems, TreeNode } from '@/lib/hooks';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BacklogItem } from '@/models/backlogItem';
-import { mutate } from 'swr';
 import { apiFetch } from '@/lib/api';
 
 const typeColors: { [key: string]: string } = {
@@ -79,9 +78,22 @@ function Item({ item, onEdit, level = 0, collapsed, toggle, onDragStart, onDrop 
   const isCollapsed = collapsed.has(item.id);
   const hasChildren = item.children && item.children.length > 0;
   const pending = item.ia_review_status === 'pending' || item.generated_by_ai;
+  const isLoading = (item as any).isLoading === true;
+  const [isNewItem, setIsNewItem] = useState(false);
+  
+  // Trigger animation on mount for new items
+  useEffect(() => {
+    if (typeof item.id === 'number' && item.id > 0) {
+      setIsNewItem(true);
+      const timer = setTimeout(() => setIsNewItem(false), 400);
+      return () => clearTimeout(timer);
+    }
+  }, [item.id]);
+  
   const titleClasses = clsx(
     'cursor-pointer font-medium',
-    pending && 'bg-amber-100 px-1 rounded'
+    pending && 'bg-amber-100 px-1 rounded',
+    isLoading && 'skeleton-pulse'
   );
 
   const getTooltipContent = () => {
@@ -120,7 +132,11 @@ function Item({ item, onEdit, level = 0, collapsed, toggle, onDragStart, onDrop 
       onDrop={() => onDrop(item)}
     >
       <div
-        className={`flex items-center gap-2 p-2 rounded-md hover:bg-gray-100 cursor-pointer`}
+        className={clsx(
+          `flex items-center gap-2 p-2 rounded-md hover:bg-gray-100 cursor-pointer`,
+          isNewItem && 'backlog-item-enter',
+          isLoading && 'backlog-item-creating'
+        )}
         style={{ paddingLeft: `${level * 20 + 8}px` }}
         title={getTooltipContent()}
         data-item-id={item.id}
@@ -209,7 +225,7 @@ function Item({ item, onEdit, level = 0, collapsed, toggle, onDragStart, onDrop 
 }
 
 export function ItemTree({ projectId, onEdit }: { projectId: number | null, onEdit: (item: BacklogItem) => void }) {
-  const { tree, isLoading, error } = useItems(projectId);
+  const { tree, isLoading, error, mutate } = useItems(projectId);
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [dragged, setDragged] = useState<TreeNode | null>(null);
 
@@ -232,7 +248,7 @@ export function ItemTree({ projectId, onEdit }: { projectId: number | null, onEd
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ parent_id: parent ? parent.id : null }),
       });
-      mutate(`/items?project_id=${projectId}`);
+      mutate();
     } catch (err) {
       console.error('Move error', err);
     } finally {

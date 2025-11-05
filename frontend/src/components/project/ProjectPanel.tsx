@@ -16,7 +16,11 @@ import type { Document } from '@/models/document';
 import { listDocuments, uploadDocument } from '@/lib/documents';
 import { DocumentList } from './DocumentList';
 
-export function ProjectPanel() {
+interface ProjectPanelProps {
+  onAnalyzeDocument?: (objective: string) => Promise<void>;
+}
+
+export function ProjectPanel({ onAnalyzeDocument }: ProjectPanelProps = {}) {
   const { projects, currentProject, setCurrentProject, refreshProjects } = useProjects();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -87,6 +91,53 @@ export function ProjectPanel() {
       setDocuments([]);
     }
   }, [currentProject]);
+  
+  // Track previous document statuses to detect changes
+  const prevDocumentsRef = useRef<Document[]>([]);
+  
+  // Poll for document status updates when any document is being analyzed
+  useEffect(() => {
+    if (!currentProject) return;
+    
+    const hasAnalyzing = documents.some(doc => doc.status === 'ANALYZING');
+    if (!hasAnalyzing) return;
+    
+    const pollInterval = setInterval(() => {
+      loadDocuments();
+    }, 2000); // Poll every 2 seconds
+    
+    return () => clearInterval(pollInterval);
+  }, [currentProject, documents]);
+  
+  // Notify when document analysis completes
+  useEffect(() => {
+    const prevDocs = prevDocumentsRef.current;
+    
+    documents.forEach(doc => {
+      const prevDoc = prevDocs.find(d => d.id === doc.id);
+      
+      // Document just became ANALYZED
+      if (prevDoc && prevDoc.status === 'ANALYZING' && doc.status === 'ANALYZED') {
+        toast.success(`Document "${doc.filename}" analyzed successfully!`, {
+          description: 'You can now generate features from this document.',
+          duration: 5000
+        });
+      }
+      
+      // Document analysis failed
+      if (prevDoc && prevDoc.status === 'ANALYZING' && doc.status === 'ERROR') {
+        const errorMsg = doc.meta && typeof doc.meta === 'object' && 'error' in doc.meta 
+          ? String(doc.meta.error) 
+          : 'Unknown error';
+        toast.error(`Analysis failed for "${doc.filename}"`, {
+          description: errorMsg,
+          duration: 7000
+        });
+      }
+    });
+    
+    prevDocumentsRef.current = documents;
+  }, [documents]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSelectedFile(e.target.files?.[0] || null);
@@ -100,11 +151,15 @@ export function ProjectPanel() {
     }
     setIsUploading(true);
     try {
-      await uploadDocument(currentProject.id, selectedFile);
-      toast.success('Document uploaded');
+      const uploadedDoc = await uploadDocument(currentProject.id, selectedFile);
+      toast.success('Document uploaded, analysis starting automatically...');
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
       await loadDocuments();
+      
+      // The backend will automatically trigger analysis
+      // WebSocket events will update the UI when analysis completes
+      toast.info('Document analysis in progress. You will be notified when complete.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to upload document');
     } finally {
@@ -225,7 +280,7 @@ export function ProjectPanel() {
 
               <div>
                 <h4 className="font-medium mb-2">Documents</h4>
-                <DocumentList documents={documents} refetch={loadDocuments} />
+                <DocumentList documents={documents} refetch={loadDocuments} onAnalyze={onAnalyzeDocument} />
               </div>
             </div>
           </div>
