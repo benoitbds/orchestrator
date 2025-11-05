@@ -62,3 +62,8 @@ class AgentState(TypedDict):
     current_step_index: int | None             # NOUVEAU: Étape actuelle
     is_paused: bool | None                     # NOUVEAU: Workflow en pause (HITL)
     pending_approval: dict | None              # NOUVEAU: Action en attente d'approbation
+    workflow_context: dict | None              # NOUVEAU: Contexte workflow step (step_index, total_steps, description)
+
+    # Phase 2D - Project Context (ProjectContextLoader V1)
+    project_context: dict | None               # NOUVEAU: Contexte projet structuré (backlog + docs)
+    project_context_summary: str | None        # NOUVEAU: Résumé markdown pour injection prompts
