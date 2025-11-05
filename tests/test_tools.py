@@ -138,6 +138,7 @@ async def test_bulk_create_features_tool(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+<<<<<<< HEAD
 async def test_ai_create_marks_pending(tmp_path, monkeypatch):
     db = tmp_path / "db.sqlite"
     monkeypatch.setattr(crud, "DATABASE_URL", str(db))
@@ -265,3 +266,46 @@ def test_ensure_acceptance_list_guarantees_two_items():
 
     lines_with_newlines = ensure_acceptance_list("- Premier\n- Premier\nDeuxième")
     assert lines_with_newlines == ["Premier", "Deuxième"]
+=======
+async def test_bulk_create_features_acceptance_criteria_normalized(tmp_path, monkeypatch):
+    db = tmp_path / "db.sqlite"
+    monkeypatch.setattr(crud, "DATABASE_URL", str(db))
+    crud.init_db()
+    crud.create_project(ProjectCreate(name="Proj", description=""))
+    epic = crud.create_item(EpicCreate(title="Epic1", description="", project_id=1, parent_id=None))
+
+    expected = "- Given scenario\n- Then result"
+
+    list_payload = {
+        "project_id": 1,
+        "parent_id": epic.id,
+        "items": [
+            {
+                "title": "Feature from list",
+                "acceptance_criteria": ["Given scenario", "Then result"],
+            }
+        ],
+    }
+    list_res = await bulk_create_features_tool(list_payload)
+    assert list_res["ok"]
+    list_id = list_res["result"]["created_ids"][0]
+    list_item = crud.get_item(list_id)
+    assert list_item.acceptance_criteria == expected
+
+    str_payload = {
+        "project_id": 1,
+        "parent_id": epic.id,
+        "items": [
+            {
+                "title": "Feature from str",
+                "acceptance_criteria": "  - Given scenario\n- Then result  ",
+            }
+        ],
+    }
+    str_res = await bulk_create_features_tool(str_payload)
+    assert str_res["ok"]
+    str_id = str_res["result"]["created_ids"][0]
+    str_item = crud.get_item(str_id)
+    assert str_item.acceptance_criteria == expected
+    assert str_item.acceptance_criteria == list_item.acceptance_criteria
+>>>>>>> 7ba0e88 (Normalize bulk feature acceptance criteria)
