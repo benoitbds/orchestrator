@@ -1,6 +1,7 @@
 """Workflow executor - Manages sequential execution of planned steps."""
 from .state import AgentState
 from .streaming import get_stream_manager
+from .context_loader import get_context_loader
 import logging
 
 logger = logging.getLogger(__name__)
@@ -83,12 +84,46 @@ async def workflow_executor_node(state: AgentState) -> dict:
         "total_steps": len(workflow_steps),
         "step_description": current_step['objective']
     }
-    
+
+    # Load project context if project_id present (Phase 2D - ProjectContextLoader V1)
+    project_context_dict = None
+    project_context_summary = None
+
+    project_id = state.get("project_id")
+    if project_id is not None:
+        try:
+            logger.info(f"Loading project context for project_id={project_id}")
+            loader = get_context_loader()
+            context = await loader.load_context(
+                project_id=project_id,
+                user_uid=state.get("user_uid", "unknown")
+            )
+
+            # Convert to dict and generate summary
+            project_context_dict = context.model_dump()
+            project_context_summary = loader.get_summary(context)
+
+            # Log stats
+            stats = context.backlog_stats
+            doc_stats = context.document_stats
+            logger.info(
+                f"Project context loaded: {stats.total_items} backlog items, "
+                f"{doc_stats.total_documents} documents ({doc_stats.analyzed_documents} analyzed)"
+            )
+
+        except Exception as e:
+            # Non-blocking: log warning and continue without context
+            logger.warning(f"Failed to load project context for project_id={project_id}: {e}")
+            project_context_dict = None
+            project_context_summary = None
+
     return {
         "next_agent": next_agent,
         "current_step_index": current_step_index,
         "workflow_steps": workflow_steps,
         "workflow_context": workflow_context,
+        "project_context": project_context_dict,
+        "project_context_summary": project_context_summary,
         "status_message": f"▶ Executing: {current_step['objective']}",
         "current_agent": "workflow_executor"
     }

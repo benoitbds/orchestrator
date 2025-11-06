@@ -137,9 +137,10 @@ async def backlog_agent_node(state: AgentState) -> AgentState:
         # Enrich prompt with metadata if available
         prompt_vars = {
             "project_id": state["project_id"],
-            "objective": state["objective"]
+            "objective": state["objective"],
+            "project_context": state.get("project_context_summary", "")  # Phase 2D - ProjectContextLoader V1
         }
-        
+
         if meta:
             if meta.get("action") == "generate_children":
                 prompt_vars["action"] = "generate_children"
@@ -148,7 +149,7 @@ async def backlog_agent_node(state: AgentState) -> AgentState:
                 prompt_vars["parent_type"] = meta.get("parent_type", "Feature")
             else:
                 prompt_vars["action"] = meta.get("action", "")
-        
+
         prompt = BACKLOG_PROMPT_TEMPLATE.format(**prompt_vars)
         
         # Emit thinking event

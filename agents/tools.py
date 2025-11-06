@@ -89,9 +89,6 @@ class BulkFeatureItem(BaseModel):
 class BulkCreateFeaturesArgs(BaseModel):
     project_id: int
     parent_id: int
-<<<<<<< HEAD
-    items: List[FeatureInput]
-=======
     items: List[BulkFeatureItem]
 
     @model_validator(mode="after")
@@ -106,7 +103,6 @@ class BulkCreateFeaturesArgs(BaseModel):
             else:
                 item.acceptance_criteria = str(ac).strip()
         return self
->>>>>>> 7ba0e88 (Normalize bulk feature acceptance criteria)
 
 class ListDocsArgs(BaseModel):
     project_id: int

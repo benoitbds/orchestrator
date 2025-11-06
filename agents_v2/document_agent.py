@@ -61,7 +61,8 @@ async def document_agent_node(state: AgentState) -> AgentState:
         prompt_template = load_prompt("document.yaml")
         prompt = prompt_template.format(
             project_id=state["project_id"],
-            objective=state["objective"]
+            objective=state["objective"],
+            project_context=state.get("project_context_summary", "")  # Phase 2D - ProjectContextLoader V1
         )
         
         await stream_manager.emit_agent_thinking("document", prompt, state["iteration"])

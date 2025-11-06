@@ -231,8 +231,6 @@ class _SummarizeArgs(BaseModel):
     depth: int = 3
 
 
-<<<<<<< HEAD
-=======
 class _BulkFeature(BaseModel):
     title: str
     description: str | None = None
@@ -251,7 +249,6 @@ class _BulkFeature(BaseModel):
         return self
 
 
->>>>>>> 7ba0e88 (Normalize bulk feature acceptance criteria)
 class _BulkCreateArgs(BaseModel):
     project_id: int
     parent_id: int
@@ -989,11 +986,7 @@ async def bulk_create_features_tool(args: Dict[str, Any]) -> Dict[str, Any]:
                 description=item.description or "",
                 project_id=data.project_id,
                 parent_id=data.parent_id,
-<<<<<<< HEAD
                 acceptance_criteria=(item.acceptance_criteria or ""),
-=======
-                acceptance_criteria=item.acceptance_criteria,
->>>>>>> 7ba0e88 (Normalize bulk feature acceptance criteria)
             )
             created = crud.create_item(feature)
             _mark_ai_item(created.id)
