@@ -986,7 +986,7 @@ async def bulk_create_features_tool(args: Dict[str, Any]) -> Dict[str, Any]:
                 description=item.description or "",
                 project_id=data.project_id,
                 parent_id=data.parent_id,
-                acceptance_criteria=item.acceptance_criteria,
+                acceptance_criteria=(item.acceptance_criteria or ""),
             )
             created = crud.create_item(feature)
             _mark_ai_item(created.id)
